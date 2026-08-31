@@ -18,7 +18,15 @@ SLACK_SIGNING_SECRET=
 SLACK_BOT_TOKEN=
 DAYTONA_API_KEY=
 TUNNEL_HOSTNAME=
+GITHUB_APP_ID=
+GITHUB_APP_PRIVATE_KEY=
+GITHUB_APP_INSTALLATION_ID=
+CAPABILITY_PRIVATE_KEY=
+CAPABILITY_PUBLIC_KEY=
+CAPABILITY_KID=
 ```
+
+GitHub App and capability keys are M2. Clone/`ls` still runs without them; GitHub tools return a configuration error instead of calling GitHub. Generate an Ed25519 keypair for the capability keys (`generateKeyPairSync('ed25519')`, PKCS8/SPKI PEM, `kid` = first 8 hex chars of SHA-256 of the public PEM). The GitHub App needs `contents` + `pull_requests` on the pilot repo. PEM values may use `\n` in `.dev.vars`.
 
 `npm run dev` runs under the Cloudflare Vite plugin, which reads Worker secrets from `.dev.vars`, not `.env`. Copy the same values there:
 

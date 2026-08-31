@@ -278,6 +278,14 @@ The original M1 layout used the Flue Modal blueprint. On 2026-08-30 D2 first cha
 - Do not use Cloudflare Sandbox or Cloudflare Computer for workspace exec.
 - Credential proxy is still M2. Not in this tree yet.
 
+### M2 layout (2026-08-31)
+
+- The proxy lives in this Worker as `src/proxy/*` (in-process `executeProxy`). No HTTP `/github/*` split and no D1 cross-conversation audit table yet; audit records are written to an injectable sink.
+- Capability tokens are Ed25519 (`CAPABILITY_*` secrets). The owner mints a one-op token per call; `vendPushToken` is not a Flue tool.
+- `readRef` is a proxy op used by checkpoint confirmation. It is not mounted as a model tool.
+- `checkpointWorkingBranch` injects the installation token into `GIT_CONFIG_VALUE_0` for one `git push` and revokes it in `finally`.
+- `cfRead` / `awsRead`, rate limits, hydration, and live run cards are still not in this tree.
+
 ## Appendix A — Rejected alternatives (recorded, closed)
 
 - **Modal direct from the Durable Object**: rejected because the JavaScript SDK uses Node gRPC over HTTP/2, which the Cloudflare Worker/Durable Object runtime cannot execute even though the bundle builds.
