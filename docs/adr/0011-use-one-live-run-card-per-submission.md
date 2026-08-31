@@ -1,0 +1,3 @@
+# Use one live run card per submission
+
+Each Submission creates one persistent, thread-visible Slack Block Kit Live Run Card and updates that same message from queued or working state through its terminal outcome. The card presents a current-step narrative, safe truncated activity details, and the final summary, tests, and pull-request link; its desired revision and Slack message identity are durable so updates can be coalesced and retried without duplicate cards. Because editing an existing message may not notify participants, Slack Agent also posts a fresh concise thread reply when it completes or needs human input.

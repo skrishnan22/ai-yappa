@@ -1,0 +1,33 @@
+{
+	"name": "slack-agent",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "vite dev",
+		"build": "vite build",
+		"deploy": "vite build && wrangler deploy",
+		"check:types": "tsc --noEmit",
+		"test": "vitest run",
+		"tunnel": "sh scripts/run-tunnel.sh",
+		"tunnel:setup": "sh scripts/setup-tunnel.sh",
+		"tunnel:stop": "sh scripts/stop-tunnel.sh"
+	},
+	"dependencies": {
+		"@daytona/sdk": "^0.207.0",
+		"@flue/runtime": "^2.0.3",
+		"@flue/slack": "^2.0.3",
+		"@slack/web-api": "^8.1.1",
+		"hono": "4.12.32",
+		"valibot": "^1.4.2"
+	},
+	"devDependencies": {
+		"@cloudflare/vite-plugin": "^1.39.2",
+		"@flue/cli": "^2.0.3",
+		"@flue/vite": "^2.0.3",
+		"@types/node": "^22.10.10",
+		"typescript": "^7.0.2",
+		"vite": "^8.0.14",
+		"vitest": "^4.1.11",
+		"wrangler": "^4.113.0"
+	}
+}
