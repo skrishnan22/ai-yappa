@@ -3,7 +3,7 @@ import { dispatch, getAgentInstance } from '@flue/runtime';
 import { createSlackChannel } from '@flue/slack';
 import { Coworker } from '../agents/coworker.ts';
 import { isAllowedInvoker, repoForChannel } from '../config.ts';
-import { decideAdmit } from './admit.ts';
+import { decideAdmit, mentionsAuthorizedBot } from './admit.ts';
 import type { SlackSignal } from './admit.ts';
 import { client } from './slack-reply.ts';
 import { env } from '../env.ts';
@@ -41,7 +41,7 @@ export const channel = createSlackChannel({
 				if (event.subtype !== undefined) return;
 				if (event.bot_id !== undefined) return;
 				if (event.thread_ts === undefined) return;
-				if (event.text?.includes('<@')) return;
+				if (mentionsAuthorizedBot(event.text ?? '', payload.authorizations)) return;
 				await admitThread({
 					thread: {
 						teamId: payload.team_id,
@@ -78,10 +78,8 @@ async function admitThread({
 	const allowed = isAllowedInvoker(userId);
 	const repo = repoForChannel(thread.channelId);
 
-	let conversationExists = true;
-	if (signalType === 'slack.message' && allowed && repo !== undefined) {
-		conversationExists = (await getAgentInstance(Coworker, id)) !== null;
-	}
+	const conversationExists =
+		signalType === 'slack.message' ? (await getAgentInstance(Coworker, id)) !== null : true;
 
 	const decision = decideAdmit({
 		signalType,

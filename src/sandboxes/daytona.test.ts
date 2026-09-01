@@ -195,6 +195,29 @@ describe('daytona factory', () => {
 		await vi.advanceTimersByTimeAsync(5_000);
 		await rejection;
 	});
+
+	test('rejects in-flight work when the sandbox lookup returns not found', async () => {
+		vi.useFakeTimers();
+		const sandbox = createFakeSandbox({
+			process: {
+				async executeCommand() {
+					return await new Promise(() => {});
+				},
+			},
+		});
+		sandbox.refreshData = async () => {
+			throw new DaytonaNotFoundError('sandbox deleted');
+		};
+		const flueSandbox = await daytona(sandbox, { cwd: '/workspace' }).createSandbox({ id: 'c1' });
+		let failure: unknown;
+		void flueSandbox.exec('sleep 30').catch((error: unknown) => {
+			failure = error;
+		});
+
+		await vi.advanceTimersByTimeAsync(5_000);
+
+		expect(failure).toBeInstanceOf(SandboxDiedError);
+	});
 });
 
 describe('container lease', () => {
@@ -214,8 +237,9 @@ describe('container lease', () => {
 				return sandbox;
 			},
 			async get() {
-				return sandbox;
+				throw new DaytonaNotFoundError('missing named sandbox');
 			},
+			async *list() {},
 			snapshot: {
 				async get() {
 					throw new DaytonaNotFoundError('missing snapshot');
@@ -247,6 +271,133 @@ describe('container lease', () => {
 				labels: { flueConversationId: 'conv-1' },
 			}),
 		]);
+	});
+
+	test('reuses the single sandbox already labeled for the conversation', async () => {
+		const existing = createFakeSandbox({ id: 'container-existing' });
+		const created: unknown[] = [];
+		const requestedNames: string[] = [];
+		const client = {
+			async create(params: unknown) {
+				created.push(params);
+				return createFakeSandbox({ id: 'container-new' });
+			},
+			async get(name: string) {
+				requestedNames.push(name);
+				throw new DaytonaNotFoundError('missing named sandbox');
+			},
+			async *list() {
+				yield existing;
+			},
+			snapshot: {
+				async get() {
+					throw new Error('snapshot lookup should not run when reusing a sandbox');
+				},
+				async create() {
+					throw new Error('snapshot creation should not run when reusing a sandbox');
+				},
+			},
+		};
+
+		const sandbox = await createContainerSandbox(client, { conversationId: 'conv-1' });
+
+		expect(sandbox).toBe(existing);
+		expect(created).toEqual([]);
+		expect(requestedNames).toEqual([expect.stringMatching(/^slack-agent-[0-9a-f]{32}$/)]);
+	});
+
+	test.each(['stopped', 'archived'])('starts a %s sandbox before reusing it', async (state) => {
+		const events: string[] = [];
+		const existing = createFakeSandbox({ id: `container-${state}`, state });
+		existing.start = async () => {
+			events.push('start');
+			existing.state = 'started';
+		};
+		const client = {
+			async create() {
+				throw new Error('should not create a replacement');
+			},
+			async get() {
+				return existing;
+			},
+			async *list() {},
+			snapshot: {
+				async get() {
+					throw new Error('should not inspect a snapshot');
+				},
+				async create() {
+					throw new Error('should not create a snapshot');
+				},
+			},
+		};
+
+		const sandbox = await createContainerSandbox(client, { conversationId: 'conv-1' });
+
+		expect(sandbox).toBe(existing);
+		expect(events).toEqual(['start']);
+	});
+
+	test('creates a deterministically named sandbox when none exists', async () => {
+		const created: unknown[] = [];
+		const requestedNames: string[] = [];
+		const sandbox = createFakeSandbox({ id: 'container-new' });
+		const client = {
+			async create(params: unknown) {
+				created.push(params);
+				return sandbox;
+			},
+			async get(name: string) {
+				requestedNames.push(name);
+				throw new DaytonaNotFoundError('missing named sandbox');
+			},
+			async *list() {},
+			snapshot: {
+				async get() {
+					return { sandboxClass: 'container' };
+				},
+				async create() {
+					throw new Error('snapshot already exists');
+				},
+			},
+		};
+
+		await createContainerSandbox(client, { conversationId: 'conv-1' });
+
+		const expectedName = requestedNames[0];
+		expect(expectedName).toMatch(/^slack-agent-[0-9a-f]{32}$/);
+		expect(created).toEqual([
+			expect.objectContaining({
+				name: expectedName,
+				labels: { flueConversationId: 'conv-1' },
+			}),
+		]);
+	});
+
+	test('fails closed when more than one legacy sandbox has the conversation label', async () => {
+		const client = {
+			async create() {
+				return createFakeSandbox({ id: 'container-new' });
+			},
+			async get() {
+				throw new DaytonaNotFoundError('missing named sandbox');
+			},
+			async *list() {
+				yield createFakeSandbox({ id: 'container-1' });
+				yield createFakeSandbox({ id: 'container-2' });
+			},
+			snapshot: {
+				async get() {
+					throw new Error('should not inspect a snapshot');
+				},
+				async create() {
+					throw new Error('should not create a snapshot');
+				},
+			},
+		};
+
+		await expect(
+			createContainerSandbox(client, { conversationId: 'conv-1' }),
+		).rejects.toThrow(/multiple Daytona sandboxes/);
 	});
 
 	test('proves a filesystem marker survives stop and start on the same id', async () => {

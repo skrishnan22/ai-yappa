@@ -5,6 +5,7 @@ import * as v from 'valibot';
 
 const envSchema = v.object({
 	SLACK_SIGNING_SECRET: v.pipe(v.string(), v.minLength(1)),
+	SLACK_BOT_TOKEN: v.pipe(v.string(), v.minLength(1)),
 });
 
 export const env = v.parse(envSchema, process.env);

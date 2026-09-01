@@ -12,6 +12,7 @@ import {
 	SandboxClass,
 	type CreateSandboxFromSnapshotParams,
 	type CreateSnapshotParams,
+	type ListSandboxesQuery,
 } from '@daytona/sdk';
 import { sandboxFromDriver, SandboxDiedError } from '@flue/runtime';
 import type { FileStat, Sandbox, SandboxDriver, SandboxFactory } from '@flue/runtime';
@@ -75,6 +76,7 @@ export type DaytonaClientLike = {
 		options?: { timeout?: number },
 	): Promise<DaytonaSandboxLike>;
 	get(id: string): Promise<DaytonaSandboxLike>;
+	list(query?: ListSandboxesQuery): AsyncIterableIterator<DaytonaSandboxLike>;
 	snapshot: {
 		get(name: string): Promise<{ sandboxClass?: string }>;
 		create(params: CreateSnapshotParams, options?: { timeout?: number }): Promise<unknown>;
@@ -144,9 +146,13 @@ function raceSandboxDeath<T>(
 						pollTimer = setTimeout(probe, SANDBOX_LIVENESS_POLL_MS);
 					}
 				},
-				() => {
+				(error: unknown) => {
 					if (settled) return;
 					clearTimeout(silenceTimer);
+					if (error instanceof DaytonaNotFoundError) {
+						settle(() => reject(new SandboxDiedError({ operation, reason: 'stopped' })));
+						return;
+					}
 					pollTimer = setTimeout(probe, SANDBOX_LIVENESS_POLL_MS);
 				},
 			);
@@ -303,13 +309,70 @@ async function ensureContainerSnapshot(client: DaytonaClientLike): Promise<void>
 	});
 }
 
+async function sandboxNameForConversation(conversationId: string): Promise<string> {
+	const digest = await crypto.subtle.digest(
+		'SHA-256',
+		new TextEncoder().encode(conversationId),
+	);
+	const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join(
+		'',
+	);
+	return `slack-agent-${hex.slice(0, 32)}`;
+}
+
+async function findConversationSandbox(
+	client: DaytonaClientLike,
+	args: { conversationId: string; name: string },
+): Promise<DaytonaSandboxLike | undefined> {
+	try {
+		return await client.get(args.name);
+	} catch (error) {
+		if (!(error instanceof DaytonaNotFoundError)) throw error;
+	}
+
+	const matches: DaytonaSandboxLike[] = [];
+	for await (const sandbox of client.list({
+		labels: { flueConversationId: args.conversationId },
+		limit: 2,
+	})) {
+		matches.push(sandbox);
+		if (matches.length === 2) break;
+	}
+	if (matches.length > 1) {
+		throw new Error(
+			`[slack-agent] multiple Daytona sandboxes found for conversation ${args.conversationId}`,
+		);
+	}
+	return matches[0];
+}
+
+async function startConversationSandbox(
+	sandbox: DaytonaSandboxLike,
+): Promise<DaytonaSandboxLike> {
+	await sandbox.refreshData();
+	assertContainer(sandbox);
+	if (sandbox.state === 'started') return sandbox;
+	if (sandbox.state === 'stopped' || sandbox.state === 'archived') {
+		await sandbox.start(180);
+		return sandbox;
+	}
+	throw new Error(
+		`[slack-agent] Daytona sandbox ${sandbox.id} cannot be attached from state ${sandbox.state ?? 'unknown'}`,
+	);
+}
+
 export async function createContainerSandbox(
 	client: DaytonaClientLike,
 	args: { conversationId: string },
 ): Promise<DaytonaSandboxLike> {
+	const name = await sandboxNameForConversation(args.conversationId);
+	const existing = await findConversationSandbox(client, { ...args, name });
+	if (existing) return startConversationSandbox(existing);
+
 	await ensureContainerSnapshot(client);
 	const sandbox = await client.create(
 		{
+			name,
 			snapshot: CONTAINER_SNAPSHOT_NAME,
 			language: 'typescript',
 			autoStopInterval: CONTAINER_AUTO_STOP_MINUTES,
