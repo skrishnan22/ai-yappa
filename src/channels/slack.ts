@@ -1,18 +1,12 @@
 // flue-blueprint: channel/slack@1
 import { dispatch, getAgentInstance } from '@flue/runtime';
-import { createSlackChannel } from '@flue/slack';
+import { createSlackChannel, type SlackThreadRef } from '@flue/slack';
 import { Coworker } from '../agents/coworker.ts';
 import { isAllowedInvoker, repoForChannel } from '../config.ts';
 import { decideAdmit, mentionsAuthorizedBot } from './admit.ts';
 import type { SlackSignal } from './admit.ts';
 import { client } from './slack-reply.ts';
 import { env } from '../env.ts';
-
-type ThreadRef = {
-	teamId: string;
-	channelId: string;
-	threadTs: string;
-};
 
 export const channel = createSlackChannel({
 	signingSecret: env.SLACK_SIGNING_SECRET,
@@ -68,7 +62,7 @@ async function admitThread({
 	text,
 	signalType,
 }: {
-	thread: ThreadRef;
+	thread: SlackThreadRef;
 	userId: string | undefined;
 	eventId: string;
 	text: string;
@@ -124,5 +118,9 @@ async function admitThread({
 				},
 			});
 			return;
+		default: {
+			const _exhaustive: never = decision;
+			return _exhaustive;
+		}
 	}
 }

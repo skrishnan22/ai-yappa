@@ -1,4 +1,4 @@
-import { DaytonaFileNotFoundError, DaytonaNotFoundError, DaytonaProcessExecutionTimeoutError } from '@daytona/sdk';
+import { DaytonaFileNotFoundError, DaytonaNotFoundError, DaytonaProcessExecutionTimeoutError, SandboxClass, SandboxState } from '@daytona/sdk';
 import { SandboxDiedError } from '@flue/runtime';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
@@ -25,7 +25,7 @@ function fileDetails(args: { isDir: boolean; size: number; modifiedAt: string; n
 function createFakeSandbox(overrides?: Partial<DaytonaSandboxLike> & { files?: Map<string, Buffer> }): DaytonaSandboxLike {
 	const files = overrides?.files ?? new Map<string, Buffer>();
 	const dirs = new Set<string>(['/workspace']);
-	let state: string | undefined = overrides?.state ?? 'started';
+	let state: SandboxState | undefined = overrides?.state ?? 'started';
 
 	const sandbox: DaytonaSandboxLike = {
 		id: overrides?.id ?? 'sb-1',
@@ -33,7 +33,7 @@ function createFakeSandbox(overrides?: Partial<DaytonaSandboxLike> & { files?: M
 		get state() {
 			return state;
 		},
-		set state(value: string | undefined) {
+		set state(value: SandboxState | undefined) {
 			state = value;
 		},
 		async refreshData() {
@@ -306,7 +306,7 @@ describe('container lease', () => {
 		expect(requestedNames).toEqual([expect.stringMatching(/^slack-agent-[0-9a-f]{32}$/)]);
 	});
 
-	test.each(['stopped', 'archived'])('starts a %s sandbox before reusing it', async (state) => {
+	test.each(['stopped', 'archived'] as const)('starts a %s sandbox before reusing it', async (state) => {
 		const events: string[] = [];
 		const existing = createFakeSandbox({ id: `container-${state}`, state });
 		existing.start = async () => {
@@ -353,7 +353,7 @@ describe('container lease', () => {
 			async *list() {},
 			snapshot: {
 				async get() {
-					return { sandboxClass: 'container' };
+					return { sandboxClass: SandboxClass.CONTAINER };
 				},
 				async create() {
 					throw new Error('snapshot already exists');

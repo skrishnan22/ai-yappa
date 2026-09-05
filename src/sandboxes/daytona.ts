@@ -10,6 +10,7 @@ import {
 	DaytonaProcessExecutionTimeoutError,
 	Image,
 	SandboxClass,
+	SandboxState,
 	type CreateSandboxFromSnapshotParams,
 	type CreateSnapshotParams,
 	type ListSandboxesQuery,
@@ -26,7 +27,7 @@ export const M1_PERSISTENCE_PROBE_PATH = '/workspace/.slack-agent-persistence-pr
 const SANDBOX_LIVENESS_POLL_MS = 5_000;
 const PROBE_SILENCE_MS = 10_000;
 
-const DEAD_STATES = new Set([
+const DEAD_STATES = new Set<SandboxState>([
 	'destroyed',
 	'destroying',
 	'error',
@@ -41,8 +42,8 @@ const DEAD_STATES = new Set([
 
 export type DaytonaSandboxLike = {
 	id: string;
-	sandboxClass?: string;
-	state?: string;
+	sandboxClass?: SandboxClass;
+	state?: SandboxState;
 	refreshData(): Promise<void>;
 	stop(timeout?: number, force?: boolean): Promise<void>;
 	start(timeout?: number): Promise<void>;
@@ -78,7 +79,7 @@ export type DaytonaClientLike = {
 	get(id: string): Promise<DaytonaSandboxLike>;
 	list(query?: ListSandboxesQuery): AsyncIterableIterator<DaytonaSandboxLike>;
 	snapshot: {
-		get(name: string): Promise<{ sandboxClass?: string }>;
+		get(name: string): Promise<{ sandboxClass?: SandboxClass }>;
 		create(params: CreateSnapshotParams, options?: { timeout?: number }): Promise<unknown>;
 	};
 };
@@ -281,7 +282,7 @@ class DaytonaSandboxDriver implements SandboxDriver {
 }
 
 export function assertContainer(sandbox: DaytonaSandboxLike): void {
-	if (sandbox.sandboxClass !== 'container') {
+	if (sandbox.sandboxClass !== SandboxClass.CONTAINER) {
 		throw new Error(
 			`[slack-agent] expected Daytona container sandbox, got ${sandbox.sandboxClass ?? 'unknown'}`,
 		);
@@ -291,7 +292,7 @@ export function assertContainer(sandbox: DaytonaSandboxLike): void {
 async function ensureContainerSnapshot(client: DaytonaClientLike): Promise<void> {
 	try {
 		const snapshot = await client.snapshot.get(CONTAINER_SNAPSHOT_NAME);
-		if (snapshot.sandboxClass !== undefined && snapshot.sandboxClass !== 'container') {
+		if (snapshot.sandboxClass !== undefined && snapshot.sandboxClass !== SandboxClass.CONTAINER) {
 			throw new Error(
 				`[slack-agent] snapshot ${CONTAINER_SNAPSHOT_NAME} is ${snapshot.sandboxClass}, not container`,
 			);
@@ -351,8 +352,8 @@ async function startConversationSandbox(
 ): Promise<DaytonaSandboxLike> {
 	await sandbox.refreshData();
 	assertContainer(sandbox);
-	if (sandbox.state === 'started') return sandbox;
-	if (sandbox.state === 'stopped' || sandbox.state === 'archived') {
+	if (sandbox.state === SandboxState.STARTED) return sandbox;
+	if (sandbox.state === SandboxState.STOPPED || sandbox.state === SandboxState.ARCHIVED) {
 		await sandbox.start(180);
 		return sandbox;
 	}

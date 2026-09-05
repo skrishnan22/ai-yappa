@@ -16,7 +16,7 @@ const initialDataSchema = v.object({
 export function Coworker() {
 	useModel('opencode-go/kimi-k2.7-code');
 
-	const data = useInitialData<v.InferOutput<typeof initialDataSchema>>();
+	const data = useInitialData<v.InferOutput<typeof initialDataSchema> | undefined>();
 	if (!data) {
 		throw new Error('This agent is created by the Slack channel dispatch.');
 	}
