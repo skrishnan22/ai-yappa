@@ -3,8 +3,15 @@ import { Daytona } from '@daytona/sdk';
 import { useInitialData, useModel, usePersistentState, useSandbox, useTool } from '@flue/runtime';
 import * as v from 'valibot';
 import { replyInThread } from '../channels/slack-reply.ts';
+import { gitAuthorFromEnv, loadAgentEnv } from '../env.ts';
 import type { AuditRecord } from '../proxy/ops.ts';
 import { createContainerSandbox, daytona } from '../sandboxes/daytona.ts';
+import {
+	coworkerInstructions,
+	hydrateIoFromDaytona,
+	hydrateWorkspace,
+	WORKSPACE_REPO_DIR,
+} from '../sandboxes/hydrate.ts';
 import { githubTools } from './github-tools.ts';
 
 const initialDataSchema = v.object({
@@ -23,7 +30,11 @@ export function Coworker(props: { id: string }) {
 		throw new Error('This agent is created by the Slack channel dispatch.');
 	}
 
-	useTool(replyInThread(data));
+	// Fail fast with the full missing-secret list (Slack optional here — the
+	// reply tool degrades to `posted: false` without a token).
+	const agentEnv = loadAgentEnv();
+
+	useTool(replyInThread(data, agentEnv.SLACK_BOT_TOKEN));
 	// ponytail: conversation-scoped audit array until the D1 cross-conversation store in M4
 	const [, setProxyAudit] = usePersistentState<AuditRecord[]>('proxy-audit', []);
 	for (const tool of githubTools({
@@ -39,24 +50,22 @@ export function Coworker(props: { id: string }) {
 	}
 	useSandbox({
 		async createSandbox(options) {
-			const apiKey = process.env.DAYTONA_API_KEY;
-			if (!apiKey) {
-				throw new Error('DAYTONA_API_KEY is required to create a sandbox.');
-			}
+			const apiKey = agentEnv.DAYTONA_API_KEY;
 			const client = new Daytona({ apiKey });
 			const sandbox = await createContainerSandbox(client, { conversationId: options.id });
-			return daytona(sandbox, { cwd: '/workspace' }).createSandbox(options);
+			const result = await hydrateWorkspace(hydrateIoFromDaytona(sandbox), {
+				repo: data.repo,
+				conversationId: options.id,
+				git: gitAuthorFromEnv(agentEnv),
+			});
+			console.info(
+				`[slack-agent] hydration skipped=${result.skipped} durationMs=${result.durationMs} cwd=${result.cwd}`,
+			);
+			return daytona(sandbox, { cwd: WORKSPACE_REPO_DIR }).createSandbox(options);
 		},
 	});
 
-	return [
-		'You are a Slack-native engineering coworker.',
-		`This conversation is bound to one Slack thread and the repository ${data.repo}.`,
-		'On the first mention, clone that repo (shallow) into the sandbox working directory, run ls, and reply in the thread with the command output.',
-		'Later messages in the same thread continue this conversation.',
-		'GitHub reads, the working branch, and pull requests go through the GitHub tools. Persist git work with checkpoint_working_branch. Never git push with a token. Do not merge or deploy. Do not choose a different Slack channel or thread.',
-		'Reply with the reply_in_slack_thread tool.',
-	].join(' ');
+	return coworkerInstructions(data.repo);
 }
 
 Coworker.initialData = initialDataSchema;
