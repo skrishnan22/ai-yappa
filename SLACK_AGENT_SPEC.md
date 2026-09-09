@@ -280,10 +280,11 @@ The original M1 layout used the Flue Modal blueprint. On 2026-08-30 D2 first cha
 
 ### M2 layout (2026-08-31)
 
-- The proxy lives in this Worker as `src/proxy/*` (in-process `executeProxy`). No HTTP `/github/*` split and no D1 cross-conversation audit table yet; audit records are written to an injectable sink.
+- The proxy lives in this Worker as `src/proxy/*` (in-process `executeProxy`). No HTTP `/github/*` split and no D1 cross-conversation audit table yet; audit records append to Flue `usePersistentState('proxy-audit')` on the conversation.
 - Capability tokens are Ed25519 (`CAPABILITY_*` secrets). The owner mints a one-op token per call; `vendPushToken` is not a Flue tool.
 - `readRef` is a proxy op used by checkpoint confirmation. It is not mounted as a model tool.
-- `checkpointWorkingBranch` injects the installation token into `GIT_CONFIG_VALUE_0` for one `git push` and revokes it in `finally`.
+- `checkpointWorkingBranch` confirms local `HEAD` matches `expectedSha` before vending a token, injects it into `GIT_CONFIG_VALUE_0` for one `git push`, confirms the remote ref, and revokes afterward without masking a checkpoint error.
+- Production GitHub port/handlers (and the read-token cache) are reused across tool calls in the isolate.
 - `cfRead` / `awsRead`, rate limits, hydration, and live run cards are still not in this tree.
 
 ## Appendix A — Rejected alternatives (recorded, closed)

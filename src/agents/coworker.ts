@@ -1,8 +1,9 @@
 'use agent';
 import { Daytona } from '@daytona/sdk';
-import { useInitialData, useModel, useSandbox, useTool } from '@flue/runtime';
+import { useInitialData, useModel, usePersistentState, useSandbox, useTool } from '@flue/runtime';
 import * as v from 'valibot';
 import { replyInThread } from '../channels/slack-reply.ts';
+import type { AuditRecord } from '../proxy/ops.ts';
 import { createContainerSandbox, daytona } from '../sandboxes/daytona.ts';
 import { githubTools } from './github-tools.ts';
 
@@ -23,7 +24,17 @@ export function Coworker(props: { id: string }) {
 	}
 
 	useTool(replyInThread(data));
-	for (const tool of githubTools({ conversationId: props.id, repo: data.repo })) {
+	// ponytail: conversation-scoped audit array until the D1 cross-conversation store in M4
+	const [, setProxyAudit] = usePersistentState<AuditRecord[]>('proxy-audit', []);
+	for (const tool of githubTools({
+		conversationId: props.id,
+		repo: data.repo,
+		audit: {
+			append: (record) => {
+				setProxyAudit((entries) => [...entries, record]);
+			},
+		},
+	})) {
 		useTool(tool);
 	}
 	useSandbox({

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { generateCapabilityKeyPair, type ProxyOp } from '../proxy/capabilities.ts';
 import type { ProxyHandler } from '../proxy/ops.ts';
 import {
+	liveOwner,
 	performCheckpoint,
 	performCreateWorkingBranch,
 	performOpenPullRequest,
@@ -134,7 +135,11 @@ describe('performCheckpoint', () => {
 			),
 			{ expectedSha: 'abc123' },
 			{
-				exec: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
+				exec: async (command) => ({
+					stdout: command === 'git rev-parse HEAD' ? 'abc123\n' : '',
+					stderr: '',
+					exitCode: 0,
+				}),
 				revoke: async () => {},
 			},
 		);
@@ -146,6 +151,54 @@ describe('performCheckpoint', () => {
 		expect(result).not.toHaveProperty('token');
 	});
 });
+
+describe('liveOwner', () => {
+	test('reuses GitHub handlers and keeps the caller audit sink', () => {
+		const keys = generateCapabilityKeyPair();
+		const previous = {
+			CAPABILITY_PRIVATE_KEY: process.env.CAPABILITY_PRIVATE_KEY,
+			CAPABILITY_PUBLIC_KEY: process.env.CAPABILITY_PUBLIC_KEY,
+			CAPABILITY_KID: process.env.CAPABILITY_KID,
+			GITHUB_APP_ID: process.env.GITHUB_APP_ID,
+			GITHUB_APP_PRIVATE_KEY: process.env.GITHUB_APP_PRIVATE_KEY,
+			GITHUB_APP_INSTALLATION_ID: process.env.GITHUB_APP_INSTALLATION_ID,
+		};
+		process.env.CAPABILITY_PRIVATE_KEY = keys.privateKeyPem;
+		process.env.CAPABILITY_PUBLIC_KEY = keys.publicKeyPem;
+		process.env.CAPABILITY_KID = keys.kid;
+		process.env.GITHUB_APP_ID = '1';
+		process.env.GITHUB_APP_PRIVATE_KEY = 'dummy';
+		process.env.GITHUB_APP_INSTALLATION_ID = '2';
+		try {
+			const audit = { append: () => {} };
+			const first = liveOwner({
+				conversationId: 'c1',
+				repo: 'https://github.com/skrishnan22/codevil.git',
+				audit,
+			});
+			const second = liveOwner({
+				conversationId: 'c1',
+				repo: 'https://github.com/skrishnan22/codevil.git',
+				audit,
+			});
+			expect(first.ok).toBe(true);
+			expect(second.ok).toBe(true);
+			if (!first.ok || !second.ok) return;
+			expect(first.port).toBe(second.port);
+			expect(first.ctx.handlers).toBe(second.ctx.handlers);
+			expect(first.ctx.audit).toBe(audit);
+		} finally {
+			restoreEnv(previous);
+		}
+	});
+});
+
+function restoreEnv(previous: Record<string, string | undefined>): void {
+	for (const [key, value] of Object.entries(previous)) {
+		if (value === undefined) delete process.env[key];
+		else process.env[key] = value;
+	}
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);

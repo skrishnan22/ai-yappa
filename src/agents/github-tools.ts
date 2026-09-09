@@ -94,7 +94,7 @@ export async function performCheckpoint(
 	});
 }
 
-export function githubTools(args: { conversationId: string; repo: string }) {
+export function githubTools(args: { conversationId: string; repo: string; audit: AuditSink }) {
 	return [
 		defineTool({
 			name: 'read_github_issue',
@@ -266,7 +266,14 @@ function publicPull(data: unknown): {
 	return { number: data.number, htmlUrl: data.htmlUrl, head: data.head, base: data.base };
 }
 
-function liveOwner(args: { conversationId: string; repo: string }):
+type GitHubRuntime = {
+	port: ReturnType<typeof createGitHubPort>;
+	handlers: Record<ProxyOp, ProxyHandler>;
+};
+
+let cachedGithub: GitHubRuntime | undefined;
+
+export function liveOwner(args: { conversationId: string; repo: string; audit: AuditSink }):
 	| { ok: true; ctx: OwnerProxyCtx; port: ReturnType<typeof createGitHubPort> }
 	| { ok: false; error: string } {
 	const keys = capabilityKeysFromEnv();
@@ -276,18 +283,11 @@ function liveOwner(args: { conversationId: string; repo: string }):
 			error: 'CAPABILITY_PRIVATE_KEY, CAPABILITY_PUBLIC_KEY, and CAPABILITY_KID are not configured.',
 		};
 	}
-	let port: ReturnType<typeof createGitHubPort>;
-	try {
-		port = createGitHubPort();
-	} catch (error) {
-		return {
-			ok: false,
-			error: error instanceof Error ? error.message : 'GITHUB_* secrets are not configured',
-		};
-	}
+	const github = githubRuntime();
+	if (!github.ok) return github;
 	return {
 		ok: true,
-		port,
+		port: github.port,
 		ctx: {
 			conversationId: args.conversationId,
 			submissionId: 'active',
@@ -295,10 +295,24 @@ function liveOwner(args: { conversationId: string; repo: string }):
 			repo: args.repo,
 			keys,
 			now: Math.floor(Date.now() / 1000),
-			handlers: githubHandlers(port),
-			audit: { append: () => {} },
+			handlers: github.handlers,
+			audit: args.audit,
 		},
 	};
+}
+
+function githubRuntime(): { ok: true } & GitHubRuntime | { ok: false; error: string } {
+	if (cachedGithub !== undefined) return { ok: true, ...cachedGithub };
+	try {
+		const port = createGitHubPort();
+		cachedGithub = { port, handlers: githubHandlers(port) };
+		return { ok: true, ...cachedGithub };
+	} catch (error) {
+		return {
+			ok: false,
+			error: error instanceof Error ? error.message : 'GITHUB_* secrets are not configured',
+		};
+	}
 }
 
 function capabilityKeysFromEnv(env: NodeJS.ProcessEnv = process.env): CapabilityKeys | undefined {

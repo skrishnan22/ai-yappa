@@ -34,6 +34,11 @@ export async function checkpointWorkingBranch(args: {
 	assertOpAllowed({ submissionType: args.submissionType, op: 'vendPushToken' });
 	const repo = canonicalRepo(args.repo);
 	const branch = workingBranchName(args.conversationId);
+	const localSha = await readLocalHead(args.exec);
+	if (localSha !== args.expectedSha) {
+		throw new Error(`local HEAD ${localSha} does not match expected ${args.expectedSha}`);
+	}
+
 	const minted = await executeProxy({
 		token: mintCapability({
 			keys: args.keys,
@@ -57,6 +62,9 @@ export async function checkpointWorkingBranch(args: {
 		throw new Error(minted.error.message);
 	}
 	const push = parseVend(minted.data);
+
+	let result: { branch: string; sha: string; htmlUrl: string } | undefined;
+	let checkpointError: unknown;
 	try {
 		const pushed = await args.exec(`git push origin HEAD:refs/heads/${branch}`, {
 			env: {
@@ -94,14 +102,43 @@ export async function checkpointWorkingBranch(args: {
 		if (remote.sha !== args.expectedSha) {
 			throw new Error(`remote sha ${remote.sha} does not match expected ${args.expectedSha}`);
 		}
-		return {
+		result = {
 			branch,
 			sha: args.expectedSha,
 			htmlUrl: `https://github.com/${repo}/tree/${branch}`,
 		};
-	} finally {
-		await args.revoke(push.token);
+	} catch (error) {
+		checkpointError = error;
 	}
+
+	try {
+		await args.revoke(push.token);
+	} catch (revokeError) {
+		const revokeMessage = `failed to revoke push token: ${errorMessage(revokeError)}`;
+		if (checkpointError !== undefined) {
+			throw new Error(`${errorMessage(checkpointError)}; ${revokeMessage}`);
+		}
+		throw new Error(revokeMessage);
+	}
+	if (checkpointError !== undefined) {
+		throw checkpointError;
+	}
+	if (result === undefined) {
+		throw new Error('checkpoint returned no result');
+	}
+	return result;
+}
+
+async function readLocalHead(exec: CheckpointExec): Promise<string> {
+	const head = await exec('git rev-parse HEAD', { env: {} });
+	if (head.exitCode !== 0) {
+		throw new Error(head.stderr || `git rev-parse HEAD exited ${head.exitCode}`);
+	}
+	const sha = head.stdout.trim();
+	if (sha.length === 0) {
+		throw new Error('git rev-parse HEAD returned an empty sha');
+	}
+	return sha;
 }
 
 function parseVend(data: unknown): { token: string; expiresAt: string } {
@@ -120,4 +157,8 @@ function parseRef(data: unknown): { sha: string } {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : 'unknown error';
 }
