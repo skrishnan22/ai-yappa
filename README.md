@@ -18,7 +18,11 @@ SLACK_SIGNING_SECRET=
 SLACK_BOT_TOKEN=
 DAYTONA_API_KEY=
 TUNNEL_HOSTNAME=
+GIT_AUTHOR_NAME=
+GIT_AUTHOR_EMAIL=
 ```
+
+`GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` are optional. If both are set, hydration configures that identity in the cloned repo (GitHub App bot: `{slug}[bot]` / `{id}+{slug}[bot]@users.noreply.github.com`). If neither is set, commits would otherwise be `root` — do not guess. If only one is set, boot fails.
 
 `npm run dev` runs under the Cloudflare Vite plugin, which reads Worker secrets from `.dev.vars`, not `.env`. Copy the same values there:
 
@@ -53,10 +57,10 @@ Needs OpenCode Go and Daytona credentials. Pass the same `initialData` Slack wou
 npx flue run src/agents/coworker.ts \
   --id local-1 \
   --data '{"channelId":"C_LOCAL","threadTs":"1.0","startedAt":"2026-08-30T00:00:00.000Z","repo":"https://github.com/org/pilot"}' \
-  --message "Clone the repo and list the top level."
+  --message "What does package.json name this workspace?"
 ```
 
-This exercises the model and the sandbox. Without `SLACK_BOT_TOKEN`, the reply tool prints the text and does not call Slack.
+This exercises the model and the sandbox. Create hydrates `/workspace/repo` in owner code (shallow clone + lockfile install) before the model runs. A later create that reuses the same Daytona container skips clone/install when `/workspace/.workspace_ready` still matches that repo. Stop/start keeps the filesystem (`node_modules` survive); processes do not. The model does not bootstrap the repo. Without `SLACK_BOT_TOKEN`, the reply tool prints the text and does not call Slack.
 
 ## Slack end to end (local control plane)
 
@@ -82,7 +86,7 @@ Setup writes the assigned host into `TUNNEL_HOSTNAME`. Then:
 
 Stop with `npm run tunnel:stop`. Free ngrok also shows a browser warning page. Slack's event POSTs skip that. If you open the URL in a browser, click through once.
 
-A threaded reply with clone/`ls` output from a Daytona container is M1.
+A threaded reply that reflects work in the already-cloned repo (not clone/`ls` as the job) is the hydration slice. Seed images with repo+deps baked in wait for M4.
 
 ## Deploy
 

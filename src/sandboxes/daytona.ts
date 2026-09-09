@@ -18,11 +18,17 @@ import {
 import { sandboxFromDriver, SandboxDiedError } from '@flue/runtime';
 import type { FileStat, Sandbox, SandboxDriver, SandboxFactory } from '@flue/runtime';
 
-export const CONTAINER_SNAPSHOT_NAME = 'slack-agent-container-v1';
+export const CONTAINER_SNAPSHOT_NAME = 'slack-agent-container-v2';
 export const CONTAINER_AUTO_STOP_MINUTES = 15;
 export const CONTAINER_AUTO_ARCHIVE_MINUTES = 7 * 24 * 60;
 export const CONTAINER_RESOURCES = { cpu: 2, memory: 4, disk: 3 };
 export const M1_PERSISTENCE_PROBE_PATH = '/workspace/.slack-agent-persistence-probe';
+export const CONTAINER_IMAGE_COMMANDS = [
+	'RUN apt-get update && apt-get install -y git build-essential python3 && rm -rf /var/lib/apt/lists/*',
+	'RUN corepack enable',
+	'RUN mkdir -p /workspace',
+	'WORKDIR /workspace',
+];
 
 const SANDBOX_LIVENESS_POLL_MS = 5_000;
 const PROBE_SILENCE_MS = 10_000;
@@ -97,11 +103,7 @@ function isMissingPathError(error: unknown): boolean {
 }
 
 function containerImage(): Image {
-	return Image.base('node:22-bookworm').dockerfileCommands([
-		'RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*',
-		'RUN mkdir -p /workspace',
-		'WORKDIR /workspace',
-	]);
+	return Image.base('node:22-bookworm').dockerfileCommands(CONTAINER_IMAGE_COMMANDS);
 }
 
 /**

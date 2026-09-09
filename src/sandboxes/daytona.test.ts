@@ -6,6 +6,7 @@ import {
 	CONTAINER_AUTO_ARCHIVE_MINUTES,
 	CONTAINER_AUTO_STOP_MINUTES,
 	CONTAINER_RESOURCES,
+	CONTAINER_IMAGE_COMMANDS,
 	CONTAINER_SNAPSHOT_NAME,
 	createContainerSandbox,
 	daytona,
@@ -221,6 +222,13 @@ describe('daytona factory', () => {
 });
 
 describe('container lease', () => {
+	test('toolchain snapshot enables git, corepack/pnpm, and native builds', () => {
+		expect(CONTAINER_SNAPSHOT_NAME).toBe('slack-agent-container-v2');
+		expect(CONTAINER_IMAGE_COMMANDS.join('\n')).toMatch(/git/);
+		expect(CONTAINER_IMAGE_COMMANDS.join('\n')).toMatch(/corepack enable/);
+		expect(CONTAINER_IMAGE_COMMANDS.join('\n')).toMatch(/build-essential/);
+	});
+
 	test('assertContainer rejects a Linux VM sandbox', () => {
 		expect(() => assertContainer(createFakeSandbox({ sandboxClass: 'linux-vm' }))).toThrow(
 			/container/,

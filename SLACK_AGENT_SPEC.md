@@ -248,7 +248,7 @@ All triggers are thin adapters emitting the same `TriggerEvent {source, repo?, h
 1. **M1 — Skeleton loop.** Slack mention → conversation owner → Daytona container → write a filesystem sentinel → stop/start the same container once and verify the sentinel → run `git clone` + `ls` → reply in thread. Proves ingress, Flue ownership, adapter, streaming, and filesystem persistence without relying on RAM/process continuity.
 2. **M2 — Trusted integrations.** Credential proxy with the four operations; capability minting; branch push from sandbox via vended token.
 3. **M3 — Real work.** Reasoning loop drives inspect → edit → install → test → checkpoint → PR on one pilot repo; progress card live.
-4. **M4 — Failure and security hardening.** Kill sandboxes mid-command in tests; verify Unknown Tool Outcome, fencing, and rehydration behave per §4.4/§7. Adversarial proxy tests: investigation token attempting a write, expired token, cross-conversation token, `cfRead` path outside the allowlist — all must refuse and audit. Measure time-to-workspace-ready and cost per completed PR from real usage (this replaces the provider bakeoff).
+4. **M4 — Failure and security hardening.** Kill sandboxes mid-command in tests; verify Unknown Tool Outcome, fencing, and rehydration behave per §4.4/§7. Adversarial proxy tests: investigation token attempting a write, expired token, cross-conversation token, `cfRead` path outside the allowlist — all must refuse and audit. Measure time-to-workspace-ready and cost per completed PR from real usage (this replaces the provider bakeoff). Cross-sandbox seed snapshots after `workspace_ready` (Codevil-style cache: restore latest fingerprint, pull/install only the delta) wait until those measurements justify them.
 
 ## 11. Open questions (must be answered during M1–M2, none block starting)
 
@@ -277,6 +277,10 @@ The original M1 layout used the Flue Modal blueprint. On 2026-08-30 D2 first cha
 - Unmentioned thread messages continue a conversation only when `getAgentInstance(Coworker, id)` finds one. A mention may create. (2026-08-30)
 - Do not use Cloudflare Sandbox or Cloudflare Computer for workspace exec.
 - Credential proxy is still M2. Not in this tree yet.
+
+### Hydration (2026-09-09)
+
+Owner code hydrates on Coworker sandbox create: toolchain snapshot `slack-agent-container-v2` (`node:22-bookworm`, git, build-essential, python3, `corepack enable`) → shallow clone into `/workspace/repo` → lockfile install at repo root → working branch `agent/<sanitized-conversationId>` → `/workspace/.workspace_ready` (repo + lockfile hash). Flue cwd is `/workspace/repo`. The same labeled Daytona container is reused (M1 name/label); hydration skips clone/install when the marker matches this conversation's repo. No extra Flue lease store. Repo+deps seed images and async post-ready snapshots remain M4 / v2. Git author is optional env (`GIT_AUTHOR_NAME` + `GIT_AUTHOR_EMAIL`); missing both skips bot identity rather than guessing `root`.
 
 ## Appendix A — Rejected alternatives (recorded, closed)
 
