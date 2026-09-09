@@ -1,5 +1,8 @@
 import { DaytonaFileNotFoundError, DaytonaNotFoundError } from '@daytona/sdk';
+import { workingBranchName } from '../proxy/checkpoint.ts';
 import type { DaytonaSandboxLike } from './daytona.ts';
+
+export { workingBranchName };
 
 export const WORKSPACE_REPO_DIR = '/workspace/repo';
 export const WORKSPACE_READY_PATH = '/workspace/.workspace_ready';
@@ -33,18 +36,12 @@ export function installCommandForLockfile(lockfileName: string): string | undefi
 		case 'yarn.lock':
 			return 'corepack yarn install --immutable';
 		case 'bun.lock':
-			return 'bun install --frozen-lockfile';
+			throw new Error(
+				'[slack-agent] bun.lock is not supported on slack-agent-container-v2 (bun is not on the image)',
+			);
 		default:
 			return undefined;
 	}
-}
-
-export function workingBranchName(conversationId: string): string {
-	const slug = conversationId
-		.replace(/[^a-zA-Z0-9._-]+/g, '-')
-		.replace(/^-+|-+$/g, '')
-		.slice(0, 60);
-	return `agent/${slug || 'conversation'}`;
 }
 
 export function coworkerInstructions(repo: string): string {
@@ -55,23 +52,60 @@ export function coworkerInstructions(repo: string): string {
 		'Treat the Slack message as the task.',
 		'Inspect, edit, and test with sandbox tools in that directory.',
 		'Do not clone the repository or treat listing the tree as the job.',
+		'GitHub reads, the working branch, and pull requests go through the GitHub tools. Persist git work with checkpoint_working_branch. Never git push with a token.',
 		'Do not merge or deploy. Do not choose a different Slack channel or thread.',
 		'Reply with the reply_in_slack_thread tool.',
 	].join(' ');
 }
 
 export function markerMatchesRepo(contents: string, repo: string): boolean {
+	const marker = parseReadyMarker(contents);
+	return marker !== undefined && marker.repo === repo;
+}
+
+type ReadyMarker = {
+	version: number;
+	repo: string;
+	lockfile: string | null;
+	lockfileSha256: string | null;
+};
+
+function parseReadyMarker(contents: string): ReadyMarker | undefined {
 	try {
 		const parsed: unknown = JSON.parse(contents);
-		return (
-			typeof parsed === 'object' &&
-			parsed !== null &&
-			(parsed as { version?: unknown }).version === 1 &&
-			(parsed as { repo?: unknown }).repo === repo
-		);
+		if (typeof parsed !== 'object' || parsed === null) return undefined;
+		const record = parsed as Record<string, unknown>;
+		if (record.version !== 1 || typeof record.repo !== 'string') return undefined;
+		return {
+			version: 1,
+			repo: record.repo,
+			lockfile: typeof record.lockfile === 'string' ? record.lockfile : null,
+			lockfileSha256: typeof record.lockfileSha256 === 'string' ? record.lockfileSha256 : null,
+		};
 	} catch {
-		return false;
+		return undefined;
 	}
+}
+
+async function workspaceFingerprintHolds(
+	io: HydrateIo,
+	args: { repo: string; conversationId: string },
+	contents: string,
+): Promise<boolean> {
+	const marker = parseReadyMarker(contents);
+	if (!marker || marker.repo !== args.repo) return false;
+	if (!(await io.exists(`${WORKSPACE_REPO_DIR}/.git`))) return false;
+	if (marker.lockfile) {
+		const lockPath = `${WORKSPACE_REPO_DIR}/${marker.lockfile}`;
+		if (!(await io.exists(lockPath))) return false;
+		if (marker.lockfileSha256) {
+			const digest = await sha256Hex(await io.readFile(lockPath));
+			if (digest !== marker.lockfileSha256) return false;
+		}
+	}
+	const head = await io.exec('git rev-parse --abbrev-ref HEAD', { cwd: WORKSPACE_REPO_DIR });
+	if (head.exitCode !== 0) return false;
+	return head.stdout.trim() === workingBranchName(args.conversationId);
 }
 
 async function sha256Hex(text: string): Promise<string> {
@@ -106,7 +140,7 @@ export async function hydrateWorkspace(
 	const started = Date.now();
 	if (await io.exists(WORKSPACE_READY_PATH)) {
 		const raw = await io.readFile(WORKSPACE_READY_PATH);
-		if (markerMatchesRepo(raw, args.repo)) {
+		if (await workspaceFingerprintHolds(io, args, raw)) {
 			return {
 				cwd: WORKSPACE_REPO_DIR,
 				skipped: true,

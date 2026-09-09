@@ -20,9 +20,17 @@ DAYTONA_API_KEY=
 TUNNEL_HOSTNAME=
 GIT_AUTHOR_NAME=
 GIT_AUTHOR_EMAIL=
+GITHUB_APP_ID=
+GITHUB_APP_PRIVATE_KEY=
+GITHUB_APP_INSTALLATION_ID=
+CAPABILITY_PRIVATE_KEY=
+CAPABILITY_PUBLIC_KEY=
+CAPABILITY_KID=
 ```
 
 `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` are optional. If both are set, hydration configures that identity in the cloned repo (GitHub App bot: `{slug}[bot]` / `{id}+{slug}[bot]@users.noreply.github.com`). If neither is set, commits would otherwise be `root` — do not guess. If only one is set, boot fails.
+
+GitHub App and capability keys are M2. Hydration still runs a public clone without them; GitHub tools return a configuration error instead of calling GitHub. Generate an Ed25519 keypair for the capability keys (`generateKeyPairSync('ed25519')`, PKCS8/SPKI PEM, `kid` = first 8 hex chars of SHA-256 of the public PEM). The GitHub App needs `contents` + `pull_requests` on the pilot repo. PEM values may use `\n` in `.dev.vars`.
 
 `npm run dev` runs under the Cloudflare Vite plugin, which reads Worker secrets from `.dev.vars`, not `.env`. Copy the same values there:
 

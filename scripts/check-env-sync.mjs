@@ -47,7 +47,8 @@ const drift = [];
 
 for (const [key, value] of env) {
 	if (IGNORED_KEYS.has(key) || value === 'replace-me' || value === '') continue;
-	if (devVars.has(key) && devVars.get(key) !== value) drift.push(key);
+	if (!devVars.has(key)) drift.push(`${key} (only in .env)`);
+	else if (devVars.get(key) !== value) drift.push(key);
 }
 for (const [key, value] of devVars) {
 	if (IGNORED_KEYS.has(key) || value.includes('REPLACE_ME') || value === '') continue;

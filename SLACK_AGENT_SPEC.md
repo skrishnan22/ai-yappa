@@ -278,9 +278,18 @@ The original M1 layout used the Flue Modal blueprint. On 2026-08-30 D2 first cha
 - Do not use Cloudflare Sandbox or Cloudflare Computer for workspace exec.
 - Credential proxy is still M2. Not in this tree yet.
 
+### M2 layout (2026-08-31)
+
+- The proxy lives in this Worker as `src/proxy/*` (in-process `executeProxy`). No HTTP `/github/*` split and no D1 cross-conversation audit table yet; audit records append to Flue `usePersistentState('proxy-audit')` on the conversation.
+- Capability tokens are Ed25519 (`CAPABILITY_*` secrets). The owner mints a one-op token per call; `vendPushToken` is not a Flue tool.
+- `readRef` is a proxy op used by checkpoint confirmation. It is not mounted as a model tool.
+- `checkpointWorkingBranch` confirms local `HEAD` matches `expectedSha` before vending a token, injects it into `GIT_CONFIG_VALUE_0` for one `git push`, confirms the remote ref, and revokes afterward without masking a checkpoint error.
+- Production GitHub port/handlers (and the read-token cache) are reused across tool calls in the isolate.
+- `cfRead` / `awsRead`, rate limits, and live run cards are still not in this tree.
+
 ### Hydration (2026-09-09)
 
-Owner code hydrates on Coworker sandbox create: toolchain snapshot `slack-agent-container-v2` (`node:22-bookworm`, git, build-essential, python3, `corepack enable`) → shallow clone into `/workspace/repo` → lockfile install at repo root → working branch `agent/<sanitized-conversationId>` → `/workspace/.workspace_ready` (repo + lockfile hash). Flue cwd is `/workspace/repo`. The same labeled Daytona container is reused (M1 name/label); hydration skips clone/install when the marker matches this conversation's repo. No extra Flue lease store. Repo+deps seed images and async post-ready snapshots remain M4 / v2. Git author is optional env (`GIT_AUTHOR_NAME` + `GIT_AUTHOR_EMAIL`); missing both skips bot identity rather than guessing `root`.
+Owner code hydrates on Coworker sandbox create: toolchain snapshot `slack-agent-container-v2` (`node:22-bookworm`, git, build-essential, python3, `corepack enable`) → shallow clone into `/workspace/repo` → lockfile install at repo root → working branch `agent/<sanitized-conversationId>` → `/workspace/.workspace_ready` (repo + lockfile hash). Flue cwd is `/workspace/repo`. The same labeled Daytona container is reused (M1 name/label); hydration skips clone/install only when the marker matches this conversation's repo **and** the workspace fingerprint still holds (git dir present, lockfile hash unchanged). No extra Flue lease store. Repo+deps seed images and async post-ready snapshots remain M4 / v2. Git author is optional env (`GIT_AUTHOR_NAME` + `GIT_AUTHOR_EMAIL`); missing both skips bot identity rather than guessing `root`. `bun.lock` is recognized and fails closed: the v2 image has no Bun.
 
 ## Appendix A — Rejected alternatives (recorded, closed)
 

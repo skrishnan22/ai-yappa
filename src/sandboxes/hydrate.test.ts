@@ -10,13 +10,24 @@ import {
 	type HydrateIo,
 } from './hydrate.ts';
 
-function memoryIo(seed?: { files?: Map<string, string> }): HydrateIo & { commands: string[] } {
+async function sha256Hex(text: string): Promise<string> {
+	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+	return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function memoryIo(seed?: {
+	files?: Map<string, string>;
+	head?: string;
+}): HydrateIo & { commands: string[] } {
 	const files = seed?.files ?? new Map<string, string>();
 	const commands: string[] = [];
 	const io: HydrateIo & { commands: string[] } = {
 		commands,
 		async exec(command, options) {
 			commands.push([options?.cwd, command].filter(Boolean).join(' '));
+			if (command === 'git rev-parse --abbrev-ref HEAD') {
+				return { exitCode: 0, stdout: seed?.head ?? '', stderr: '' };
+			}
 			return { exitCode: 0, stdout: '', stderr: '' };
 		},
 		async readFile(path) {
@@ -42,6 +53,10 @@ describe('installCommandForLockfile', () => {
 		expect(installCommandForLockfile('package-lock.json')).toBe('npm ci');
 		expect(installCommandForLockfile('yarn.lock')).toBe('corepack yarn install --immutable');
 		expect(installCommandForLockfile('missing')).toBeUndefined();
+	});
+
+	test('fails closed on bun.lock because the toolchain image has no bun', () => {
+		expect(() => installCommandForLockfile('bun.lock')).toThrow(/bun is not on the image/);
 	});
 });
 
@@ -91,27 +106,54 @@ describe('hydrateWorkspace', () => {
 		expect(io.commands.some((command) => command.includes('pnpm'))).toBe(false);
 	});
 
-	test('skips clone and install when a matching workspace_ready marker exists', async () => {
+	test('skips clone and install when the marker and workspace fingerprint still match', async () => {
+		const lock = 'lock: 1\n';
+		const repo = 'https://github.com/skrishnan22/codevil.git';
+		const conversationId = 'c1';
 		const files = new Map<string, string>([
 			[
 				WORKSPACE_READY_PATH,
 				JSON.stringify({
 					version: 1,
-					repo: 'https://github.com/skrishnan22/codevil.git',
+					repo,
 					lockfile: 'pnpm-lock.yaml',
+					lockfileSha256: await sha256Hex(lock),
 				}),
 			],
+			[`${WORKSPACE_REPO_DIR}/pnpm-lock.yaml`, lock],
+			[`${WORKSPACE_REPO_DIR}/.git`, ''],
 		]);
-		const io = memoryIo({ files });
+		const io = memoryIo({ files, head: workingBranchName(conversationId) });
 
-		const result = await hydrateWorkspace(io, {
-			repo: 'https://github.com/skrishnan22/codevil.git',
-			conversationId: 'c1',
-		});
+		const result = await hydrateWorkspace(io, { repo, conversationId });
 
 		expect(result.skipped).toBe(true);
 		expect(result.cwd).toBe(WORKSPACE_REPO_DIR);
-		expect(io.commands).toEqual([]);
+		expect(io.commands.some((command) => command.includes('git clone'))).toBe(false);
+		expect(io.commands.some((command) => command.includes('pnpm install'))).toBe(false);
+	});
+
+	test('rehydrates when the lockfile hash no longer matches the marker', async () => {
+		const repo = 'https://github.com/skrishnan22/codevil.git';
+		const files = new Map<string, string>([
+			[
+				WORKSPACE_READY_PATH,
+				JSON.stringify({
+					version: 1,
+					repo,
+					lockfile: 'pnpm-lock.yaml',
+					lockfileSha256: await sha256Hex('old\n'),
+				}),
+			],
+			[`${WORKSPACE_REPO_DIR}/pnpm-lock.yaml`, 'new\n'],
+			[`${WORKSPACE_REPO_DIR}/.git`, ''],
+		]);
+		const io = memoryIo({ files, head: workingBranchName('c1') });
+
+		const result = await hydrateWorkspace(io, { repo, conversationId: 'c1' });
+
+		expect(result.skipped).toBe(false);
+		expect(io.commands.some((command) => command.includes('git clone'))).toBe(true);
 	});
 
 	test('rehydrates when the marker is for a different repo', async () => {
@@ -151,6 +193,7 @@ describe('coworkerInstructions', () => {
 		const prompt = coworkerInstructions('https://github.com/skrishnan22/codevil.git');
 		expect(prompt).toContain(WORKSPACE_REPO_DIR);
 		expect(prompt).toMatch(/Slack message as the task/i);
+		expect(prompt).toContain('checkpoint_working_branch');
 		expect(prompt.toLowerCase()).not.toContain('clone that repo');
 		expect(prompt).not.toMatch(/\bls\b/);
 	});
