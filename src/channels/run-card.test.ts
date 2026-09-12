@@ -3,6 +3,7 @@ import {
 	__resetRunCardForTests,
 	applyCardEvent,
 	bindRunCard,
+	enqueueCardEvent,
 	formatElapsed,
 	publishCardEvent,
 	renderRunCard,
@@ -380,6 +381,97 @@ describe('publishCardEvent', () => {
 		expect(persisted.at(-1)?.submissionId).toBe('sub-2');
 		expect(persisted.at(-1)?.messageTs).toBe('card-2');
 		expect(updates.every((entry) => entry.ts === 'card-2')).toBe(true);
+	});
+
+	test('persists settlement when the terminal ping fails, then retries it', async () => {
+		const persisted: RunCardState[] = [];
+		let notifies = 0;
+		const port: SlackCardPort = {
+			async post() {
+				return { ts: 'card.ts' };
+			},
+			async update() {},
+			async notify() {
+				notifies++;
+				if (notifies === 1) throw new Error('slack down');
+			},
+		};
+
+		bindRunCard({
+			instanceId: 'conversation-1',
+			channelId: 'C1',
+			threadTs: '1.2',
+			state: null,
+			persist: (state) => {
+				persisted.push(state);
+			},
+			port,
+		});
+
+		await publishCardEvent(
+			routed({
+				type: 'submission_running',
+				submissionId: 'sub-1',
+			}),
+			1_000,
+		);
+		await publishCardEvent(
+			routed({
+				type: 'tool',
+				toolName: 'open_pull_request',
+				result: { output: { htmlUrl: 'https://github.com/org/repo/pull/4' } },
+			}),
+			2_000,
+		);
+
+		await enqueueCardEvent(
+			routed({ type: 'submission_settled', submissionId: 'sub-1', outcome: 'completed' }),
+			3_000,
+		);
+
+		expect(notifies).toBe(2);
+		expect(persisted.at(-1)?.status).toBe('completed');
+		expect(persisted.at(-1)?.notifyPosted).toBe(true);
+	});
+
+	test('persists the settled card even if every terminal ping attempt fails', async () => {
+		const persisted: RunCardState[] = [];
+		const port: SlackCardPort = {
+			async post() {
+				return { ts: 'card.ts' };
+			},
+			async update() {},
+			async notify() {
+				throw new Error('slack down');
+			},
+		};
+
+		bindRunCard({
+			instanceId: 'conversation-1',
+			channelId: 'C1',
+			threadTs: '1.2',
+			state: null,
+			persist: (state) => {
+				persisted.push(state);
+			},
+			port,
+		});
+
+		await publishCardEvent(routed({ type: 'submission_running', submissionId: 'sub-1' }), 1_000);
+		await expect(
+			enqueueCardEvent(
+				routed({
+					type: 'submission_settled',
+					submissionId: 'sub-1',
+					outcome: 'failed',
+					error: 'boom',
+				}),
+				2_000,
+			),
+		).rejects.toThrow('slack down');
+
+		expect(persisted.at(-1)?.status).toBe('failed');
+		expect(persisted.at(-1)?.notifyPosted).not.toBe(true);
 	});
 
 	test('skips Slack when no token or port is bound', async () => {

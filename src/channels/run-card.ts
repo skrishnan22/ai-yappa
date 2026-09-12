@@ -112,13 +112,14 @@ export function __resetRunCardForTests(): void {
 	handles.clear();
 }
 
-export function enqueueCardEvent(event: RoutedCardEvent, now = Date.now()): void {
+export function enqueueCardEvent(event: RoutedCardEvent, now = Date.now()): Promise<void> {
 	const handle = handles.get(event.instanceId);
-	if (handle === undefined) return;
+	if (handle === undefined) return Promise.resolve();
 	handle.chain = handle.chain.then(
-		() => publishCardEvent(event, now),
+		() => publishCardEvent(event, now).catch(() => publishCardEvent(event, now)),
 		() => publishCardEvent(event, now),
 	);
+	return handle.chain;
 }
 
 export async function publishCardEvent(event: RoutedCardEvent, now = Date.now()): Promise<void> {
@@ -130,36 +131,38 @@ export async function publishCardEvent(event: RoutedCardEvent, now = Date.now())
 
 	handle.state = applied.state;
 
-	const port = handle.port ?? (handle.token ? slackCardPort(handle.token) : undefined);
-	if (port !== undefined) {
-		const rendered = renderRunCard(applied.state, now);
-		if (applied.state.messageTs) {
-			await port.update({
-				channel: handle.channelId,
-				ts: applied.state.messageTs,
-				text: rendered.text,
-				blocks: rendered.blocks,
-			});
-		} else {
-			const posted = await port.post({
-				channel: handle.channelId,
-				threadTs: handle.threadTs,
-				text: rendered.text,
-				blocks: rendered.blocks,
-			});
-			handle.state = { ...applied.state, messageTs: posted.ts };
+	try {
+		const port = handle.port ?? (handle.token ? slackCardPort(handle.token) : undefined);
+		if (port !== undefined) {
+			const rendered = renderRunCard(applied.state, now);
+			if (applied.state.messageTs) {
+				await port.update({
+					channel: handle.channelId,
+					ts: applied.state.messageTs,
+					text: rendered.text,
+					blocks: rendered.blocks,
+				});
+			} else {
+				const posted = await port.post({
+					channel: handle.channelId,
+					threadTs: handle.threadTs,
+					text: rendered.text,
+					blocks: rendered.blocks,
+				});
+				handle.state = { ...applied.state, messageTs: posted.ts };
+			}
+			if (applied.notify !== undefined && handle.state.notifyPosted !== true) {
+				await port.notify({
+					channel: handle.channelId,
+					threadTs: handle.threadTs,
+					text: applied.notify,
+				});
+				handle.state = { ...handle.state, notifyPosted: true };
+			}
 		}
-		if (applied.notify !== undefined && handle.state.notifyPosted !== true) {
-			await port.notify({
-				channel: handle.channelId,
-				threadTs: handle.threadTs,
-				text: applied.notify,
-			});
-			handle.state = { ...handle.state, notifyPosted: true };
-		}
+	} finally {
+		handle.persist(handle.state);
 	}
-
-	handle.persist(handle.state);
 }
 
 export function applyCardEvent(
