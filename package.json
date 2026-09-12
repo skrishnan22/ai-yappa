@@ -8,6 +8,7 @@
 		"deploy": "vite build && wrangler deploy",
 		"check:types": "tsc --noEmit",
 		"check:env": "node scripts/check-env-sync.mjs",
+		"lint": "node scripts/check-async-ternary.mjs",
 		"test": "vitest run",
 		"tunnel": "sh scripts/run-tunnel.sh",
 		"tunnel:setup": "sh scripts/setup-tunnel.sh",
