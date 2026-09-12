@@ -3,7 +3,9 @@ import { describe, expect, test } from 'vitest';
 import { generateCapabilityKeyPair, mintCapability, type ProxyOp } from './capabilities.ts';
 import { digestParams, executeProxy, type AuditRecord, type ProxyHandler } from './ops.ts';
 
-function stubHandlers(overrides?: Partial<Record<ProxyOp, ProxyHandler>>): Record<ProxyOp, ProxyHandler> {
+function stubHandlers(
+	overrides?: Partial<Record<ProxyOp, ProxyHandler>>,
+): Record<ProxyOp, ProxyHandler> {
 	const refuse: ProxyHandler = async () => {
 		throw new Error('handler not stubbed');
 	};

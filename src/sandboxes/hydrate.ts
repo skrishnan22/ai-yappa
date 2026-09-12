@@ -150,9 +150,13 @@ export async function hydrateWorkspace(
 	}
 
 	await mustExec(io, `rm -rf ${shellQuote(WORKSPACE_REPO_DIR)}`);
-	await mustExec(io, `git clone --depth 1 ${shellQuote(args.repo)} ${shellQuote(WORKSPACE_REPO_DIR)}`, {
-		timeoutMs: 600_000,
-	});
+	await mustExec(
+		io,
+		`git clone --depth 1 ${shellQuote(args.repo)} ${shellQuote(WORKSPACE_REPO_DIR)}`,
+		{
+			timeoutMs: 600_000,
+		},
+	);
 
 	const lockfile = await detectLockfile(io, WORKSPACE_REPO_DIR);
 	const install = lockfile ? installCommandForLockfile(lockfile) : undefined;

@@ -56,7 +56,14 @@ function fakePort(): GitHubPort & { calls: FakeCall[]; createCount: number } {
 					json: { ref: 'refs/heads/agent/c1', object: { sha: 'abc' } },
 				};
 			}
-			return { status: 200, json: { full_name: 'skrishnan22/codevil', default_branch: 'main', html_url: 'https://github.com/skrishnan22/codevil' } };
+			return {
+				status: 200,
+				json: {
+					full_name: 'skrishnan22/codevil',
+					default_branch: 'main',
+					html_url: 'https://github.com/skrishnan22/codevil',
+				},
+			};
 		},
 	};
 	return port;
@@ -135,9 +142,13 @@ describe('githubHandlers', () => {
 		expect(second).toEqual({ token: 'ghs_2', expiresAt: '2099-01-01T00:00:00.000Z' });
 		expect(port.createCount).toBe(2);
 		expect(
-			port.calls.filter((call) => call.kind === 'createInstallationToken').every((call) => {
-				return call.permissions?.contents === 'write' && call.permissions.pull_requests === 'write';
-			}),
+			port.calls
+				.filter((call) => call.kind === 'createInstallationToken')
+				.every((call) => {
+					return (
+						call.permissions?.contents === 'write' && call.permissions.pull_requests === 'write'
+					);
+				}),
 		).toBe(true);
 	});
 

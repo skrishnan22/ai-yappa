@@ -318,7 +318,12 @@ function mapRepo(json: unknown): { fullName: string; defaultBranch: string; html
 }
 
 function mapRef(json: unknown): { ref: string; sha: string } {
-	if (!isRecord(json) || typeof json.ref !== 'string' || !isRecord(json.object) || typeof json.object.sha !== 'string') {
+	if (
+		!isRecord(json) ||
+		typeof json.ref !== 'string' ||
+		!isRecord(json.object) ||
+		typeof json.object.sha !== 'string'
+	) {
 		throw new Error('unexpected GitHub ref payload');
 	}
 	return { ref: json.ref, sha: json.object.sha };

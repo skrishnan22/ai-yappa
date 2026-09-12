@@ -16,7 +16,9 @@ function refuse(): ProxyHandler {
 	};
 }
 
-function baseHandlers(overrides?: Partial<Record<ProxyOp, ProxyHandler>>): Record<ProxyOp, ProxyHandler> {
+function baseHandlers(
+	overrides?: Partial<Record<ProxyOp, ProxyHandler>>,
+): Record<ProxyOp, ProxyHandler> {
 	return {
 		readIssue: refuse(),
 		readRepoMetadata: refuse(),

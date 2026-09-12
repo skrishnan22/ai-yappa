@@ -128,8 +128,7 @@ export function githubTools(args: { conversationId: string; repo: string; audit:
 		}),
 		defineTool({
 			name: 'open_pull_request',
-			description:
-				'Open a pull request from this conversation working branch. Never merge.',
+			description: 'Open a pull request from this conversation working branch. Never merge.',
 			input: v.object({
 				title: v.pipe(v.string(), v.minLength(1)),
 				body: v.string(),
@@ -273,14 +272,19 @@ type GitHubRuntime = {
 
 let cachedGithub: GitHubRuntime | undefined;
 
-export function liveOwner(args: { conversationId: string; repo: string; audit: AuditSink }):
+export function liveOwner(args: {
+	conversationId: string;
+	repo: string;
+	audit: AuditSink;
+}):
 	| { ok: true; ctx: OwnerProxyCtx; port: ReturnType<typeof createGitHubPort> }
 	| { ok: false; error: string } {
 	const keys = capabilityKeysFromEnv();
 	if (keys === undefined) {
 		return {
 			ok: false,
-			error: 'CAPABILITY_PRIVATE_KEY, CAPABILITY_PUBLIC_KEY, and CAPABILITY_KID are not configured.',
+			error:
+				'CAPABILITY_PRIVATE_KEY, CAPABILITY_PUBLIC_KEY, and CAPABILITY_KID are not configured.',
 		};
 	}
 	const github = githubRuntime();
@@ -301,7 +305,7 @@ export function liveOwner(args: { conversationId: string; repo: string; audit: A
 	};
 }
 
-function githubRuntime(): { ok: true } & GitHubRuntime | { ok: false; error: string } {
+function githubRuntime(): ({ ok: true } & GitHubRuntime) | { ok: false; error: string } {
 	if (cachedGithub !== undefined) return { ok: true, ...cachedGithub };
 	try {
 		const port = createGitHubPort();

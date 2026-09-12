@@ -4,16 +4,7 @@
 	"options": {
 		"typeAware": true
 	},
-	"plugins": [
-		"eslint",
-		"typescript",
-		"unicorn",
-		"oxc",
-		"import",
-		"node",
-		"promise",
-		"vitest"
-	],
+	"plugins": ["eslint", "typescript", "unicorn", "oxc", "import", "node", "promise", "vitest"],
 	"categories": {
 		"correctness": "error",
 		"suspicious": "warn"
@@ -42,11 +33,7 @@
 		"eslint/no-underscore-dangle": [
 			"warn",
 			{
-				"allow": [
-					"_exhaustive",
-					"__resetSlackClientForTests",
-					"__resetRunCardForTests"
-				]
+				"allow": ["_exhaustive", "__resetSlackClientForTests", "__resetRunCardForTests"]
 			}
 		],
 		"unicorn/require-post-message-target-origin": "off",
