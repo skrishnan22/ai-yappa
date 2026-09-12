@@ -39,6 +39,7 @@ const TYPE_ARG_ABORT = new Set([
 const TYPE_ARG_PREV = new Set([
 	SyntaxKind.Identifier,
 	SyntaxKind.ThisKeyword,
+	SyntaxKind.AsyncKeyword,
 	SyntaxKind.CloseParenToken,
 	SyntaxKind.CloseBracketToken,
 	SyntaxKind.GreaterThanToken,
@@ -196,6 +197,19 @@ function skipDotOrLabel(tokens, i) {
 	return tokens[i - 1]?.kind === SyntaxKind.DotToken || tokens[i + 1]?.kind === SyntaxKind.ColonToken;
 }
 
+function skipTypeArgList(tokens, i) {
+	if (tokens[i]?.kind !== SyntaxKind.LessThanToken || !isTypeArgList(tokens, i)) return i;
+	let depth = 1;
+	for (let j = i + 1; j < tokens.length; j++) {
+		if (tokens[j].kind === SyntaxKind.LessThanToken) depth++;
+		const close = greaterCount(tokens[j].kind);
+		if (close === 0) continue;
+		depth -= close;
+		if (depth <= 0) return j + 1;
+	}
+	return i;
+}
+
 function arrowAfterParens(tokens, openIndex) {
 	let depth = 0;
 	for (let i = openIndex; i < tokens.length; i++) {
@@ -213,12 +227,17 @@ function isAsyncControlFlow(tokens, i) {
 	const kind = tokens[i].kind;
 	if (kind === SyntaxKind.AwaitKeyword) return !skipDotOrLabel(tokens, i);
 	if (kind !== SyntaxKind.AsyncKeyword || skipDotOrLabel(tokens, i)) return false;
-	const next = tokens[i + 1]?.kind;
-	if (next === SyntaxKind.FunctionKeyword) return true;
-	if (next === SyntaxKind.OpenParenToken) return arrowAfterParens(tokens, i + 1);
-	if (next === SyntaxKind.Identifier && tokens[i + 2]?.kind === SyntaxKind.EqualsGreaterThanToken) return true;
-	if (next === SyntaxKind.Identifier && tokens[i + 2]?.kind === SyntaxKind.OpenParenToken) return true;
-	return false;
+	let j = i + 1;
+	if (tokens[j]?.kind === SyntaxKind.AsteriskToken) j++;
+	if (tokens[j]?.kind === SyntaxKind.FunctionKeyword) return true;
+	j = skipTypeArgList(tokens, j);
+	if (tokens[j]?.kind === SyntaxKind.OpenParenToken) return arrowAfterParens(tokens, j);
+	if (tokens[j]?.kind !== SyntaxKind.Identifier) return false;
+	j = skipTypeArgList(tokens, j + 1);
+	return (
+		tokens[j]?.kind === SyntaxKind.EqualsGreaterThanToken ||
+		tokens[j]?.kind === SyntaxKind.OpenParenToken
+	);
 }
 
 function lineCol(lineStarts, pos) {

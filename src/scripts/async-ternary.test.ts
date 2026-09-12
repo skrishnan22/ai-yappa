@@ -13,6 +13,12 @@ describe('async/await ternary lint', () => {
 
 	test('flags an async function as a ternary branch', () => {
 		expect(findAsyncTernaries('const run = token ? async () => 1 : () => 0;').map((hit) => hit.kind)).toEqual(['async']);
+		expect(
+			findAsyncTernaries('const run = c ? async <T>(value: T) => value : fallback;').map((hit) => hit.kind),
+		).toEqual(['async']);
+		expect(findAsyncTernaries('const run = c ? { async *gen() { yield 1; } } : {};').map((hit) => hit.kind)).toEqual([
+			'async',
+		]);
 	});
 
 	test('ignores ordinary ternaries, optional props, and optional calls', () => {
