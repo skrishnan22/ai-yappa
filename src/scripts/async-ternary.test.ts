@@ -23,4 +23,25 @@ describe('async/await ternary lint', () => {
 		);
 		expect(findAsyncTernaries('const msg = error instanceof Error ? error.message : "x";')).toEqual([]);
 	});
+
+	test('ignores async/await used as property names', () => {
+		expect(findAsyncTernaries('const n = c ? object.async : fallback;')).toEqual([]);
+		expect(findAsyncTernaries('const n = c ? object.await : fallback;')).toEqual([]);
+		expect(findAsyncTernaries('const n = c ? { async: 1 } : 0;')).toEqual([]);
+	});
+
+	test('flags await inside generic type arguments on the alternate', () => {
+		expect(
+			findAsyncTernaries('async function f(c: boolean) { return c ? a : call<A, B>(await value); }').map(
+				(hit) => hit.kind,
+			),
+		).toEqual(['await']);
+	});
+
+	test('reports a nested await ternary once', () => {
+		expect(
+			findAsyncTernaries('async function f(c: boolean) { return outer ? inner ? await work() : fallback : other; }')
+				.map((hit) => hit.kind),
+		).toEqual(['await']);
+	});
 });
