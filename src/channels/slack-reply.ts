@@ -35,35 +35,34 @@ export function replyInThread(
 	ref: { channelId: string; threadTs: string },
 	slackBotToken?: string,
 ) {
-	const run = slackBotToken
-		? async ({ data }: { data: { text: string } }) => {
-				const result = await getSlackClient(slackBotToken).chat.postMessage({
-					channel: ref.channelId,
-					thread_ts: ref.threadTs,
-					text: data.text,
-				});
-				return {
-					output: {
-						posted: true,
-						text: data.text,
-						channel: result.channel ?? null,
-						ts: result.ts ?? null,
-					},
-				};
-			}
-		: async ({ data }: { data: { text: string } }) => ({
-				output: {
-					posted: false,
-					text: data.text,
-					channel: null,
-					ts: null,
-				},
-			});
-
 	return defineTool({
 		name: 'reply_in_slack_thread',
 		description: 'Reply in the Slack thread bound to this conversation.',
 		input: v.object({ text: v.pipe(v.string(), v.minLength(1)) }),
-		run,
+		async run({ data }) {
+			if (!slackBotToken) {
+				return {
+					output: {
+						posted: false,
+						text: data.text,
+						channel: null,
+						ts: null,
+					},
+				};
+			}
+			const result = await getSlackClient(slackBotToken).chat.postMessage({
+				channel: ref.channelId,
+				thread_ts: ref.threadTs,
+				text: data.text,
+			});
+			return {
+				output: {
+					posted: true,
+					text: data.text,
+					channel: result.channel ?? null,
+					ts: result.ts ?? null,
+				},
+			};
+		},
 	});
 }

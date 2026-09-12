@@ -124,7 +124,11 @@ export function mintCapability(args: {
 	};
 	const header = { alg: 'EdDSA', kid: args.keys.kid };
 	const signingInput = `${b64urlJson(header)}.${b64urlJson(payload)}`;
-	const signature = sign(null, Buffer.from(signingInput), createPrivateKey(args.keys.privateKeyPem));
+	const signature = sign(
+		null,
+		Buffer.from(signingInput),
+		createPrivateKey(args.keys.privateKeyPem),
+	);
 	return `${signingInput}.${signature.toString('base64url')}`;
 }
 
@@ -134,7 +138,12 @@ export function verifyCapability(args: {
 	now: number;
 }): CapabilityClaims {
 	const parts = args.token.split('.');
-	if (parts.length !== 3 || parts[0] === undefined || parts[1] === undefined || parts[2] === undefined) {
+	if (
+		parts.length !== 3 ||
+		parts[0] === undefined ||
+		parts[1] === undefined ||
+		parts[2] === undefined
+	) {
 		throw new Error('malformed capability token');
 	}
 	const signingInput = `${parts[0]}.${parts[1]}`;

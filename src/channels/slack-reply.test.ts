@@ -1,16 +1,22 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 const { constructed, posted } = vi.hoisted(() => ({
-	constructed: [] as Array<{
-		token?: string;
-		fetch?: (url: string | URL, init?: RequestInit) => Promise<Response>;
-	} | undefined>,
+	constructed: [] as Array<
+		| {
+				token?: string;
+				fetch?: (url: string | URL, init?: RequestInit) => Promise<Response>;
+		  }
+		| undefined
+	>,
 	posted: [] as Array<Record<string, string>>,
 }));
 
 vi.mock('@slack/web-api', () => ({
 	WebClient: class WebClient {
-		constructor(token?: string, opts?: { fetch?: (url: string | URL, init?: RequestInit) => Promise<Response> }) {
+		constructor(
+			token?: string,
+			opts?: { fetch?: (url: string | URL, init?: RequestInit) => Promise<Response> },
+		) {
 			constructed.push({ token, ...opts });
 		}
 
@@ -45,7 +51,10 @@ describe('slack WebClient fetch', () => {
 
 		const original = globalThis.fetch;
 		const seen: unknown[] = [];
-		globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+		globalThis.fetch = (async (
+			input: Parameters<typeof fetch>[0],
+			init?: Parameters<typeof fetch>[1],
+		) => {
 			seen.push({ input, init });
 			return new Response('{}', { status: 200 });
 		}) as typeof fetch;
@@ -65,7 +74,10 @@ describe('slack WebClient fetch', () => {
 
 		const original = globalThis.fetch;
 		const seen: unknown[] = [];
-		globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+		globalThis.fetch = (async (
+			_input: Parameters<typeof fetch>[0],
+			init?: Parameters<typeof fetch>[1],
+		) => {
 			seen.push(init);
 			return new Response('{}', { status: 200 });
 		}) as typeof fetch;
@@ -94,7 +106,13 @@ describe('slack WebClient fetch', () => {
 	test('uses the local fallback when no Slack token was supplied', async () => {
 		const { replyInThread } = await import('./slack-reply.ts');
 		const tool = replyInThread({ channelId: 'C-local', threadTs: '1.2' });
-		await expect(tool.run({ data: { text: 'local reply' }, toolCallId: 'local', log: { info() {}, warn() {}, error() {} } })).resolves.toEqual({
+		await expect(
+			tool.run({
+				data: { text: 'local reply' },
+				toolCallId: 'local',
+				log: { info() {}, warn() {}, error() {} },
+			}),
+		).resolves.toEqual({
 			output: { posted: false, text: 'local reply', channel: null, ts: null },
 		});
 	});
@@ -102,7 +120,13 @@ describe('slack WebClient fetch', () => {
 	test('posts with the injected token and thread reference', async () => {
 		const { replyInThread } = await import('./slack-reply.ts');
 		const tool = replyInThread({ channelId: 'C-test', threadTs: '2.3' }, 'xoxb-injected');
-		await expect(tool.run({ data: { text: 'hello Slack' }, toolCallId: 'post', log: { info() {}, warn() {}, error() {} } })).resolves.toEqual({
+		await expect(
+			tool.run({
+				data: { text: 'hello Slack' },
+				toolCallId: 'post',
+				log: { info() {}, warn() {}, error() {} },
+			}),
+		).resolves.toEqual({
 			output: { posted: true, text: 'hello Slack', channel: null, ts: null },
 		});
 		expect(posted).toEqual([{ channel: 'C-test', thread_ts: '2.3', text: 'hello Slack' }]);

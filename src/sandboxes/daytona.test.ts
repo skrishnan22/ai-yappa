@@ -1,4 +1,10 @@
-import { DaytonaFileNotFoundError, DaytonaNotFoundError, DaytonaProcessExecutionTimeoutError, SandboxClass, SandboxState } from '@daytona/sdk';
+import {
+	DaytonaFileNotFoundError,
+	DaytonaNotFoundError,
+	DaytonaProcessExecutionTimeoutError,
+	SandboxClass,
+	SandboxState,
+} from '@daytona/sdk';
 import { SandboxDiedError } from '@flue/runtime';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
@@ -23,7 +29,9 @@ function fileDetails(args: { isDir: boolean; size: number; modifiedAt: string; n
 	return args;
 }
 
-function createFakeSandbox(overrides?: Partial<DaytonaSandboxLike> & { files?: Map<string, Buffer> }): DaytonaSandboxLike {
+function createFakeSandbox(
+	overrides?: Partial<DaytonaSandboxLike> & { files?: Map<string, Buffer> },
+): DaytonaSandboxLike {
 	const files = overrides?.files ?? new Map<string, Buffer>();
 	const dirs = new Set<string>(['/workspace']);
 	let state: SandboxState | undefined = overrides?.state ?? 'started';
@@ -70,7 +78,12 @@ function createFakeSandbox(overrides?: Partial<DaytonaSandboxLike> & { files?: M
 			},
 			async getFileDetails(path: string) {
 				if (dirs.has(path)) {
-					return fileDetails({ isDir: true, size: 0, modifiedAt: '2026-08-30T00:00:00.000Z', name: path });
+					return fileDetails({
+						isDir: true,
+						size: 0,
+						modifiedAt: '2026-08-30T00:00:00.000Z',
+						name: path,
+					});
 				}
 				const content = files.get(path);
 				if (!content) {
@@ -109,7 +122,10 @@ function createFakeSandbox(overrides?: Partial<DaytonaSandboxLike> & { files?: M
 		},
 		process: overrides?.process ?? {
 			async executeCommand(command, cwd, env, timeout) {
-				return { exitCode: 0, result: `${command}|${cwd ?? ''}|${JSON.stringify(env ?? {})}|${timeout ?? ''}` };
+				return {
+					exitCode: 0,
+					result: `${command}|${cwd ?? ''}|${JSON.stringify(env ?? {})}|${timeout ?? ''}`,
+				};
 			},
 		},
 	};
@@ -192,6 +208,7 @@ describe('daytona factory', () => {
 		const flueSandbox = await daytona(sandbox, { cwd: '/workspace' }).createSandbox({ id: 'c1' });
 
 		const pending = flueSandbox.exec('sleep 30');
+		// oxlint-disable-next-line vitest/valid-expect -- assertion must attach before fake timers fire
 		const rejection = expect(pending).rejects.toBeInstanceOf(SandboxDiedError);
 		await vi.advanceTimersByTimeAsync(5_000);
 		await rejection;
@@ -314,36 +331,39 @@ describe('container lease', () => {
 		expect(requestedNames).toEqual([expect.stringMatching(/^slack-agent-[0-9a-f]{32}$/)]);
 	});
 
-	test.each(['stopped', 'archived'] as const)('starts a %s sandbox before reusing it', async (state) => {
-		const events: string[] = [];
-		const existing = createFakeSandbox({ id: `container-${state}`, state });
-		existing.start = async () => {
-			events.push('start');
-			existing.state = 'started';
-		};
-		const client = {
-			async create() {
-				throw new Error('should not create a replacement');
-			},
-			async get() {
-				return existing;
-			},
-			async *list() {},
-			snapshot: {
-				async get() {
-					throw new Error('should not inspect a snapshot');
-				},
+	test.each(['stopped', 'archived'] as const)(
+		'starts a %s sandbox before reusing it',
+		async (state) => {
+			const events: string[] = [];
+			const existing = createFakeSandbox({ id: `container-${state}`, state });
+			existing.start = async () => {
+				events.push('start');
+				existing.state = 'started';
+			};
+			const client = {
 				async create() {
-					throw new Error('should not create a snapshot');
+					throw new Error('should not create a replacement');
 				},
-			},
-		};
+				async get() {
+					return existing;
+				},
+				async *list() {},
+				snapshot: {
+					async get() {
+						throw new Error('should not inspect a snapshot');
+					},
+					async create() {
+						throw new Error('should not create a snapshot');
+					},
+				},
+			};
 
-		const sandbox = await createContainerSandbox(client, { conversationId: 'conv-1' });
+			const sandbox = await createContainerSandbox(client, { conversationId: 'conv-1' });
 
-		expect(sandbox).toBe(existing);
-		expect(events).toEqual(['start']);
-	});
+			expect(sandbox).toBe(existing);
+			expect(events).toEqual(['start']);
+		},
+	);
 
 	test('creates a deterministically named sandbox when none exists', async () => {
 		const created: unknown[] = [];
@@ -403,9 +423,9 @@ describe('container lease', () => {
 			},
 		};
 
-		await expect(
-			createContainerSandbox(client, { conversationId: 'conv-1' }),
-		).rejects.toThrow(/multiple Daytona sandboxes/);
+		await expect(createContainerSandbox(client, { conversationId: 'conv-1' })).rejects.toThrow(
+			/multiple Daytona sandboxes/,
+		);
 	});
 
 	test('proves a filesystem marker survives stop and start on the same id', async () => {

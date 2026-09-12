@@ -3,10 +3,7 @@ import { generateCapabilityKeyPair, type ProxyOp } from './capabilities.ts';
 import { checkpointWorkingBranch, workingBranchName, type CheckpointExec } from './checkpoint.ts';
 import type { ProxyHandler } from './ops.ts';
 
-function handlers(args: {
-	token?: string;
-	sha?: string;
-}): Record<ProxyOp, ProxyHandler> {
+function handlers(args: { token?: string; sha?: string }): Record<ProxyOp, ProxyHandler> {
 	const refuse: ProxyHandler = async () => {
 		throw new Error('handler not stubbed');
 	};
@@ -29,10 +26,13 @@ describe('workingBranchName', () => {
 	});
 });
 
-function execAt(expectedSha: string, args?: {
-	seen?: Array<{ command: string; env: Record<string, string> }>;
-	push?: { stderr?: string; exitCode?: number };
-}): CheckpointExec {
+function execAt(
+	expectedSha: string,
+	args?: {
+		seen?: Array<{ command: string; env: Record<string, string> }>;
+		push?: { stderr?: string; exitCode?: number };
+	},
+): CheckpointExec {
 	return async (command, options) => {
 		args?.seen?.push({ command, env: options.env });
 		if (command === 'git rev-parse HEAD') {

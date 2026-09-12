@@ -313,10 +313,7 @@ async function ensureContainerSnapshot(client: DaytonaClientLike): Promise<void>
 }
 
 async function sandboxNameForConversation(conversationId: string): Promise<string> {
-	const digest = await crypto.subtle.digest(
-		'SHA-256',
-		new TextEncoder().encode(conversationId),
-	);
+	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(conversationId));
 	const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join(
 		'',
 	);
@@ -349,9 +346,7 @@ async function findConversationSandbox(
 	return matches[0];
 }
 
-async function startConversationSandbox(
-	sandbox: DaytonaSandboxLike,
-): Promise<DaytonaSandboxLike> {
+async function startConversationSandbox(sandbox: DaytonaSandboxLike): Promise<DaytonaSandboxLike> {
 	await sandbox.refreshData();
 	assertContainer(sandbox);
 	if (sandbox.state === SandboxState.STARTED) return sandbox;
@@ -415,7 +410,10 @@ export async function verifyContainerStopStartPersistence(
  * Create a Flue sandbox factory from an initialized Daytona sandbox.
  * The application owns the sandbox lifecycle; Flue wraps it for agent use.
  */
-export function daytona(sandbox: DaytonaSandboxLike, options?: DaytonaAdapterOptions): SandboxFactory {
+export function daytona(
+	sandbox: DaytonaSandboxLike,
+	options?: DaytonaAdapterOptions,
+): SandboxFactory {
 	return {
 		async createSandbox(): Promise<Sandbox> {
 			const sandboxCwd = options?.cwd ?? '/workspace';

@@ -89,6 +89,8 @@ describe('assertOpAllowed', () => {
 	});
 
 	test('code-change can vend a push token', () => {
-		expect(() => assertOpAllowed({ submissionType: 'code-change', op: 'vendPushToken' })).not.toThrow();
+		expect(() =>
+			assertOpAllowed({ submissionType: 'code-change', op: 'vendPushToken' }),
+		).not.toThrow();
 	});
 });

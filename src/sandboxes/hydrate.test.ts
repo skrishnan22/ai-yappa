@@ -75,7 +75,9 @@ describe('hydrateWorkspace', () => {
 		expect(result.cwd).toBe(WORKSPACE_REPO_DIR);
 		expect(result.lockfile).toBe('pnpm-lock.yaml');
 		expect(io.commands[0]).toMatch(/^rm -rf '\/workspace\/repo'$/);
-		expect(io.commands[1]).toContain("git clone --depth 1 'https://github.com/skrishnan22/codevil.git'");
+		expect(io.commands[1]).toContain(
+			"git clone --depth 1 'https://github.com/skrishnan22/codevil.git'",
+		);
 		expect(io.commands).toContain(`${WORKSPACE_REPO_DIR} corepack pnpm install --frozen-lockfile`);
 		expect(io.commands).toContain(
 			`${WORKSPACE_REPO_DIR} git checkout -B '${workingBranchName('T1/C1/123.456')}'`,

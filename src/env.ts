@@ -38,9 +38,7 @@ export type ServerEnv = v.InferOutput<typeof serverSchema>;
 export type AgentEnv = v.InferOutput<typeof agentSchema>;
 
 function missingKeys(
-	result:
-		| v.SafeParseResult<typeof serverSchema>
-		| v.SafeParseResult<typeof agentSchema>,
+	result: v.SafeParseResult<typeof serverSchema> | v.SafeParseResult<typeof agentSchema>,
 ): string[] {
 	if (result.success) return [];
 	const keys = new Set<string>();
@@ -48,12 +46,10 @@ function missingKeys(
 		const first = issue.path?.[0]?.key;
 		if (typeof first === 'string') keys.add(first);
 	}
-	return [...keys].sort();
+	return [...keys].toSorted();
 }
 
-export function loadServerEnv(
-	source: unknown = process.env,
-): ServerEnv {
+export function loadServerEnv(source: unknown = process.env): ServerEnv {
 	const result = v.safeParse(serverSchema, source);
 	if (!result.success) {
 		throw new Error(`[boot] missing secrets: ${missingKeys(result).join(', ') || 'invalid env'}`);
@@ -61,9 +57,7 @@ export function loadServerEnv(
 	return result.output;
 }
 
-export function loadAgentEnv(
-	source: unknown = process.env,
-): AgentEnv {
+export function loadAgentEnv(source: unknown = process.env): AgentEnv {
 	const result = v.safeParse(agentSchema, source);
 	if (!result.success) {
 		throw new Error(`[boot] missing secrets: ${missingKeys(result).join(', ') || 'invalid env'}`);
