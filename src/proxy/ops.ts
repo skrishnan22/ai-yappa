@@ -132,7 +132,7 @@ function canonicalJson(value: unknown): string {
 	if (!isRecord(value)) {
 		return JSON.stringify(null);
 	}
-	const keys = Object.keys(value).sort();
+	const keys = Object.keys(value).toSorted();
 	return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
 }
 

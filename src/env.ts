@@ -48,7 +48,7 @@ function missingKeys(
 		const first = issue.path?.[0]?.key;
 		if (typeof first === 'string') keys.add(first);
 	}
-	return [...keys].sort();
+	return [...keys].toSorted();
 }
 
 export function loadServerEnv(

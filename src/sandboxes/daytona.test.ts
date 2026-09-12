@@ -192,6 +192,7 @@ describe('daytona factory', () => {
 		const flueSandbox = await daytona(sandbox, { cwd: '/workspace' }).createSandbox({ id: 'c1' });
 
 		const pending = flueSandbox.exec('sleep 30');
+		// oxlint-disable-next-line vitest/valid-expect -- assertion must attach before fake timers fire
 		const rejection = expect(pending).rejects.toBeInstanceOf(SandboxDiedError);
 		await vi.advanceTimersByTimeAsync(5_000);
 		await rejection;

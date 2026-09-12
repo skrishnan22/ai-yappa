@@ -1,8 +1,22 @@
 {
 	"$schema": "./node_modules/oxlint/configuration_schema.json",
 	"ignorePatterns": ["**/node_modules", "**/dist"],
+	"options": {
+		"typeAware": true
+	},
+	"plugins": [
+		"eslint",
+		"typescript",
+		"unicorn",
+		"oxc",
+		"import",
+		"node",
+		"promise",
+		"vitest"
+	],
 	"categories": {
-		"correctness": "off"
+		"correctness": "error",
+		"suspicious": "warn"
 	},
 	"jsPlugins": [
 		{
@@ -11,6 +25,33 @@
 		}
 	],
 	"rules": {
+		"eslint/no-unused-vars": [
+			"error",
+			{
+				"argsIgnorePattern": "^_",
+				"varsIgnorePattern": "^_"
+			}
+		],
+		"typescript/no-unused-vars": [
+			"error",
+			{
+				"argsIgnorePattern": "^_",
+				"varsIgnorePattern": "^_"
+			}
+		],
+		"eslint/no-underscore-dangle": [
+			"warn",
+			{
+				"allow": [
+					"_exhaustive",
+					"__resetSlackClientForTests",
+					"__resetRunCardForTests"
+				]
+			}
+		],
+		"unicorn/require-post-message-target-origin": "off",
+		"unicorn/require-module-specifiers": "off",
+		"unicorn/consistent-function-scoping": "off",
 		"eslint-js/no-restricted-syntax": [
 			"error",
 			{
