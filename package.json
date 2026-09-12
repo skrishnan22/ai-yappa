@@ -18,6 +18,7 @@
 	},
 	"dependencies": {
 		"@daytona/sdk": "^0.207.0",
+		"@earendil-works/pi-ai": "^0.83.0",
 		"@flue/runtime": "^2.0.3",
 		"@flue/slack": "^2.0.3",
 		"@slack/web-api": "^8.1.1",

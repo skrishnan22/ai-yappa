@@ -1,3 +1,4 @@
+import { createPrivateKey, createPublicKey } from 'node:crypto';
 import { defineTool } from '@flue/runtime';
 import * as v from 'valibot';
 import {
@@ -94,25 +95,27 @@ export async function performCheckpoint(
 	});
 }
 
+const issueNumber = v.pipe(
+	v.union([v.number(), v.pipe(v.string(), v.transform(Number))]),
+	v.integer(),
+	v.minValue(1),
+);
+
 export function githubTools(args: { conversationId: string; repo: string; audit: AuditSink }) {
 	return [
 		defineTool({
 			name: 'read_github_issue',
 			description: 'Read one GitHub issue from the conversation repository.',
-			input: v.object({ number: v.number() }),
+			input: v.object({ number: issueNumber }),
 			async run({ data }) {
-				const ready = liveOwner(args);
-				if (!ready.ok) return { output: { error: ready.error } };
-				return { output: await performReadIssue(ready.ctx, data) };
+				return runGithubTool(args, (ready) => performReadIssue(ready.ctx, data));
 			},
 		}),
 		defineTool({
 			name: 'read_github_repo',
 			description: 'Read metadata for the conversation repository.',
 			async run() {
-				const ready = liveOwner(args);
-				if (!ready.ok) return { output: { error: ready.error } };
-				return { output: await performReadRepo(ready.ctx) };
+				return runGithubTool(args, (ready) => performReadRepo(ready.ctx));
 			},
 		}),
 		defineTool({
@@ -121,9 +124,7 @@ export function githubTools(args: { conversationId: string; repo: string; audit:
 				'Create the deterministic working branch for this conversation from fromSha. The branch name is not chosen by the model.',
 			input: v.object({ fromSha: v.pipe(v.string(), v.minLength(1)) }),
 			async run({ data }) {
-				const ready = liveOwner(args);
-				if (!ready.ok) return { output: { error: ready.error } };
-				return { output: await performCreateWorkingBranch(ready.ctx, data) };
+				return runGithubTool(args, (ready) => performCreateWorkingBranch(ready.ctx, data));
 			},
 		}),
 		defineTool({
@@ -135,9 +136,7 @@ export function githubTools(args: { conversationId: string; repo: string; audit:
 				base: v.pipe(v.string(), v.minLength(1)),
 			}),
 			async run({ data }) {
-				const ready = liveOwner(args);
-				if (!ready.ok) return { output: { error: ready.error } };
-				return { output: await performOpenPullRequest(ready.ctx, data) };
+				return runGithubTool(args, (ready) => performOpenPullRequest(ready.ctx, data));
 			},
 		}),
 		defineTool({
@@ -147,17 +146,28 @@ export function githubTools(args: { conversationId: string; repo: string; audit:
 			input: v.object({ expectedSha: v.pipe(v.string(), v.minLength(1)) }),
 			harness: true,
 			async run({ data, harness }) {
-				const ready = liveOwner(args);
-				if (!ready.ok) return { output: { error: ready.error } };
-				return {
-					output: await performCheckpoint(ready.ctx, data, {
+				return runGithubTool(args, (ready) =>
+					performCheckpoint(ready.ctx, data, {
 						exec: (command, options) => harness.sandbox.exec(command, { env: options.env }),
 						revoke: (token) => ready.port.revokeInstallationToken(token),
 					}),
-				};
+				);
 			},
 		}),
 	];
+}
+
+async function runGithubTool<T>(
+	args: { conversationId: string; repo: string; audit: AuditSink },
+	run: (ready: Extract<ReturnType<typeof liveOwner>, { ok: true }>) => Promise<T>,
+): Promise<{ output: T | { error: string } }> {
+	const ready = liveOwner(args);
+	if (!ready.ok) return { output: { error: ready.error } };
+	try {
+		return { output: await run(ready) };
+	} catch (error) {
+		return { output: { error: error instanceof Error ? error.message : 'GitHub tool failed' } };
+	}
 }
 
 function mintAndExecute(
@@ -279,30 +289,37 @@ export function liveOwner(args: {
 }):
 	| { ok: true; ctx: OwnerProxyCtx; port: ReturnType<typeof createGitHubPort> }
 	| { ok: false; error: string } {
-	const keys = capabilityKeysFromEnv();
-	if (keys === undefined) {
+	try {
+		const keys = capabilityKeysFromEnv();
+		if (keys === undefined) {
+			return {
+				ok: false,
+				error:
+					'CAPABILITY_PRIVATE_KEY, CAPABILITY_PUBLIC_KEY, and CAPABILITY_KID are not configured.',
+			};
+		}
+		const github = githubRuntime();
+		if (!github.ok) return github;
+		return {
+			ok: true,
+			port: github.port,
+			ctx: {
+				conversationId: args.conversationId,
+				submissionId: 'active',
+				submissionType: 'code-change',
+				repo: args.repo,
+				keys,
+				now: Math.floor(Date.now() / 1000),
+				handlers: github.handlers,
+				audit: args.audit,
+			},
+		};
+	} catch (error) {
 		return {
 			ok: false,
-			error:
-				'CAPABILITY_PRIVATE_KEY, CAPABILITY_PUBLIC_KEY, and CAPABILITY_KID are not configured.',
+			error: error instanceof Error ? error.message : 'GitHub tools are not configured',
 		};
 	}
-	const github = githubRuntime();
-	if (!github.ok) return github;
-	return {
-		ok: true,
-		port: github.port,
-		ctx: {
-			conversationId: args.conversationId,
-			submissionId: 'active',
-			submissionType: 'code-change',
-			repo: args.repo,
-			keys,
-			now: Math.floor(Date.now() / 1000),
-			handlers: github.handlers,
-			audit: args.audit,
-		},
-	};
 }
 
 function githubRuntime(): ({ ok: true } & GitHubRuntime) | { ok: false; error: string } {
@@ -320,11 +337,31 @@ function githubRuntime(): ({ ok: true } & GitHubRuntime) | { ok: false; error: s
 }
 
 function capabilityKeysFromEnv(env: NodeJS.ProcessEnv = process.env): CapabilityKeys | undefined {
-	const privateKeyPem = env.CAPABILITY_PRIVATE_KEY?.replace(/\\n/g, '\n');
-	const publicKeyPem = env.CAPABILITY_PUBLIC_KEY?.replace(/\\n/g, '\n');
-	const kid = env.CAPABILITY_KID;
+	const privateKeyPem = pemFromEnv(env.CAPABILITY_PRIVATE_KEY);
+	const publicKeyPem = pemFromEnv(env.CAPABILITY_PUBLIC_KEY);
+	const kid = env.CAPABILITY_KID?.trim();
 	if (!privateKeyPem || !publicKeyPem || !kid) return undefined;
+	try {
+		const priv = createPrivateKey(privateKeyPem);
+		const pub = createPublicKey(publicKeyPem);
+		if (priv.asymmetricKeyType !== 'ed25519' || pub.asymmetricKeyType !== 'ed25519') {
+			throw new Error(`${priv.asymmetricKeyType}/${pub.asymmetricKeyType}`);
+		}
+	} catch (error) {
+		throw new Error(
+			`CAPABILITY_PRIVATE_KEY/CAPABILITY_PUBLIC_KEY must be a generated Ed25519 PKCS8/SPKI pair, not the GitHub App RSA key: ${error instanceof Error ? error.message : 'unknown error'}`,
+		);
+	}
 	return { kid, privateKeyPem, publicKeyPem };
+}
+
+function pemFromEnv(raw: string | undefined): string | undefined {
+	if (raw === undefined || raw.trim().length === 0) return undefined;
+	let pem = raw.trim();
+	if ((pem.startsWith('"') && pem.endsWith('"')) || (pem.startsWith("'") && pem.endsWith("'"))) {
+		pem = pem.slice(1, -1).trim();
+	}
+	return pem.replaceAll('\\n', '\n').replaceAll('\r\n', '\n').replaceAll('\r', '\n');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

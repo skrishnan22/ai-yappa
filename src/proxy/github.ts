@@ -1,4 +1,4 @@
-import { createSign } from 'node:crypto';
+import { createPrivateKey, createSign, type KeyObject } from 'node:crypto';
 import type { ProxyHandler } from './ops.ts';
 import type { ProxyOp } from './capabilities.ts';
 
@@ -101,7 +101,7 @@ export function githubHandlers(port: GitHubPort): Record<ProxyOp, ProxyHandler> 
 
 export function createGitHubPort(env: NodeJS.ProcessEnv = process.env): GitHubPort {
 	const appId = env.GITHUB_APP_ID;
-	const pem = env.GITHUB_APP_PRIVATE_KEY?.replace(/\\n/g, '\n');
+	const pem = normalizeGithubAppPrivateKey(env.GITHUB_APP_PRIVATE_KEY);
 	const installationId = env.GITHUB_APP_INSTALLATION_ID;
 	if (!appId || !pem || !installationId) {
 		throw new Error(
@@ -175,8 +175,47 @@ function signAppJwt(args: { appId: string; privateKeyPem: string; now: number })
 		JSON.stringify({ iat: args.now - 60, exp: args.now + 540, iss: args.appId }),
 	).toString('base64url');
 	const data = `${header}.${payload}`;
-	const signature = createSign('RSA-SHA256').update(data).sign(args.privateKeyPem);
-	return `${data}.${signature.toString('base64url')}`;
+	try {
+		const signature = createSign('RSA-SHA256').update(data).sign(args.privateKeyPem);
+		return `${data}.${signature.toString('base64url')}`;
+	} catch (error) {
+		throw new Error(
+			`GITHUB_APP_PRIVATE_KEY could not be used as an RSA GitHub App key: ${error instanceof Error ? error.message : 'unknown error'}`,
+		);
+	}
+}
+
+export function normalizeGithubAppPrivateKey(raw: string | undefined): string | undefined {
+	if (raw === undefined || raw.trim().length === 0) return undefined;
+	let pem = raw.trim();
+	if ((pem.startsWith('"') && pem.endsWith('"')) || (pem.startsWith("'") && pem.endsWith("'"))) {
+		pem = pem.slice(1, -1).trim();
+	}
+	pem = pem.replaceAll('\\n', '\n').replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+	const match = pem.match(/-----BEGIN ([A-Z ]+)-----([A-Za-z0-9+/=\s]+)-----END \1-----/);
+	if (match === null || match[1] === undefined || match[2] === undefined) {
+		throw new Error(
+			'GITHUB_APP_PRIVATE_KEY is not a PEM. Use the GitHub App RSA .pem (BEGIN RSA PRIVATE KEY / BEGIN PRIVATE KEY), not the Ed25519 capability key.',
+		);
+	}
+	const kind = match[1];
+	const body = match[2].replace(/\s+/g, '');
+	const lines = body.match(/.{1,64}/g) ?? [body];
+	pem = `-----BEGIN ${kind}-----\n${lines.join('\n')}\n-----END ${kind}-----\n`;
+	let key: KeyObject;
+	try {
+		key = createPrivateKey(pem);
+	} catch (error) {
+		throw new Error(
+			`GITHUB_APP_PRIVATE_KEY failed to parse: ${error instanceof Error ? error.message : 'unknown error'}`,
+		);
+	}
+	if (key.asymmetricKeyType !== 'rsa') {
+		throw new Error(
+			`GITHUB_APP_PRIVATE_KEY is ${key.asymmetricKeyType}, but GitHub Apps require RSA. Ed25519 belongs in CAPABILITY_PRIVATE_KEY.`,
+		);
+	}
+	return pem;
 }
 
 async function githubFetch(args: {
@@ -191,6 +230,7 @@ async function githubFetch(args: {
 		headers: {
 			accept: 'application/vnd.github+json',
 			authorization: `${args.tokenType} ${args.token}`,
+			'user-agent': 'slack-agent',
 			'x-github-api-version': '2022-11-28',
 			...(args.body !== undefined ? { 'content-type': 'application/json' } : {}),
 		},
@@ -211,9 +251,24 @@ async function githubFetch(args: {
 
 async function githubOk(response: { status: number; json: unknown }): Promise<unknown> {
 	if (response.status < 200 || response.status >= 300) {
-		throw new Error(`GitHub ${response.status}`);
+		throw new Error(githubStatusError(response.status, response.json));
 	}
 	return response.json;
+}
+
+function githubStatusError(status: number, json: unknown): string {
+	const parts = [`GitHub ${status}`];
+	if (isRecord(json) && typeof json.message === 'string' && json.message.length > 0) {
+		parts.push(json.message);
+	}
+	if (isRecord(json) && Array.isArray(json.errors)) {
+		for (const error of json.errors) {
+			if (isRecord(error) && typeof error.message === 'string' && error.message.length > 0) {
+				parts.push(error.message);
+			}
+		}
+	}
+	return parts.join(': ');
 }
 
 function requireRepo(params: unknown): string {

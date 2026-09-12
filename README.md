@@ -2,7 +2,7 @@
 
 Slack-native engineering coworker. Investigates a repo, makes changes, and opens PRs. It never merges or deploys.
 
-Built as a Flue app on the Cloudflare target. Execution is Daytona container Sandboxes, not Cloudflare Sandbox. A stopped container retains its filesystem but loses RAM and running processes. The model is OpenCode Go (`opencode-go/kimi-k2.7-code`).
+Built as a Flue app on the Cloudflare target. Execution is Daytona container Sandboxes, not Cloudflare Sandbox. A stopped container retains its filesystem but loses RAM and running processes. The model is OpenCode Go (`opencode-go/deepseek-v4-flash`).
 
 ## Setup
 
@@ -30,7 +30,7 @@ CAPABILITY_KID=
 
 `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` are optional. If both are set, hydration configures that identity in the cloned repo (GitHub App bot: `{slug}[bot]` / `{id}+{slug}[bot]@users.noreply.github.com`). If neither is set, commits would otherwise be `root` — do not guess. If only one is set, boot fails.
 
-GitHub App and capability keys are M2. Hydration still runs a public clone without them; GitHub tools return a configuration error instead of calling GitHub. Generate an Ed25519 keypair for the capability keys (`generateKeyPairSync('ed25519')`, PKCS8/SPKI PEM, `kid` = first 8 hex chars of SHA-256 of the public PEM). The GitHub App needs `contents` + `pull_requests` on the pilot repo. PEM values may use `\n` in `.dev.vars`.
+GitHub App and capability keys are M2. Hydration still runs a public clone without them; GitHub tools return a configuration error instead of calling GitHub. Generate an Ed25519 keypair for the capability keys (`generateKeyPairSync('ed25519')`, PKCS8/SPKI PEM, `kid` = first 8 hex chars of SHA-256 of the public PEM). `GITHUB_APP_PRIVATE_KEY` is the RSA `.pem` GitHub downloads for the App — not the Ed25519 capability key. PEM values may use `\n` in `.dev.vars`. The GitHub App needs `contents` + `pull_requests` on the pilot repo.
 
 `npm run dev` runs under the Cloudflare Vite plugin, which reads Worker secrets from `.dev.vars`, not `.env`. Copy the same values there:
 
@@ -94,7 +94,7 @@ Setup writes the assigned host into `TUNNEL_HOSTNAME`. Then:
 
 Stop with `npm run tunnel:stop`. Free ngrok also shows a browser warning page. Slack's event POSTs skip that. If you open the URL in a browser, click through once.
 
-A threaded reply that reflects work in the already-cloned repo (not clone/`ls` as the job) is the hydration slice. Seed images with repo+deps baked in wait for M4.
+A threaded reply that reflects work in the already-cloned repo (not clone/`ls` as the job) is the hydration slice. M3 adds a live run card in the thread (one Slack message per submission, edited in place, plus a short ping when the submission settles) and attaches thread history on wake. Seed images with repo+deps baked in wait for M4.
 
 ## Deploy
 

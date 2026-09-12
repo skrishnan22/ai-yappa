@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, test } from 'vitest';
 import { generateCapabilityKeyPair, type ProxyOp } from '../proxy/capabilities.ts';
 import type { ProxyHandler } from '../proxy/ops.ts';
@@ -169,7 +170,9 @@ describe('liveOwner', () => {
 		process.env.CAPABILITY_PUBLIC_KEY = keys.publicKeyPem;
 		process.env.CAPABILITY_KID = keys.kid;
 		process.env.GITHUB_APP_ID = '1';
-		process.env.GITHUB_APP_PRIVATE_KEY = 'dummy';
+		process.env.GITHUB_APP_PRIVATE_KEY = generateKeyPairSync('rsa', { modulusLength: 2048 })
+			.privateKey.export({ type: 'pkcs1', format: 'pem' })
+			.toString();
 		process.env.GITHUB_APP_INSTALLATION_ID = '2';
 		try {
 			const audit = { append: () => {} };
@@ -189,6 +192,34 @@ describe('liveOwner', () => {
 			expect(first.port).toBe(second.port);
 			expect(first.ctx.handlers).toBe(second.ctx.handlers);
 			expect(first.ctx.audit).toBe(audit);
+		} finally {
+			restoreEnv(previous);
+		}
+	});
+
+	test('rejects a GitHub App RSA key used as the capability private key', () => {
+		const previous = {
+			CAPABILITY_PRIVATE_KEY: process.env.CAPABILITY_PRIVATE_KEY,
+			CAPABILITY_PUBLIC_KEY: process.env.CAPABILITY_PUBLIC_KEY,
+			CAPABILITY_KID: process.env.CAPABILITY_KID,
+		};
+		const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 });
+		process.env.CAPABILITY_PRIVATE_KEY = rsa.privateKey
+			.export({ type: 'pkcs1', format: 'pem' })
+			.toString();
+		process.env.CAPABILITY_PUBLIC_KEY = rsa.publicKey
+			.export({ type: 'spki', format: 'pem' })
+			.toString();
+		process.env.CAPABILITY_KID = 'deadbeef';
+		try {
+			const ready = liveOwner({
+				conversationId: 'c1',
+				repo: 'https://github.com/skrishnan22/codevil.git',
+				audit: { append: () => {} },
+			});
+			expect(ready.ok).toBe(false);
+			if (ready.ok) return;
+			expect(ready.error).toMatch(/Ed25519 PKCS8\/SPKI/i);
 		} finally {
 			restoreEnv(previous);
 		}

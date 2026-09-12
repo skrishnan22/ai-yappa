@@ -1,5 +1,11 @@
+import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, test } from 'vitest';
-import { githubHandlers, type GitHubPort } from './github.ts';
+import {
+	githubHandlers,
+	normalizeGithubAppPrivateKey,
+	createGitHubPort,
+	type GitHubPort,
+} from './github.ts';
 
 type FakeCall = {
 	kind: 'createInstallationToken' | 'revoke' | 'request';
@@ -165,6 +171,63 @@ describe('githubHandlers', () => {
 		port.request = async () => ({ status: 404, json: { message: 'Not Found' } });
 		await expect(
 			githubHandlers(port).readRepoMetadata({ claims, params: { repo: 'skrishnan22/codevil' } }),
-		).rejects.toThrow(/404/);
+		).rejects.toThrow(/GitHub 404: Not Found/);
+	});
+});
+
+describe('normalizeGithubAppPrivateKey', () => {
+	const rsaPem = generateKeyPairSync('rsa', { modulusLength: 2048 })
+		.privateKey.export({ type: 'pkcs1', format: 'pem' })
+		.toString();
+
+	test('accepts escaped newlines and wrapping quotes', () => {
+		const escaped = `"${rsaPem.replaceAll('\n', '\\n')}"`;
+		const normalized = normalizeGithubAppPrivateKey(escaped);
+		expect(normalized).toContain('BEGIN RSA PRIVATE KEY');
+		expect(normalized).toContain('\n');
+	});
+
+	test('rejects an Ed25519 capability key', () => {
+		const ed = generateKeyPairSync('ed25519')
+			.privateKey.export({ type: 'pkcs8', format: 'pem' })
+			.toString();
+		expect(() => normalizeGithubAppPrivateKey(ed)).toThrow(
+			/Ed25519 belongs in CAPABILITY_PRIVATE_KEY/i,
+		);
+	});
+
+	test('rejects garbage', () => {
+		expect(() => normalizeGithubAppPrivateKey('not-a-key')).toThrow(/not a PEM/);
+	});
+});
+
+describe('createGitHubPort', () => {
+	const rsaPem = generateKeyPairSync('rsa', { modulusLength: 2048 })
+		.privateKey.export({ type: 'pkcs1', format: 'pem' })
+		.toString();
+
+	test('sends a User-Agent so GitHub does not 403 workerd fetch', async () => {
+		const seen: string[] = [];
+		const original = globalThis.fetch;
+		globalThis.fetch = (async (_input, init) => {
+			seen.push(new Headers(init?.headers).get('user-agent') ?? '');
+			return new Response(JSON.stringify({ token: 'ghs_x', expires_at: '2099-01-01T00:00:00Z' }), {
+				status: 201,
+			});
+		}) as typeof fetch;
+		try {
+			const port = createGitHubPort({
+				GITHUB_APP_ID: '1',
+				GITHUB_APP_PRIVATE_KEY: rsaPem,
+				GITHUB_APP_INSTALLATION_ID: '2',
+			});
+			await port.createInstallationToken({
+				repo: 'skrishnan22/codevil',
+				permissions: { contents: 'write', pull_requests: 'write' },
+			});
+			expect(seen).toEqual(['slack-agent']);
+		} finally {
+			globalThis.fetch = original;
+		}
 	});
 });

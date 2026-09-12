@@ -291,6 +291,10 @@ The original M1 layout used the Flue Modal blueprint. On 2026-08-30 D2 first cha
 
 Owner code hydrates on Coworker sandbox create: toolchain snapshot `slack-agent-container-v2` (`node:22-bookworm`, git, build-essential, python3, `corepack enable`) → shallow clone into `/workspace/repo` → lockfile install at repo root → working branch `agent/<sanitized-conversationId>` → `/workspace/.workspace_ready` (repo + lockfile hash). Flue cwd is `/workspace/repo`. The same labeled Daytona container is reused (M1 name/label); hydration skips clone/install only when the marker matches this conversation's repo **and** the workspace fingerprint still holds (git dir present, lockfile hash unchanged). No extra Flue lease store. Repo+deps seed images and async post-ready snapshots remain M4 / v2. Git author is optional env (`GIT_AUTHOR_NAME` + `GIT_AUTHOR_EMAIL`); missing both skips bot identity rather than guessing `root`. `bun.lock` is recognized and fails closed: the v2 image has no Bun.
 
+### M3 layout (2026-09-10)
+
+Live run card is an owner-side projection of Flue runtime events (`submission_*`, hydration, tools), not a model tool. One compact Block Kit message per submission (no header block), identity in `usePersistentState('run-card')`, edited in place; a thread ping only when a PR exists or the submission failed. Slack's native agent timeline (`chat.startStream` `task_update` + `agents.sessions.setStatus`) needs the Agents product and `assistant:write` — deferred. Thread Context is fetched at dispatch (`conversations.replies`) and attached as signal `attributes.threadContext` (string, last 8 KiB); drop-untracked still does not wake. Steering-vs-queue stays the stub (mid-work messages are steering). `commandId`/fencing, seed images, and `cfRead`/`awsRead` stay deferred.
+
 ## Appendix A — Rejected alternatives (recorded, closed)
 
 - **Modal direct from the Durable Object**: rejected because the JavaScript SDK uses Node gRPC over HTTP/2, which the Cloudflare Worker/Durable Object runtime cannot execute even though the bundle builds.
