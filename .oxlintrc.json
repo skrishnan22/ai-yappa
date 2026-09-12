@@ -46,11 +46,11 @@
 				"message": "Don't use await inside a ternary; use if/else."
 			},
 			{
-				"selector": "ConditionalExpression > ArrowFunctionExpression[async=true]",
+				"selector": "ConditionalExpression ArrowFunctionExpression[async=true]",
 				"message": "Don't use an async function as a ternary branch; use if/else."
 			},
 			{
-				"selector": "ConditionalExpression > FunctionExpression[async=true]",
+				"selector": "ConditionalExpression FunctionExpression[async=true]",
 				"message": "Don't use an async function as a ternary branch; use if/else."
 			},
 			{
