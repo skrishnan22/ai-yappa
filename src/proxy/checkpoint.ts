@@ -67,14 +67,10 @@ export async function checkpointWorkingBranch(args: {
 	let checkpointError: unknown;
 	try {
 		const pushed = await args.exec(`git push origin HEAD:refs/heads/${branch}`, {
-			env: {
-				GIT_CONFIG_COUNT: '1',
-				GIT_CONFIG_KEY_0: 'http.extraHeader',
-				GIT_CONFIG_VALUE_0: `AUTHORIZATION: bearer ${push.token}`,
-			},
+			env: gitPushEnv(push.token),
 		});
 		if (pushed.exitCode !== 0) {
-			throw new Error(pushed.stderr || `git push exited ${pushed.exitCode}`);
+			throw new Error(pushed.stderr || pushed.stdout || `git push exited ${pushed.exitCode}`);
 		}
 		const confirmed = await executeProxy({
 			token: mintCapability({
@@ -127,6 +123,16 @@ export async function checkpointWorkingBranch(args: {
 		throw new Error('checkpoint returned no result');
 	}
 	return result;
+}
+
+function gitPushEnv(token: string): Record<string, string> {
+	// GitHub git-over-HTTPS wants Basic x-access-token, not a REST Bearer header.
+	const basic = Buffer.from(`x-access-token:${token}`).toString('base64');
+	return {
+		GIT_CONFIG_COUNT: '1',
+		GIT_CONFIG_KEY_0: 'http.extraHeader',
+		GIT_CONFIG_VALUE_0: `Authorization: Basic ${basic}`,
+	};
 }
 
 async function readLocalHead(exec: CheckpointExec): Promise<string> {

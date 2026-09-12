@@ -24,3 +24,6 @@ cloudflared.yml
 .DS_Store
 .bundle-test/
 .superpowers/
+
+# PR Lens writes its previews here. They are rebuilt on demand.
+.pr-lens/

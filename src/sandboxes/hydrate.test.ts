@@ -194,8 +194,10 @@ describe('coworkerInstructions', () => {
 	test('names the workspace path and treats Slack text as the task', () => {
 		const prompt = coworkerInstructions('https://github.com/skrishnan22/codevil.git');
 		expect(prompt).toContain(WORKSPACE_REPO_DIR);
-		expect(prompt).toMatch(/Slack message as the task/i);
+		expect(prompt).toMatch(/signal body as the request to act/i);
 		expect(prompt).toContain('checkpoint_working_branch');
+		expect(prompt).toContain('open_pull_request');
+		expect(prompt).toContain('live run card');
 		expect(prompt.toLowerCase()).not.toContain('clone that repo');
 		expect(prompt).not.toMatch(/\bls\b/);
 	});

@@ -30,7 +30,7 @@ function execAt(
 	expectedSha: string,
 	args?: {
 		seen?: Array<{ command: string; env: Record<string, string> }>;
-		push?: { stderr?: string; exitCode?: number };
+		push?: { stderr?: string; stdout?: string; exitCode?: number };
 	},
 ): CheckpointExec {
 	return async (command, options) => {
@@ -39,7 +39,7 @@ function execAt(
 			return { stdout: `${expectedSha}\n`, stderr: '', exitCode: 0 };
 		}
 		return {
-			stdout: '',
+			stdout: args?.push?.stdout ?? '',
 			stderr: args?.push?.stderr ?? '',
 			exitCode: args?.push?.exitCode ?? 0,
 		};
@@ -72,7 +72,9 @@ describe('checkpointWorkingBranch', () => {
 		]);
 		expect(seen[0]?.env).toEqual({});
 		expect(seen[1]?.command.includes('ghs_test')).toBe(false);
-		expect(seen[1]?.env.GIT_CONFIG_VALUE_0).toBe('AUTHORIZATION: bearer ghs_test');
+		expect(seen[1]?.env.GIT_CONFIG_VALUE_0).toBe(
+			`Authorization: Basic ${Buffer.from('x-access-token:ghs_test').toString('base64')}`,
+		);
 		expect(revoked).toEqual(['ghs_test']);
 		expect(result).toEqual({
 			branch: 'agent/c1',
@@ -133,6 +135,27 @@ describe('checkpointWorkingBranch', () => {
 			}),
 		).rejects.toThrow(/remote sha/);
 		expect(revoked).toEqual(['ghs_test']);
+	});
+
+	test('reports git push stdout when stderr is empty', async () => {
+		const keys = generateCapabilityKeyPair();
+		await expect(
+			checkpointWorkingBranch({
+				conversationId: 'c1',
+				submissionId: 's1',
+				submissionType: 'code-change',
+				repo: 'skrishnan22/codevil',
+				expectedSha: 'abc123',
+				keys,
+				now: 1_000_000,
+				handlers: handlers({}),
+				audit: { append: () => {} },
+				exec: execAt('abc123', {
+					push: { stdout: 'The requested URL returned error: 403', stderr: '', exitCode: 128 },
+				}),
+				revoke: async () => {},
+			}),
+		).rejects.toThrow(/403/);
 	});
 
 	test('revokes when git push fails', async () => {
