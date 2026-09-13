@@ -17,9 +17,9 @@ Status: draft for implementation. This supersedes the exploratory working note; 
 | D9 | Lost command responses become **Unknown Tool Outcome**, resolved by evidence | Never auto-fail or auto-retry a possibly-succeeded command |
 | D10 | No merge, no deploy, no admin cloud credentials, ever | Hard product boundary |
 | D11 | Integration tools are **brain-side** via the credential proxy; the sandbox gets only workspace tools | Reading issues/alerts/logs needs no sandbox round-trip; only git push needs a credential-shaped thing inside |
-| D12 | Two submission types: **code-change** and **investigation** (read-only capabilities) | Alert-triggered work is investigate-and-report; smaller blast radius, easier to auto-trigger later |
-| D13 | Capability tokens are **asymmetric** (Ed25519): owner signs, proxy verifies | A compromised proxy can't mint capabilities; a compromised owner can't exceed proxy policy — neither alone escalates |
-| D14 | Capability contents are set by **deterministic code**, never by the model; no LLM-callable tool returns a credential | Prompt injection can request operations, never permissions or secrets |
+| D12 | Two submission types: **code-change** and **investigation** (read-only operations) | Alert-triggered work is investigate-and-report; smaller blast radius, easier to auto-trigger later |
+| D13 | GitHub authorization is deterministic trusted Worker policy, not a signed internal token | Repository and submission type come from trusted conversation context; the model supplies only typed operation parameters |
+| D14 | No model-callable tool returns a credential or accepts repository, permission, destination, or arbitrary-header fields | `vendPushToken` is internal checkpoint machinery; prompt injection can request named operations, never choose their authority |
 
 ## 2. Architecture
 
@@ -48,7 +48,7 @@ Slack ──────────────┐
   - create branch/PR
 ```
 
-The conversation owner is the credential proxy's only caller. It calls the proxy directly for integration tools (read issue, read alert, query logs, create PR) and for the short-lived GitHub token used by a checkpoint push. The sandbox never calls the proxy and never receives a Capability Grant. For a push, deterministic owner code injects the returned repo-scoped token into the environment of that single `git push` process, confirms the remote ref, and revokes the token.
+The conversation owner is the credential proxy's only caller. It calls the proxy directly for integration tools (read issue, read alert, query logs, create PR) and for the short-lived GitHub token used by a checkpoint push. The sandbox never calls the proxy. For a push, deterministic owner code injects the returned repo-scoped token into the environment of that single `git push` process, confirms the remote ref, and revokes the token.
 
 ## 3. Domain model
 
@@ -64,8 +64,8 @@ Identity and canonical state live in the Flue conversation owner. The Daytona sa
 
 Submissions have a type (D12):
 
-- **code-change**: full workspace, capability set includes branch/PR creation; deliverable is a PR.
-- **investigation**: read-only capability set (no `createBranch`/`createPullRequest`, no push token vending); deliverable is a report in the thread. May still use a sandbox for read-only repo inspection.
+- **code-change**: full workspace; trusted policy permits branch/PR creation; deliverable is a PR.
+- **investigation**: read-only operation set (no `createBranch`/`createPullRequest`, no push-token vending); deliverable is a report in the thread. May still use a sandbox for read-only repo inspection.
 
 ### Conversation states
 
@@ -132,35 +132,42 @@ If the stream dies before a terminal outcome arrives, the owner records **Unknow
 
 The proxy is the only component holding real **integration** credentials: the GitHub App private key, a read-only Cloudflare API token, and (later) read-only AWS credentials. The full secret inventory, trust-zone model, and end-to-end flows are in §5; this section defines the component's surface.
 
-**Internal pipeline.** One Worker, four route groups (`/github/*`, `/cf/*`, `/aws/*`, `/capabilities/vend-push-token`), shared middleware:
+**Internal pipeline.** The current proxy is an in-process trusted integration boundary inside the Worker, not an HTTP service. For every operation it:
 
-1. **Verify** capability token: Ed25519 signature (D13), expiry ≤ 10 min, `conversationId`/`submissionId` present.
-2. **Authorize**: op ∈ `allowedOps` and op class permitted for `submissionType` (investigation tokens structurally lack all write ops).
-3. **Validate params** against a per-op schema — no caller-shaped upstream requests except the gated read-only passthroughs.
-4. **Execute** with the real credential.
-5. **Audit + limit**: append `{ts, conversationId, submissionId, op, paramsDigest, outcome, latency}` to the conversation event log **and** to a flat cross-conversation audit store (D1 table; enables "every write op across all conversations last week" queries); enforce per-conversation rate limits and concurrency caps.
+1. validates the model-facing tool input against the operation-specific schema;
+2. attaches an `OperationContext` built from trusted conversation data (`conversationId`, `submissionId`, `submissionType`, canonical `repo`);
+3. authorizes the named operation from the static submission policy;
+4. executes the typed handler with Worker-held GitHub credentials;
+5. maps the result to a credential-free public shape; and
+6. appends `{ts, conversationId, submissionId, repo, op, paramsDigest, outcome, latency}` to the conversation audit log. A cross-conversation audit store and rate limits remain deferred.
 
-The owner mints a fresh single-purpose capability token per proxy call (local signature, cheap); the 10-minute window is clock-skew slack, not a reuse budget.
+The model never supplies the repository or submission type, and operation parameters contain no `repo` field. `vendPushToken` is internal checkpoint machinery and is not registered as a Flue tool.
 
 **Tool access model (D11).** Tools split by where they run:
 
 - **Brain-side tools** — typed operations the reasoning loop calls on the proxy directly. The sandbox is not involved; real credentials never leave the proxy. This covers all reads and all trusted writes.
-- **Sandbox-side tools** — shell, filesystem, git, package managers. The only credential-shaped thing ever inside the sandbox is a proxy-vended GitHub App installation token (≤ 1 h, repo-scoped) for `git push`/`gh` against the working repo. `wrangler`/`aws` CLIs may exist in the image for unauthenticated local use (e.g. `wrangler dev`) but are **never** given credentials; infra reads happen brain-side.
+- **Sandbox-side tools** — shell, filesystem, git, package managers. The only credential-shaped thing inside the sandbox is a fresh GitHub App installation token (≤ 1 h, repo-scoped, `contents:write`) in the environment of one checkpoint `git push`. It is not available through a model tool result, but code in the same sandbox may observe or exercise it during that bounded window. `wrangler`/`aws` CLIs may exist in the image for unauthenticated local use (e.g. `wrangler dev`) but are **never** given credentials; infra reads happen brain-side.
 
 **v1 operation surface** (GitHub App, least-privilege installation scopes):
 
-- `readIssue(repo, number)` / `readRepoMetadata(repo)`
-- `createBranch(repo, name, fromSha)` / `createPullRequest(repo, head, base, title, body)`
-- `vendPushToken(repo)` → installation token for the sandbox (code-change submissions only)
+- `readIssue(number)` / `readRepoMetadata()` / internal `readRef(ref)`
+- `createBranch(name, fromSha)` / `createPullRequest(head, base, title, body)`
+- internal `vendPushToken()` → installation token for one checkpoint push (code-change submissions only)
+
+All handlers receive the canonical repository through trusted `OperationContext`; none accepts it as an operation parameter.
 
 **v3 additions for investigations** (read-only, no write analog exists):
 
 - `cfRead(pathPrefix-allowlisted GET)` — read-only passthrough to the Cloudflare API: method locked to GET, host fixed, path validated against an allowlist of prefixes (alerts, analytics, Workers logs). This is deliberately more generic than the GitHub surface because investigation queries can't be fully enumerated up front; it stays principled by being **read-only + allowlisted-path + audited**, which is categorically different from an arbitrary authenticated proxy.
 - `awsRead(service, operation, params)` — same pattern via SigV4 signing from the Worker, IAM policy restricted to `Describe*/Get*/List*` on the relevant services.
 
-**Capability tokens.** Claims: `{conversationId, submissionId, submissionType, repo, allowedOps, exp ≤ 10 min}`, signed by the owner's Ed25519 private key; the proxy holds only the verify key (D13). The trigger type determines the submission type, and the submission type determines `allowedOps`, via a static table in the owner (D14) — the LLM requests operations, never permissions. Investigation tokens can never carry `createBranch`/`createPullRequest`/`vendPushToken`.
+**GitHub token mechanics.** The proxy signs a short-lived App JWT and exchanges it for installation tokens scoped at creation to exactly the trusted context repository. It uses three profiles:
 
-**GitHub token mechanics.** The proxy signs a short-lived App JWT and exchanges it for installation tokens **scoped at creation**: repository list narrowed to the working repo, permissions narrowed to `contents: write` + `pull_requests: write` (read-only variants for investigation clones). Installation tokens cannot be branch-scoped, so compensating controls are: branch protection on default branches of enrolled repos, and the App simply lacking admin/workflow permissions. Tokens for brain-side reads are cached per installation until ~5 min before their 1 h expiry; push tokens are minted fresh and **revoked** (`DELETE /installation/token`) as soon as the checkpoint is confirmed.
+- cached read: `contents:read`, `issues:read`, `pull_requests:read`;
+- cached trusted write: `contents:write`, `pull_requests:write`, retained only inside the Worker; and
+- fresh sandbox push: exactly `contents:write`, never cached, revoked after checkpoint success or failure.
+
+Both caches are keyed by canonical repository and refresh at least five minutes before expiry. Installation tokens cannot be branch-scoped, so compensating controls are deterministic destination construction, branch protection on default/release branches of enrolled repositories, and an App that lacks admin, workflow, deployment, secret, and merge-bypass permissions.
 
 **Read-only passthrough gates.** `cfRead`: account id pinned server-side, method locked to GET, path checked against an allowlist of prefixes, responses size-capped. `awsRead`: SigV4 via `aws4fetch` against an IAM principal restricted to `Describe*/Get*/List*` on enumerated services — both the proxy allowlist and IAM would have to be wrong to permit a write.
 
@@ -187,29 +194,27 @@ Each real credential lives in exactly one place:
 | Slack bot token | Conversation owner | Posting cards/messages |
 | LLM API keys | Conversation owner (behind AI Gateway) | Reasoning loop |
 | Daytona API key | Conversation owner (SandboxAdapter) | Sandbox lifecycle |
-| Capability signing keypair | Private: owner; public: proxy | Capability tokens (D13) |
 
-The proxy holds only *integration* credentials — those an agent decision could abuse against external systems. Slack, Daytona, and LLM keys stay in the control plane because trusted code uses them on its own behalf. All are stored as Worker secrets; the capability keypair rotates via a `kid` header.
+The proxy holds only *integration* credentials — those an agent decision could abuse against external systems. Slack, Daytona, and LLM keys stay in the control plane because trusted code uses them on its own behalf. All are stored as Worker secrets.
 
 ### 5.2 Trust zones and threat model
 
-Three zones:
+Two zones:
 
 1. **Trusted control plane** — ingress, conversation owner, proxy, adapter. Holds real secrets. Runs only reviewed code.
-2. **Capability tokens in flight** — short-lived, single-purpose, unforgeable, non-escalating.
-3. **Untrusted** — the sandbox, repo contents, and **all LLM inputs and outputs**.
+2. **Untrusted** — the sandbox, repo contents, and **all LLM inputs and outputs**.
 
-The load-bearing observation: **the brain is trusted code making untrusted decisions.** Everything the reasoning loop reads — repo contents, issue text, alert payloads, command output — is attacker-influenceable, so prompt injection can make the brain *want* to call any tool it has. This is why brain-side tools still go through the proxy instead of the owner holding integration keys directly: the proxy is a policy boundary that holds even when the LLM is fully hijacked, because `allowedOps`/`submissionType` come from deterministic code (D14), never from the model.
+The load-bearing observation: **the brain is trusted code making untrusted decisions.** Everything the reasoning loop reads — repo contents, issue text, alert payloads, command output — is attacker-influenceable, so prompt injection can make the brain *want* to call any tool it has. Brain-side tools therefore go through the typed integration boundary, where the canonical repository, submission type, operation allowlist, and permission profile come from deterministic trusted code (D13, D14), never from the model.
 
-**Worst-case blast radius** (reasoning loop fully hijacked by malicious content): it can read what the submission already allowed, push commits to the working branch, open a visible PR, post messages to its own Slack thread, and burn tokens up to the budget cap. It cannot merge, deploy, touch other repos, write to any infrastructure, mint capabilities, or obtain any credential outliving the hour. Every capability it does have is human-reviewed downstream (PR review) or human-visible (Slack). The design exists to keep this paragraph true.
+**Worst-case blast radius** (reasoning loop fully hijacked by malicious content): it can read what the submission policy allows, push commits to the deterministic working branch, open a visible PR, post messages to its own Slack thread, and burn tokens up to the budget cap. It cannot select another repository, request broader permissions, merge, deploy, write to infrastructure, or obtain a credential through a tool result. During checkpoint push, code with sufficient access in the same sandbox may observe or exercise the fresh repository token before revocation; branch protection and narrow App installation/permissions are required external controls. The design exists to keep this paragraph true for the internal pilot, not to claim hostile multi-tenant sandbox isolation.
 
 ### 5.3 End-to-end flows
 
-**Brain-side read (any submission type).** Loop needs an issue → owner mints `{op: readIssue, repo, exp: +10m}` → proxy verifies/authorizes → cached installation token → GitHub API → typed JSON back into the loop → audit event. Sandbox uninvolved; no credential moved.
+**Brain-side read (any submission type).** Loop requests `readIssue(number)` → owner attaches trusted `OperationContext` → proxy authorizes the named operation → cached read installation token → GitHub API → typed JSON back into the loop → audit event. Sandbox uninvolved; no credential moved.
 
-**Sandbox checkpoint push (code-change only).** Brain decides to checkpoint → owner (deterministic checkpoint code — `vendPushToken` is not an LLM-callable tool, per D14) requests a push token → proxy mints a fresh installation token (one repo, `contents: write`) → owner injects it into the **per-exec environment of the single `git push` command** — never the sandbox's ambient env, never a file → push lands on the working branch → owner confirms the remote ref via a proxy read → proxy revokes the token. Effective exposure is seconds-to-minutes, not the nominal hour. Defense in depth: the sandbox egress allowlist (proxy, `github.com`, package registries only) leaves an exfiltrated token almost nowhere to be sent from, and default branches of enrolled repos are protected.
+**Sandbox checkpoint push (code-change only).** Brain requests `checkpoint(expectedSha)` → owner canonicalizes the trusted repo and derives the working branch → sandbox runs credential-free `git rev-parse HEAD` and must match `expectedSha` → internal policy authorizes `vendPushToken` → proxy creates a fresh one-repository token with exactly `contents:write` → owner injects it into the **per-exec environment of one `git push --no-verify`** targeting the explicit `https://github.com/<owner>/<repo>.git` URL. Redirects and interactive prompting are disabled; mutable `origin` and repository hooks are ignored. Token-bearing stdout/stderr is discarded in favor of static errors. The owner confirms the exact remote branch SHA through trusted `readRef` and revokes the push token after every post-issuance success or failure. The model never receives the token, but the sandbox Git process does; effective exposure is seconds-to-minutes, not absent.
 
-**Investigation read (v3).** Alert thread → investigation submission → every capability carries `submissionType: investigation`, so write ops are unmintable and `vendPushToken` refuses — a compromised investigation cannot even push code. Brain calls `cfRead`/`awsRead`, reasons, posts the report. If repo inspection is needed, a sandbox hydrates via a `contents: read` clone token; no push vending exists for this type.
+**Investigation read (v3).** Alert thread → trusted context marks the submission as `investigation` → static policy refuses `createBranch`, `createPullRequest`, and `vendPushToken` before their handlers run. Brain calls `cfRead`/`awsRead`, reasons, and posts the report. If repo inspection is needed, a sandbox hydrates through a read-only path; no push vending exists for this type.
 
 **LLM calls.** The loop runs in the conversation owner (D5), so LLM keys never approach the sandbox — agents that run their loop inside a sandbox must build an LLM proxy to get this property; we get it free. Flue is built on Pi and supports its providers; the Cloudflare runtime additionally offers a built-in `cloudflare/*` AI gateway needing no API keys. Either way, route through **Cloudflare AI Gateway** semantics: budgets, logging, caching, retries, key rotation. Per-conversation token budget enforced in the owner (a hijacked or looping agent burns a bounded amount before `awaiting_human`); global monthly cap at the gateway.
 
@@ -246,9 +251,9 @@ All triggers are thin adapters emitting the same `TriggerEvent {source, repo?, h
 ## 10. Milestones
 
 1. **M1 — Skeleton loop.** Slack mention → conversation owner → Daytona container → write a filesystem sentinel → stop/start the same container once and verify the sentinel → run `git clone` + `ls` → reply in thread. Proves ingress, Flue ownership, adapter, streaming, and filesystem persistence without relying on RAM/process continuity.
-2. **M2 — Trusted integrations.** Credential proxy with the four operations; capability minting; branch push from sandbox via vended token.
+2. **M2 — Trusted integrations.** In-process credential proxy with deterministic `OperationContext` policy, narrow GitHub operations, and hardened branch checkpoint push through a fresh repository-scoped token.
 3. **M3 — Real work.** Reasoning loop drives inspect → edit → install → test → checkpoint → PR on one pilot repo; progress card live.
-4. **M4 — Failure and security hardening.** Kill sandboxes mid-command in tests; verify Unknown Tool Outcome, fencing, and rehydration behave per §4.4/§7. Adversarial proxy tests: investigation token attempting a write, expired token, cross-conversation token, `cfRead` path outside the allowlist — all must refuse and audit. Measure time-to-workspace-ready and cost per completed PR from real usage (this replaces the provider bakeoff). Cross-sandbox seed snapshots after `workspace_ready` (Codevil-style cache: restore latest fingerprint, pull/install only the delta) wait until those measurements justify them.
+4. **M4 — Failure and security hardening.** Kill sandboxes mid-command in tests; verify Unknown Tool Outcome, fencing, and rehydration behave per §4.4/§7. Adversarial proxy tests: investigation context attempting a write, malformed/cross-repository context, and `cfRead` path outside the allowlist — all must refuse and audit. Measure time-to-workspace-ready and cost per completed PR from real usage (this replaces the provider bakeoff). Cross-sandbox seed snapshots after `workspace_ready` (Codevil-style cache: restore latest fingerprint, pull/install only the delta) wait until those measurements justify them.
 
 ## 11. Open questions (must be answered during M1–M2, none block starting)
 
@@ -276,15 +281,15 @@ The original M1 layout used the Flue Modal blueprint. On 2026-08-30 D2 first cha
 - The Modal prototype is gone. Rework `src/agents/coworker.ts` and `src/sandboxes/daytona.ts` to create a Daytona container, then wrap it with the Flue factory. Prove stop/start filesystem persistence in `verifyContainerStopStartPersistence` unit tests, not on the Coworker create path. Do not call `pause`, request `linux-vm`, or add a Cloudflare Container gRPC bridge.
 - Unmentioned thread messages continue a conversation only when `getAgentInstance(Coworker, id)` finds one. A mention may create. (2026-08-30)
 - Do not use Cloudflare Sandbox or Cloudflare Computer for workspace exec.
-- Credential proxy is still M2. Not in this tree yet.
+- The credential proxy was deferred from M1 to M2.
 
 ### M2 layout (2026-08-31)
 
 - The proxy lives in this Worker as `src/proxy/*` (in-process `executeProxy`). No HTTP `/github/*` split and no D1 cross-conversation audit table yet; audit records append to Flue `usePersistentState('proxy-audit')` on the conversation.
-- Capability tokens are Ed25519 (`CAPABILITY_*` secrets). The owner mints a one-op token per call; `vendPushToken` is not a Flue tool.
+- The owner supplies trusted `OperationContext`; `executeProxy` enforces the static submission policy. No internal signed authorization token or related secret exists. `vendPushToken` is not a Flue tool.
 - `readRef` is a proxy op used by checkpoint confirmation. It is not mounted as a model tool.
-- `checkpointWorkingBranch` confirms local `HEAD` matches `expectedSha` before vending a token, injects it into `GIT_CONFIG_VALUE_0` for one `git push`, confirms the remote ref, and revokes afterward without masking a checkpoint error.
-- Production GitHub port/handlers (and the read-token cache) are reused across tool calls in the isolate.
+- `checkpointWorkingBranch` confirms local `HEAD` matches `expectedSha` before vending a fresh `contents:write` token, pushes with hooks/redirects/prompts disabled to the explicit canonical GitHub URL, discards token-bearing process output, confirms the remote ref, and revokes afterward without masking a checkpoint error.
+- Production GitHub port/handlers and per-repository read/trusted-write token caches are reused across tool calls in the isolate. Push tokens are never cached.
 - `cfRead` / `awsRead`, rate limits, and live run cards are still not in this tree.
 
 ### Hydration (2026-09-09)

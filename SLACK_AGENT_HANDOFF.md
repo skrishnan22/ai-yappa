@@ -11,7 +11,7 @@ You are starting implementation of a new product: a Slack-native engineering cow
 - Workspace correctness comes from git checkpoints, never provider disk (D8).
 - A lost command response is an `Unknown Tool Outcome`, resolved by evidence — never auto-failed or auto-retried (D9).
 - The agent can never merge or deploy (D10).
-- Capability token contents are set by deterministic code, never by the model; no LLM-callable tool returns a credential (D13, D14).
+- Trusted `OperationContext` supplies repository and submission type; static Worker policy selects allowed named operations. Model-callable tools accept only operation data and never repository, permission, destination, arbitrary-header, or credential fields; `vendPushToken` remains internal checkpoint machinery (D13, D14).
 
 If you believe an invariant must be broken to make progress, stop and ask the human in this conversation — do not decide unilaterally.
 
@@ -49,6 +49,7 @@ Explicitly **not** in M1: the credential proxy (M2), real code edits and PRs (M3
 
 ## Working rules
 
+- GitHub authorization simplification and checkpoint hardening are specified in `docs/superpowers/plans/2026-09-12-simplify-github-authorization.md`; preserve its bounded-exposure wording and non-goals.
 - Work milestone by milestone; do not start M2 without human sign-off on M1.
 - Keep the spec updated as you make decisions the spec left open (§11) — append a dated note under the relevant section rather than silently diverging.
 - Write tests alongside admission policy (allowlist, channel→repo, mention creates vs untracked drop). Signature verification stays in `@flue/slack`. Tests for `commandId`/fencing wait until that protocol lands (M4).

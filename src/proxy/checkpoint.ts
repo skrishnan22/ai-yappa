@@ -1,12 +1,5 @@
-import {
-	assertOpAllowed,
-	canonicalRepo,
-	mintCapability,
-	type CapabilityKeys,
-	type ProxyOp,
-	type SubmissionType,
-} from './capabilities.ts';
-import { executeProxy, type AuditSink, type ProxyHandler } from './ops.ts';
+import { executeProxy, type AuditSink, type OperationContext, type ProxyHandler } from './ops.ts';
+import { assertOpAllowed, canonicalRepo, type ProxyOp } from './policy.ts';
 
 export type CheckpointExec = (
 	command: string,
@@ -19,41 +12,27 @@ export function workingBranchName(conversationId: string): string {
 }
 
 export async function checkpointWorkingBranch(args: {
-	conversationId: string;
-	submissionId: string;
-	submissionType: SubmissionType;
-	repo: string;
+	context: OperationContext;
 	expectedSha: string;
-	keys: CapabilityKeys;
 	now: number;
 	handlers: Record<ProxyOp, ProxyHandler>;
 	audit: AuditSink;
 	exec: CheckpointExec;
 	revoke: (token: string) => Promise<void>;
 }): Promise<{ branch: string; sha: string; htmlUrl: string }> {
-	assertOpAllowed({ submissionType: args.submissionType, op: 'vendPushToken' });
-	const repo = canonicalRepo(args.repo);
-	const branch = workingBranchName(args.conversationId);
+	const repo = canonicalRepo(args.context.repo);
+	const context = { ...args.context, repo };
+	const branch = workingBranchName(context.conversationId);
+	assertOpAllowed({ submissionType: context.submissionType, op: 'vendPushToken' });
 	const localSha = await readLocalHead(args.exec);
 	if (localSha !== args.expectedSha) {
 		throw new Error(`local HEAD ${localSha} does not match expected ${args.expectedSha}`);
 	}
 
 	const minted = await executeProxy({
-		token: mintCapability({
-			keys: args.keys,
-			now: args.now,
-			claims: {
-				conversationId: args.conversationId,
-				submissionId: args.submissionId,
-				submissionType: args.submissionType,
-				repo,
-				allowedOps: ['vendPushToken'],
-			},
-		}),
-		keys: args.keys,
+		context,
 		op: 'vendPushToken',
-		params: { repo },
+		params: {},
 		now: args.now,
 		handlers: args.handlers,
 		audit: args.audit,
@@ -66,27 +45,21 @@ export async function checkpointWorkingBranch(args: {
 	let result: { branch: string; sha: string; htmlUrl: string } | undefined;
 	let checkpointError: unknown;
 	try {
-		const pushed = await args.exec(`git push origin HEAD:refs/heads/${branch}`, {
-			env: gitPushEnv(push.token),
-		});
+		const remoteUrl = `https://github.com/${repo}.git`;
+		const refspec = `HEAD:refs/heads/${branch}`;
+		const pushed = await args.exec(
+			`git push --no-verify ${shellQuote(remoteUrl)} ${shellQuote(refspec)}`,
+			{
+				env: gitPushEnv(push.token),
+			},
+		);
 		if (pushed.exitCode !== 0) {
-			throw new Error(pushed.stderr || pushed.stdout || `git push exited ${pushed.exitCode}`);
+			throw new Error(`git push exited ${pushed.exitCode}`);
 		}
 		const confirmed = await executeProxy({
-			token: mintCapability({
-				keys: args.keys,
-				now: args.now,
-				claims: {
-					conversationId: args.conversationId,
-					submissionId: args.submissionId,
-					submissionType: args.submissionType,
-					repo,
-					allowedOps: ['readRef'],
-				},
-			}),
-			keys: args.keys,
+			context,
 			op: 'readRef',
-			params: { repo, ref: `refs/heads/${branch}` },
+			params: { ref: `refs/heads/${branch}` },
 			now: args.now,
 			handlers: args.handlers,
 			audit: args.audit,
@@ -94,9 +67,9 @@ export async function checkpointWorkingBranch(args: {
 		if (!confirmed.ok) {
 			throw new Error(confirmed.error.message);
 		}
-		const remote = parseRef(confirmed.data);
-		if (remote.sha !== args.expectedSha) {
-			throw new Error(`remote sha ${remote.sha} does not match expected ${args.expectedSha}`);
+		const remoteRef = parseRef(confirmed.data);
+		if (remoteRef.sha !== args.expectedSha) {
+			throw new Error(`remote sha ${remoteRef.sha} does not match expected ${args.expectedSha}`);
 		}
 		result = {
 			branch,
@@ -109,8 +82,8 @@ export async function checkpointWorkingBranch(args: {
 
 	try {
 		await args.revoke(push.token);
-	} catch (revokeError) {
-		const revokeMessage = `failed to revoke push token: ${errorMessage(revokeError)}`;
+	} catch {
+		const revokeMessage = 'failed to revoke push token';
 		if (checkpointError !== undefined) {
 			throw new Error(`${errorMessage(checkpointError)}; ${revokeMessage}`);
 		}
@@ -125,13 +98,20 @@ export async function checkpointWorkingBranch(args: {
 	return result;
 }
 
+function shellQuote(value: string): string {
+	return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
 function gitPushEnv(token: string): Record<string, string> {
 	// GitHub git-over-HTTPS wants Basic x-access-token, not a REST Bearer header.
 	const basic = Buffer.from(`x-access-token:${token}`).toString('base64');
 	return {
-		GIT_CONFIG_COUNT: '1',
+		GIT_CONFIG_COUNT: '2',
 		GIT_CONFIG_KEY_0: 'http.extraHeader',
 		GIT_CONFIG_VALUE_0: `Authorization: Basic ${basic}`,
+		GIT_CONFIG_KEY_1: 'http.followRedirects',
+		GIT_CONFIG_VALUE_1: 'false',
+		GIT_TERMINAL_PROMPT: '0',
 	};
 }
 

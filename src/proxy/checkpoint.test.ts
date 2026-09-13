@@ -1,9 +1,21 @@
-import { describe, expect, test } from 'vitest';
-import { generateCapabilityKeyPair, type ProxyOp } from './capabilities.ts';
+import { describe, expect, test, vi } from 'vitest';
 import { checkpointWorkingBranch, workingBranchName, type CheckpointExec } from './checkpoint.ts';
-import type { ProxyHandler } from './ops.ts';
+import type { OperationContext, ProxyHandler } from './ops.ts';
+import type { ProxyOp } from './policy.ts';
 
-function handlers(args: { token?: string; sha?: string }): Record<ProxyOp, ProxyHandler> {
+const CONTEXT: OperationContext = {
+	conversationId: 'c1',
+	submissionId: 's1',
+	submissionType: 'code-change',
+	repo: 'https://github.com/skrishnan22/codevil.git',
+};
+
+function handlers(args?: {
+	token?: string;
+	sha?: string;
+	vend?: ProxyHandler;
+	readRef?: ProxyHandler;
+}): Record<ProxyOp, ProxyHandler> {
 	const refuse: ProxyHandler = async () => {
 		throw new Error('handler not stubbed');
 	};
@@ -12,19 +24,16 @@ function handlers(args: { token?: string; sha?: string }): Record<ProxyOp, Proxy
 		readRepoMetadata: refuse,
 		createBranch: refuse,
 		createPullRequest: refuse,
-		readRef: async () => ({ ref: 'refs/heads/agent/c1', sha: args.sha ?? 'abc123' }),
-		vendPushToken: async () => ({
-			token: args.token ?? 'ghs_test',
-			expiresAt: '2099-01-01T00:00:00.000Z',
-		}),
+		readRef:
+			args?.readRef ?? (async () => ({ ref: 'refs/heads/agent/c1', sha: args?.sha ?? 'abc123' })),
+		vendPushToken:
+			args?.vend ??
+			(async () => ({
+				token: args?.token ?? 'ghs_test',
+				expiresAt: '2099-01-01T00:00:00.000Z',
+			})),
 	};
 }
-
-describe('workingBranchName', () => {
-	test('strips illegal ref characters from the conversation id', () => {
-		expect(workingBranchName('C1/123.45')).toBe('agent/C1-123.45');
-	});
-});
 
 function execAt(
 	expectedSha: string,
@@ -46,36 +55,72 @@ function execAt(
 	};
 }
 
+function checkpointArgs(overrides?: {
+	context?: OperationContext;
+	handlers?: Record<ProxyOp, ProxyHandler>;
+	exec?: CheckpointExec;
+	revoke?: (token: string) => Promise<void>;
+}) {
+	return {
+		context: overrides?.context ?? CONTEXT,
+		expectedSha: 'abc123',
+		now: 1_000_000,
+		handlers: overrides?.handlers ?? handlers(),
+		audit: { append: () => {} },
+		exec: overrides?.exec ?? execAt('abc123'),
+		revoke: overrides?.revoke ?? (async () => {}),
+	};
+}
+
+describe('workingBranchName', () => {
+	test('strips illegal ref characters from the conversation id', () => {
+		expect(workingBranchName('C1/123.45')).toBe('agent/C1-123.45');
+	});
+});
+
 describe('checkpointWorkingBranch', () => {
-	test('injects the token into exec env and keeps it out of the command', async () => {
-		const keys = generateCapabilityKeyPair();
+	test('does not issue a token or push when local HEAD differs from expectedSha', async () => {
+		const vend = vi.fn<ProxyHandler>();
 		const seen: Array<{ command: string; env: Record<string, string> }> = [];
-		const revoked: string[] = [];
+		await expect(
+			checkpointWorkingBranch({
+				...checkpointArgs({ handlers: handlers({ vend }), exec: execAt('deadbeef', { seen }) }),
+			}),
+		).rejects.toThrow(/local HEAD deadbeef/);
+
+		expect(vend).not.toHaveBeenCalled();
+		expect(seen).toEqual([{ command: 'git rev-parse HEAD', env: {} }]);
+	});
+
+	test('refuses investigations before token issuance or sandbox execution', async () => {
+		const vend = vi.fn<ProxyHandler>();
+		const exec = vi.fn<CheckpointExec>();
+		await expect(
+			checkpointWorkingBranch({
+				...checkpointArgs({
+					context: { ...CONTEXT, submissionType: 'investigation' },
+					handlers: handlers({ vend }),
+					exec,
+				}),
+			}),
+		).rejects.toThrow(/investigation/i);
+
+		expect(vend).not.toHaveBeenCalled();
+		expect(exec).not.toHaveBeenCalled();
+	});
+
+	test('pushes to the explicit canonical repo and deterministic branch with hooks disabled', async () => {
+		const seen: Array<{ command: string; env: Record<string, string> }> = [];
 		const result = await checkpointWorkingBranch({
-			conversationId: 'c1',
-			submissionId: 's1',
-			submissionType: 'code-change',
-			repo: 'https://github.com/skrishnan22/codevil.git',
-			expectedSha: 'abc123',
-			keys,
-			now: 1_000_000,
-			handlers: handlers({ token: 'ghs_test', sha: 'abc123' }),
-			audit: { append: () => {} },
-			exec: execAt('abc123', { seen }),
-			revoke: async (token) => {
-				revoked.push(token);
-			},
+			...checkpointArgs({ exec: execAt('abc123', { seen }) }),
 		});
+
 		expect(seen.map((entry) => entry.command)).toEqual([
 			'git rev-parse HEAD',
-			'git push origin HEAD:refs/heads/agent/c1',
+			"git push --no-verify 'https://github.com/skrishnan22/codevil.git' 'HEAD:refs/heads/agent/c1'",
 		]);
-		expect(seen[0]?.env).toEqual({});
-		expect(seen[1]?.command.includes('ghs_test')).toBe(false);
-		expect(seen[1]?.env.GIT_CONFIG_VALUE_0).toBe(
-			`Authorization: Basic ${Buffer.from('x-access-token:ghs_test').toString('base64')}`,
-		);
-		expect(revoked).toEqual(['ghs_test']);
+		expect(seen[1]?.command).not.toContain('origin');
+		expect(seen[1]?.command).not.toContain('ghs_test');
 		expect(result).toEqual({
 			branch: 'agent/c1',
 			sha: 'abc123',
@@ -83,146 +128,117 @@ describe('checkpointWorkingBranch', () => {
 		});
 	});
 
-	test('does not vend or push when local HEAD does not match expectedSha', async () => {
-		const keys = generateCapabilityKeyPair();
-		const seen: string[] = [];
-		let vended = false;
-		const vend = handlers({});
-		vend.vendPushToken = async () => {
-			vended = true;
-			return { token: 'ghs_test', expiresAt: '2099-01-01T00:00:00.000Z' };
-		};
-		await expect(
-			checkpointWorkingBranch({
-				conversationId: 'c1',
-				submissionId: 's1',
-				submissionType: 'code-change',
-				repo: 'skrishnan22/codevil',
-				expectedSha: 'abc123',
-				keys,
-				now: 1_000_000,
-				handlers: vend,
-				audit: { append: () => {} },
-				exec: async (command) => {
-					seen.push(command);
-					return { stdout: 'deadbeef\n', stderr: '', exitCode: 0 };
-				},
-				revoke: async () => {},
-			}),
-		).rejects.toThrow(/local HEAD deadbeef/);
-		expect(seen).toEqual(['git rev-parse HEAD']);
-		expect(vended).toBe(false);
+	test('injects Basic auth only into push and disables redirects and prompts', async () => {
+		const seen: Array<{ command: string; env: Record<string, string> }> = [];
+		await checkpointWorkingBranch({ ...checkpointArgs({ exec: execAt('abc123', { seen }) }) });
+
+		expect(seen[0]?.env).toEqual({});
+		expect(seen[1]?.env).toEqual({
+			GIT_CONFIG_COUNT: '2',
+			GIT_CONFIG_KEY_0: 'http.extraHeader',
+			GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from('x-access-token:ghs_test').toString('base64')}`,
+			GIT_CONFIG_KEY_1: 'http.followRedirects',
+			GIT_CONFIG_VALUE_1: 'false',
+			GIT_TERMINAL_PROMPT: '0',
+		});
 	});
 
-	test('revokes when the remote sha does not match', async () => {
-		const keys = generateCapabilityKeyPair();
+	test('revokes the token after push failure and reports only a static error', async () => {
 		const revoked: string[] = [];
-		await expect(
-			checkpointWorkingBranch({
-				conversationId: 'c1',
-				submissionId: 's1',
-				submissionType: 'code-change',
-				repo: 'skrishnan22/codevil',
-				expectedSha: 'abc123',
-				keys,
-				now: 1_000_000,
-				handlers: handlers({ sha: 'ffff' }),
-				audit: { append: () => {} },
-				exec: execAt('abc123'),
-				revoke: async (token) => {
-					revoked.push(token);
-				},
-			}),
-		).rejects.toThrow(/remote sha/);
-		expect(revoked).toEqual(['ghs_test']);
-	});
-
-	test('reports git push stdout when stderr is empty', async () => {
-		const keys = generateCapabilityKeyPair();
-		await expect(
-			checkpointWorkingBranch({
-				conversationId: 'c1',
-				submissionId: 's1',
-				submissionType: 'code-change',
-				repo: 'skrishnan22/codevil',
-				expectedSha: 'abc123',
-				keys,
-				now: 1_000_000,
-				handlers: handlers({}),
-				audit: { append: () => {} },
-				exec: execAt('abc123', {
-					push: { stdout: 'The requested URL returned error: 403', stderr: '', exitCode: 128 },
+		const secret = 'ghs_secret';
+		let message = '';
+		try {
+			await checkpointWorkingBranch({
+				...checkpointArgs({
+					handlers: handlers({ token: secret }),
+					exec: execAt('abc123', {
+						push: { stdout: secret, stderr: `leaked ${secret}`, exitCode: 128 },
+					}),
+					revoke: async (token) => {
+						revoked.push(token);
+					},
 				}),
-				revoke: async () => {},
-			}),
-		).rejects.toThrow(/403/);
+			});
+		} catch (error) {
+			message = error instanceof Error ? error.message : String(error);
+		}
+
+		expect(message).toBe('git push exited 128');
+		expect(message).not.toContain(secret);
+		expect(revoked).toEqual([secret]);
 	});
 
-	test('revokes when git push fails', async () => {
-		const keys = generateCapabilityKeyPair();
+	test('revokes the token when readRef fails', async () => {
 		const revoked: string[] = [];
 		await expect(
 			checkpointWorkingBranch({
-				conversationId: 'c1',
-				submissionId: 's1',
-				submissionType: 'code-change',
-				repo: 'skrishnan22/codevil',
-				expectedSha: 'abc123',
-				keys,
-				now: 1_000_000,
-				handlers: handlers({}),
-				audit: { append: () => {} },
-				exec: execAt('abc123', { push: { stderr: 'rejected', exitCode: 1 } }),
-				revoke: async (token) => {
-					revoked.push(token);
-				},
+				...checkpointArgs({
+					handlers: handlers({
+						readRef: async () => {
+							throw new Error('GitHub 502');
+						},
+					}),
+					revoke: async (token) => {
+						revoked.push(token);
+					},
+				}),
 			}),
-		).rejects.toThrow(/rejected/);
+		).rejects.toThrow('GitHub 502');
 		expect(revoked).toEqual(['ghs_test']);
 	});
 
-	test('keeps the checkpoint error when revoke also fails', async () => {
-		const keys = generateCapabilityKeyPair();
+	test('revokes the token when the remote SHA differs', async () => {
+		const revoked: string[] = [];
 		await expect(
 			checkpointWorkingBranch({
-				conversationId: 'c1',
-				submissionId: 's1',
-				submissionType: 'code-change',
-				repo: 'skrishnan22/codevil',
-				expectedSha: 'abc123',
-				keys,
-				now: 1_000_000,
-				handlers: handlers({}),
-				audit: { append: () => {} },
-				exec: execAt('abc123', { push: { stderr: 'rejected', exitCode: 1 } }),
-				revoke: async () => {
-					throw new Error('revoke failed');
-				},
+				...checkpointArgs({
+					handlers: handlers({ sha: 'ffff' }),
+					revoke: async (token) => {
+						revoked.push(token);
+					},
+				}),
 			}),
-		).rejects.toThrow(/rejected.*revoke failed/);
+		).rejects.toThrow(/remote sha ffff/);
+		expect(revoked).toEqual(['ghs_test']);
 	});
 
-	test('investigation cannot checkpoint', async () => {
-		const keys = generateCapabilityKeyPair();
-		let vended = false;
+	test('revokes exactly once after success', async () => {
+		const revoke = vi.fn<(token: string) => Promise<void>>(async () => {});
+		await checkpointWorkingBranch({ ...checkpointArgs({ revoke }) });
+		expect(revoke).toHaveBeenCalledTimes(1);
+		expect(revoke).toHaveBeenCalledWith('ghs_test');
+	});
+
+	test('surfaces a static revoke failure without exposing the token', async () => {
+		const secret = 'ghs_secret';
+		let message = '';
+		try {
+			await checkpointWorkingBranch({
+				...checkpointArgs({
+					handlers: handlers({ token: secret }),
+					revoke: async () => {
+						throw new Error(secret);
+					},
+				}),
+			});
+		} catch (error) {
+			message = error instanceof Error ? error.message : String(error);
+		}
+
+		expect(message).toBe('failed to revoke push token');
+		expect(message).not.toContain(secret);
+	});
+
+	test('preserves the sanitized checkpoint error when revocation also fails', async () => {
 		await expect(
 			checkpointWorkingBranch({
-				conversationId: 'c1',
-				submissionId: 's1',
-				submissionType: 'investigation',
-				repo: 'skrishnan22/codevil',
-				expectedSha: 'abc123',
-				keys,
-				now: 1_000_000,
-				handlers: handlers({}),
-				audit: { append: () => {} },
-				exec: async () => {
-					vended = true;
-					return { stdout: '', stderr: '', exitCode: 0 };
-				},
-				revoke: async () => {},
+				...checkpointArgs({
+					exec: execAt('abc123', { push: { exitCode: 1 } }),
+					revoke: async () => {
+						throw new Error('private detail');
+					},
+				}),
 			}),
-		).rejects.toThrow(/investigation/i);
-		expect(vended).toBe(false);
+		).rejects.toThrow('git push exited 1; failed to revoke push token');
 	});
 });

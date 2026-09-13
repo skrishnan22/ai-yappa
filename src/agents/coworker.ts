@@ -38,7 +38,8 @@ observe((event, context) => {
 		console.info('[slack-agent]', event.type, debugFields(event));
 	}
 	const cardEvent = cardEventFromObservation(event);
-	if (cardEvent) return enqueueCardEvent({ ...cardEvent, instanceId: context.id });
+	if (!cardEvent) return Promise.resolve();
+	return enqueueCardEvent({ ...cardEvent, instanceId: context.id });
 });
 
 function debugFields(event: FlueObservation): Record<string, unknown> {

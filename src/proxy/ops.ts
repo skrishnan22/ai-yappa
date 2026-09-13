@@ -1,17 +1,18 @@
 import { createHash } from 'node:crypto';
-import {
-	assertOpAllowed,
-	canonicalRepo,
-	verifyCapability,
-	type CapabilityClaims,
-	type CapabilityKeys,
-	type ProxyOp,
-} from './capabilities.ts';
+import { assertOpAllowed, canonicalRepo, type ProxyOp, type SubmissionType } from './policy.ts';
+
+export type OperationContext = {
+	conversationId: string;
+	submissionId: string;
+	submissionType: SubmissionType;
+	repo: string;
+};
 
 export type AuditRecord = {
 	ts: number;
 	conversationId: string;
 	submissionId: string;
+	repo: string | null;
 	op: ProxyOp;
 	paramsDigest: string;
 	outcome: 'ok' | 'unauthorized' | 'invalid' | 'upstream';
@@ -23,7 +24,7 @@ export type AuditSink = {
 };
 
 export type ProxyHandler = (args: {
-	claims: CapabilityClaims;
+	context: OperationContext;
 	params: unknown;
 }) => Promise<unknown>;
 
@@ -36,8 +37,7 @@ export function digestParams(params: unknown): string {
 }
 
 export async function executeProxy(args: {
-	token: string;
-	keys: CapabilityKeys;
+	context: OperationContext;
 	op: ProxyOp;
 	params: unknown;
 	now: number;
@@ -49,6 +49,7 @@ export async function executeProxy(args: {
 	const finish = (
 		conversationId: string,
 		submissionId: string,
+		repo: string | null,
 		outcome: AuditRecord['outcome'],
 		result: ProxyResult,
 	): ProxyResult => {
@@ -56,6 +57,7 @@ export async function executeProxy(args: {
 			ts: args.now,
 			conversationId,
 			submissionId,
+			repo,
 			op: args.op,
 			paramsDigest: digest,
 			outcome,
@@ -64,64 +66,38 @@ export async function executeProxy(args: {
 		return result;
 	};
 
-	let claims: CapabilityClaims;
+	let context: OperationContext;
 	try {
-		claims = verifyCapability({ token: args.token, keys: args.keys, now: args.now });
+		context = { ...args.context, repo: canonicalRepo(args.context.repo) };
 	} catch (error) {
-		const message = errorMessage(error);
-		return finish('', '', 'unauthorized', { ok: false, error: { kind: 'unauthorized', message } });
-	}
-
-	if (!claims.allowedOps.includes(args.op)) {
-		return finish(claims.conversationId, claims.submissionId, 'unauthorized', {
+		return finish(args.context.conversationId, args.context.submissionId, null, 'invalid', {
 			ok: false,
-			error: { kind: 'unauthorized', message: `op ${args.op} is not in token allowedOps` },
+			error: { kind: 'invalid', message: errorMessage(error) },
 		});
 	}
 
 	try {
-		assertOpAllowed({ submissionType: claims.submissionType, op: args.op });
+		assertOpAllowed({ submissionType: context.submissionType, op: args.op });
 	} catch (error) {
-		return finish(claims.conversationId, claims.submissionId, 'unauthorized', {
+		return finish(context.conversationId, context.submissionId, context.repo, 'unauthorized', {
 			ok: false,
 			error: { kind: 'unauthorized', message: errorMessage(error) },
 		});
 	}
 
-	const repo = repoFromParams(args.params);
-	if (repo === undefined) {
-		return finish(claims.conversationId, claims.submissionId, 'invalid', {
-			ok: false,
-			error: { kind: 'invalid', message: 'params.repo is required' },
-		});
-	}
-	if (repo !== claims.repo) {
-		return finish(claims.conversationId, claims.submissionId, 'unauthorized', {
-			ok: false,
-			error: { kind: 'unauthorized', message: 'params.repo does not match capability repo' },
-		});
-	}
-
 	try {
-		const data = await args.handlers[args.op]({ claims, params: args.params });
-		return finish(claims.conversationId, claims.submissionId, 'ok', { ok: true, data });
+		const data = await args.handlers[args.op]({ context, params: args.params });
+		return finish(context.conversationId, context.submissionId, context.repo, 'ok', {
+			ok: true,
+			data,
+		});
 	} catch (error) {
-		return finish(claims.conversationId, claims.submissionId, 'upstream', {
+		return finish(context.conversationId, context.submissionId, context.repo, 'upstream', {
 			ok: false,
 			error: { kind: 'upstream', message: errorMessage(error) },
 		});
 	}
 }
-
-function repoFromParams(params: unknown): string | undefined {
-	if (!isRecord(params) || typeof params.repo !== 'string') return undefined;
-	try {
-		return canonicalRepo(params.repo);
-	} catch {
-		return undefined;
-	}
-}
-
 function canonicalJson(value: unknown): string {
 	if (value === null || typeof value !== 'object') {
 		return JSON.stringify(value);
