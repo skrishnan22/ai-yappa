@@ -16,6 +16,7 @@
 | 0010 Flue channels, defer Chat SDK | Holds. Spec §4.1 is this, via `@flue/slack` |
 | 0011 One live run card per submission | Holds |
 | 0012 Cloudflare control plane vs AWS sandboxes | Superseded. Control plane stays on Cloudflare. Sandbox provider is Daytona, not AgentCore |
-| 0013 Credentials stay outside sandboxes | Holds (spec D6, D11). Proxy itself is M2 |
+| 0013 Credentials stay outside sandboxes | Partially superseded by ADR 0016. Reusable credentials remain outside sandboxes; the Capability Grant mechanism does not hold |
 | 0014 Unknown remote tool outcomes | Principle holds (spec D9). The AgentCore one-shot mechanic is superseded by spec §4.4 (`commandId` markers and reconciling) |
 | 0015 Daytona for sandbox compute | Holds (spec D2). Direct Durable Object control; container filesystem persists across stop/start; Git remains recovery truth |
+| 0016 Simplify GitHub authorization inside the Worker | Holds (spec D13, D14). Direct trusted context policy with bounded checkpoint-token exposure |

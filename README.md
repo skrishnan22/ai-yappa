@@ -23,14 +23,13 @@ GIT_AUTHOR_EMAIL=
 GITHUB_APP_ID=
 GITHUB_APP_PRIVATE_KEY=
 GITHUB_APP_INSTALLATION_ID=
-CAPABILITY_PRIVATE_KEY=
-CAPABILITY_PUBLIC_KEY=
-CAPABILITY_KID=
 ```
 
 `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` are optional. If both are set, hydration configures that identity in the cloned repo (GitHub App bot: `{slug}[bot]` / `{id}+{slug}[bot]@users.noreply.github.com`). If neither is set, commits would otherwise be `root` — do not guess. If only one is set, boot fails.
 
-GitHub App and capability keys are M2. Hydration still runs a public clone without them; GitHub tools return a configuration error instead of calling GitHub. Generate an Ed25519 keypair for the capability keys (`generateKeyPairSync('ed25519')`, PKCS8/SPKI PEM, `kid` = first 8 hex chars of SHA-256 of the public PEM). `GITHUB_APP_PRIVATE_KEY` is the RSA `.pem` GitHub downloads for the App — not the Ed25519 capability key. PEM values may use `\n` in `.dev.vars`. The GitHub App needs `contents` + `pull_requests` on the pilot repo.
+GitHub tools require `GITHUB_APP_ID`, the RSA `.pem` GitHub downloads for `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_APP_INSTALLATION_ID`. PEM values may use `\n` in `.dev.vars`. Install the App only on the enrolled pilot repository. Its minimum application permissions are **Contents: Read and write**, **Pull requests: Read and write**, and **Issues: Read-only** (GitHub grants metadata read access automatically); do not grant administration, workflows/actions, deployments, secrets, or merge bypass.
+
+Ordinary GitHub operations use repository-scoped installation tokens that remain inside trusted Worker code. Checkpoint push creates a fresh token with exactly `contents:write`, injects it into one sandbox `git push` process, confirms the remote branch SHA, and immediately revokes it. The model never receives this token, but code in the same sandbox may observe or exercise it during that bounded window; this is not strict sandbox credential isolation.
 
 `npm run dev` runs under the Cloudflare Vite plugin, which reads Worker secrets from `.dev.vars`, not `.env`. Copy the same values there:
 

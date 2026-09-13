@@ -1,23 +1,16 @@
-import { createPrivateKey, createPublicKey } from 'node:crypto';
 import { defineTool } from '@flue/runtime';
 import * as v from 'valibot';
-import {
-	canonicalRepo,
-	mintCapability,
-	type CapabilityKeys,
-	type ProxyOp,
-	type SubmissionType,
-} from '../proxy/capabilities.ts';
 import { checkpointWorkingBranch, workingBranchName } from '../proxy/checkpoint.ts';
 import { createGitHubPort, githubHandlers } from '../proxy/github.ts';
-import { executeProxy, type AuditSink, type ProxyHandler } from '../proxy/ops.ts';
+import {
+	executeProxy,
+	type AuditSink,
+	type OperationContext,
+	type ProxyHandler,
+} from '../proxy/ops.ts';
+import { canonicalRepo, type ProxyOp } from '../proxy/policy.ts';
 
-export type OwnerProxyCtx = {
-	conversationId: string;
-	submissionId: string;
-	submissionType: SubmissionType;
-	repo: string;
-	keys: CapabilityKeys;
+export type OwnerProxyCtx = OperationContext & {
 	now: number;
 	handlers: Record<ProxyOp, ProxyHandler>;
 	audit: AuditSink;
@@ -33,7 +26,7 @@ export async function performReadIssue(
 	htmlUrl: string;
 	body: string | null;
 }> {
-	return publicIssue(await mintAndExecute(ctx, 'readIssue', { number: input.number }));
+	return publicIssue(await executeOperation(ctx, 'readIssue', { number: input.number }));
 }
 
 export async function performReadRepo(ctx: OwnerProxyCtx): Promise<{
@@ -41,7 +34,7 @@ export async function performReadRepo(ctx: OwnerProxyCtx): Promise<{
 	defaultBranch: string;
 	htmlUrl: string;
 }> {
-	return publicRepo(await mintAndExecute(ctx, 'readRepoMetadata', {}));
+	return publicRepo(await executeOperation(ctx, 'readRepoMetadata', {}));
 }
 
 export async function performCreateWorkingBranch(
@@ -49,7 +42,7 @@ export async function performCreateWorkingBranch(
 	input: { fromSha: string },
 ): Promise<{ ref: string; sha: string }> {
 	return publicRef(
-		await mintAndExecute(ctx, 'createBranch', {
+		await executeOperation(ctx, 'createBranch', {
 			name: workingBranchName(ctx.conversationId),
 			fromSha: input.fromSha,
 		}),
@@ -60,7 +53,7 @@ export async function performOpenPullRequest(
 	ctx: OwnerProxyCtx,
 	input: { title: string; body: string; base: string },
 ): Promise<{ number: number; htmlUrl: string; head: string; base: string }> {
-	const data = await mintAndExecute(ctx, 'createPullRequest', {
+	const data = await executeOperation(ctx, 'createPullRequest', {
 		head: workingBranchName(ctx.conversationId),
 		base: input.base,
 		title: input.title,
@@ -81,12 +74,8 @@ export async function performCheckpoint(
 	},
 ): Promise<{ branch: string; sha: string; htmlUrl: string }> {
 	return checkpointWorkingBranch({
-		conversationId: ctx.conversationId,
-		submissionId: ctx.submissionId,
-		submissionType: ctx.submissionType,
-		repo: ctx.repo,
+		context: operationContext(ctx),
 		expectedSha: input.expectedSha,
-		keys: ctx.keys,
 		now: ctx.now,
 		handlers: ctx.handlers,
 		audit: ctx.audit,
@@ -170,39 +159,21 @@ async function runGithubTool<T>(
 	}
 }
 
-function mintAndExecute(
+function executeOperation(
 	ctx: OwnerProxyCtx,
 	op: ProxyOp,
 	params: Record<string, unknown>,
 ): Promise<unknown> {
-	const repo = canonicalRepo(ctx.repo);
-	return executeAndUnwrap(
-		ctx,
-		op,
-		{ ...params, repo },
-		mintCapability({
-			keys: ctx.keys,
-			now: ctx.now,
-			claims: {
-				conversationId: ctx.conversationId,
-				submissionId: ctx.submissionId,
-				submissionType: ctx.submissionType,
-				repo,
-				allowedOps: [op],
-			},
-		}),
-	);
+	return executeAndUnwrap(ctx, op, params);
 }
 
 async function executeAndUnwrap(
 	ctx: OwnerProxyCtx,
 	op: ProxyOp,
 	params: unknown,
-	token: string,
 ): Promise<unknown> {
 	const result = await executeProxy({
-		token,
-		keys: ctx.keys,
+		context: operationContext(ctx),
 		op,
 		params,
 		now: ctx.now,
@@ -211,6 +182,15 @@ async function executeAndUnwrap(
 	});
 	if (!result.ok) throw new Error(result.error.message);
 	return result.data;
+}
+
+function operationContext(ctx: OwnerProxyCtx): OperationContext {
+	return {
+		conversationId: ctx.conversationId,
+		submissionId: ctx.submissionId,
+		submissionType: ctx.submissionType,
+		repo: ctx.repo,
+	};
 }
 
 function publicIssue(data: unknown): {
@@ -290,14 +270,6 @@ export function liveOwner(args: {
 	| { ok: true; ctx: OwnerProxyCtx; port: ReturnType<typeof createGitHubPort> }
 	| { ok: false; error: string } {
 	try {
-		const keys = capabilityKeysFromEnv();
-		if (keys === undefined) {
-			return {
-				ok: false,
-				error:
-					'CAPABILITY_PRIVATE_KEY, CAPABILITY_PUBLIC_KEY, and CAPABILITY_KID are not configured.',
-			};
-		}
 		const github = githubRuntime();
 		if (!github.ok) return github;
 		return {
@@ -307,8 +279,7 @@ export function liveOwner(args: {
 				conversationId: args.conversationId,
 				submissionId: 'active',
 				submissionType: 'code-change',
-				repo: args.repo,
-				keys,
+				repo: canonicalRepo(args.repo),
 				now: Math.floor(Date.now() / 1000),
 				handlers: github.handlers,
 				audit: args.audit,
@@ -334,34 +305,6 @@ function githubRuntime(): ({ ok: true } & GitHubRuntime) | { ok: false; error: s
 			error: error instanceof Error ? error.message : 'GITHUB_* secrets are not configured',
 		};
 	}
-}
-
-function capabilityKeysFromEnv(env: NodeJS.ProcessEnv = process.env): CapabilityKeys | undefined {
-	const privateKeyPem = pemFromEnv(env.CAPABILITY_PRIVATE_KEY);
-	const publicKeyPem = pemFromEnv(env.CAPABILITY_PUBLIC_KEY);
-	const kid = env.CAPABILITY_KID?.trim();
-	if (!privateKeyPem || !publicKeyPem || !kid) return undefined;
-	try {
-		const priv = createPrivateKey(privateKeyPem);
-		const pub = createPublicKey(publicKeyPem);
-		if (priv.asymmetricKeyType !== 'ed25519' || pub.asymmetricKeyType !== 'ed25519') {
-			throw new Error(`${priv.asymmetricKeyType}/${pub.asymmetricKeyType}`);
-		}
-	} catch (error) {
-		throw new Error(
-			`CAPABILITY_PRIVATE_KEY/CAPABILITY_PUBLIC_KEY must be a generated Ed25519 PKCS8/SPKI pair, not the GitHub App RSA key: ${error instanceof Error ? error.message : 'unknown error'}`,
-		);
-	}
-	return { kid, privateKeyPem, publicKeyPem };
-}
-
-function pemFromEnv(raw: string | undefined): string | undefined {
-	if (raw === undefined || raw.trim().length === 0) return undefined;
-	let pem = raw.trim();
-	if ((pem.startsWith('"') && pem.endsWith('"')) || (pem.startsWith("'") && pem.endsWith("'"))) {
-		pem = pem.slice(1, -1).trim();
-	}
-	return pem.replaceAll('\\n', '\n').replaceAll('\r\n', '\n').replaceAll('\r', '\n');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

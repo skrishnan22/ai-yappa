@@ -1,11 +1,17 @@
 import { createPrivateKey, createSign, type KeyObject } from 'node:crypto';
 import type { ProxyHandler } from './ops.ts';
-import type { ProxyOp } from './capabilities.ts';
+import type { ProxyOp } from './policy.ts';
+
+export type GitHubInstallationPermissions = {
+	contents?: 'read' | 'write';
+	issues?: 'read' | 'write';
+	pull_requests?: 'read' | 'write';
+};
 
 export type GitHubPort = {
 	createInstallationToken(args: {
 		repo: string;
-		permissions: { contents: 'read' | 'write'; pull_requests: 'read' | 'write' };
+		permissions: GitHubInstallationPermissions;
 	}): Promise<{ token: string; expiresAt: string }>;
 	revokeInstallationToken(token: string): Promise<void>;
 	request(args: {
@@ -16,71 +22,76 @@ export type GitHubPort = {
 	}): Promise<{ status: number; json: unknown }>;
 };
 
-const READ_PERMISSIONS = { contents: 'read', pull_requests: 'read' } as const;
-const WRITE_PERMISSIONS = { contents: 'write', pull_requests: 'write' } as const;
-const READ_CACHE_SKEW_MS = 5 * 60 * 1000;
+const READ_PERMISSIONS = {
+	contents: 'read',
+	issues: 'read',
+	pull_requests: 'read',
+} as const;
+const TRUSTED_WRITE_PERMISSIONS = {
+	contents: 'write',
+	pull_requests: 'write',
+} as const;
+const PUSH_PERMISSIONS = { contents: 'write' } as const;
+const TOKEN_CACHE_SKEW_MS = 5 * 60 * 1000;
 
-export function githubHandlers(port: GitHubPort): Record<ProxyOp, ProxyHandler> {
-	const reads = createReadTokenCache(port);
+export function githubHandlers(
+	port: GitHubPort,
+	now: () => number = Date.now,
+): Record<ProxyOp, ProxyHandler> {
+	const reads = createTokenCache(port, READ_PERMISSIONS, now);
+	const writes = createTokenCache(port, TRUSTED_WRITE_PERMISSIONS, now);
 	return {
-		readIssue: async ({ params }) => {
+		readIssue: async ({ context, params }) => {
 			const parsed = parseIssueParams(params);
-			const token = await reads.get(parsed.repo);
+			const token = await reads.get(context.repo);
 			const json = await githubOk(
 				await port.request({
 					method: 'GET',
-					path: `/repos/${parsed.repo}/issues/${parsed.number}`,
+					path: `/repos/${context.repo}/issues/${parsed.number}`,
 					token,
 				}),
 			);
 			return mapIssue(json);
 		},
-		readRepoMetadata: async ({ params }) => {
-			const repo = requireRepo(params);
-			const token = await reads.get(repo);
+		readRepoMetadata: async ({ context }) => {
+			const token = await reads.get(context.repo);
 			const json = await githubOk(
-				await port.request({ method: 'GET', path: `/repos/${repo}`, token }),
+				await port.request({ method: 'GET', path: `/repos/${context.repo}`, token }),
 			);
 			return mapRepo(json);
 		},
-		readRef: async ({ params }) => {
+		readRef: async ({ context, params }) => {
 			const parsed = parseRefParams(params);
-			const token = await reads.get(parsed.repo);
+			const token = await reads.get(context.repo);
 			const json = await githubOk(
 				await port.request({
 					method: 'GET',
-					path: `/repos/${parsed.repo}/git/ref/${parsed.gitRef}`,
+					path: `/repos/${context.repo}/git/ref/${parsed.gitRef}`,
 					token,
 				}),
 			);
 			return mapRef(json);
 		},
-		createBranch: async ({ params }) => {
+		createBranch: async ({ context, params }) => {
 			const parsed = parseBranchParams(params);
-			const { token } = await port.createInstallationToken({
-				repo: parsed.repo,
-				permissions: WRITE_PERMISSIONS,
-			});
+			const token = await writes.get(context.repo);
 			const json = await githubOk(
 				await port.request({
 					method: 'POST',
-					path: `/repos/${parsed.repo}/git/refs`,
+					path: `/repos/${context.repo}/git/refs`,
 					token,
 					body: { ref: `refs/heads/${parsed.name}`, sha: parsed.fromSha },
 				}),
 			);
 			return mapRef(json);
 		},
-		createPullRequest: async ({ params }) => {
+		createPullRequest: async ({ context, params }) => {
 			const parsed = parsePullParams(params);
-			const { token } = await port.createInstallationToken({
-				repo: parsed.repo,
-				permissions: WRITE_PERMISSIONS,
-			});
+			const token = await writes.get(context.repo);
 			const json = await githubOk(
 				await port.request({
 					method: 'POST',
-					path: `/repos/${parsed.repo}/pulls`,
+					path: `/repos/${context.repo}/pulls`,
 					token,
 					body: {
 						head: parsed.head,
@@ -92,9 +103,8 @@ export function githubHandlers(port: GitHubPort): Record<ProxyOp, ProxyHandler> 
 			);
 			return mapPull(json);
 		},
-		vendPushToken: async ({ params }) => {
-			const repo = requireRepo(params);
-			return port.createInstallationToken({ repo, permissions: WRITE_PERMISSIONS });
+		vendPushToken: async ({ context }) => {
+			return port.createInstallationToken({ repo: context.repo, permissions: PUSH_PERMISSIONS });
 		},
 	};
 }
@@ -147,23 +157,23 @@ export function createGitHubPort(env: NodeJS.ProcessEnv = process.env): GitHubPo
 	};
 }
 
-function createReadTokenCache(port: GitHubPort) {
-	let cached: { repo: string; token: string; expiresAtMs: number } | undefined;
+function createTokenCache(
+	port: GitHubPort,
+	permissions: GitHubInstallationPermissions,
+	now: () => number,
+) {
+	const cachedByRepo = new Map<string, { token: string; expiresAtMs: number }>();
 	return {
 		async get(repo: string): Promise<string> {
-			if (
-				cached !== undefined &&
-				cached.repo === repo &&
-				cached.expiresAtMs - READ_CACHE_SKEW_MS > Date.now()
-			) {
+			const cached = cachedByRepo.get(repo);
+			if (cached !== undefined && cached.expiresAtMs - TOKEN_CACHE_SKEW_MS > now()) {
 				return cached.token;
 			}
-			const minted = await port.createInstallationToken({ repo, permissions: READ_PERMISSIONS });
-			cached = {
-				repo,
+			const minted = await port.createInstallationToken({ repo, permissions });
+			cachedByRepo.set(repo, {
 				token: minted.token,
 				expiresAtMs: Date.parse(minted.expiresAt),
-			};
+			});
 			return minted.token;
 		},
 	};
@@ -194,9 +204,7 @@ export function normalizeGithubAppPrivateKey(raw: string | undefined): string | 
 	pem = pem.replaceAll('\\n', '\n').replaceAll('\r\n', '\n').replaceAll('\r', '\n');
 	const match = pem.match(/-----BEGIN ([A-Z ]+)-----([A-Za-z0-9+/=\s]+)-----END \1-----/);
 	if (match === null || match[1] === undefined || match[2] === undefined) {
-		throw new Error(
-			'GITHUB_APP_PRIVATE_KEY is not a PEM. Use the GitHub App RSA .pem (BEGIN RSA PRIVATE KEY / BEGIN PRIVATE KEY), not the Ed25519 capability key.',
-		);
+		throw new Error('GITHUB_APP_PRIVATE_KEY must be the RSA .pem downloaded for the GitHub App.');
 	}
 	const kind = match[1];
 	const body = match[2].replace(/\s+/g, '');
@@ -211,9 +219,7 @@ export function normalizeGithubAppPrivateKey(raw: string | undefined): string | 
 		);
 	}
 	if (key.asymmetricKeyType !== 'rsa') {
-		throw new Error(
-			`GITHUB_APP_PRIVATE_KEY is ${key.asymmetricKeyType}, but GitHub Apps require RSA. Ed25519 belongs in CAPABILITY_PRIVATE_KEY.`,
-		);
+		throw new Error('GITHUB_APP_PRIVATE_KEY must be the RSA .pem downloaded for the GitHub App.');
 	}
 	return pem;
 }
@@ -271,32 +277,22 @@ function githubStatusError(status: number, json: unknown): string {
 	return parts.join(': ');
 }
 
-function requireRepo(params: unknown): string {
-	if (!isRecord(params) || typeof params.repo !== 'string') {
-		throw new Error('params.repo is required');
-	}
-	return params.repo;
-}
-
-function parseIssueParams(params: unknown): { repo: string; number: number } {
-	const repo = requireRepo(params);
+function parseIssueParams(params: unknown): { number: number } {
 	if (!isRecord(params) || typeof params.number !== 'number' || !Number.isInteger(params.number)) {
 		throw new Error('params.number is required');
 	}
-	return { repo, number: params.number };
+	return { number: params.number };
 }
 
-function parseRefParams(params: unknown): { repo: string; gitRef: string } {
-	const repo = requireRepo(params);
+function parseRefParams(params: unknown): { gitRef: string } {
 	if (!isRecord(params) || typeof params.ref !== 'string' || params.ref.length === 0) {
 		throw new Error('params.ref is required');
 	}
 	const gitRef = params.ref.startsWith('refs/') ? params.ref.slice('refs/'.length) : params.ref;
-	return { repo, gitRef };
+	return { gitRef };
 }
 
-function parseBranchParams(params: unknown): { repo: string; name: string; fromSha: string } {
-	const repo = requireRepo(params);
+function parseBranchParams(params: unknown): { name: string; fromSha: string } {
 	if (
 		!isRecord(params) ||
 		typeof params.name !== 'string' ||
@@ -306,17 +302,15 @@ function parseBranchParams(params: unknown): { repo: string; name: string; fromS
 	) {
 		throw new Error('params.name and params.fromSha are required');
 	}
-	return { repo, name: params.name, fromSha: params.fromSha };
+	return { name: params.name, fromSha: params.fromSha };
 }
 
 function parsePullParams(params: unknown): {
-	repo: string;
 	head: string;
 	base: string;
 	title: string;
 	body: string;
 } {
-	const repo = requireRepo(params);
 	if (
 		!isRecord(params) ||
 		typeof params.head !== 'string' ||
@@ -327,7 +321,6 @@ function parsePullParams(params: unknown): {
 		throw new Error('params.head, base, title, and body are required');
 	}
 	return {
-		repo,
 		head: params.head,
 		base: params.base,
 		title: params.title,

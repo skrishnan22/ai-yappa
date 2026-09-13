@@ -110,12 +110,8 @@ _Avoid_: Agent loop, sandbox provider, AWS client
 The opaque provider session identity stored on an Agent Conversation and reused across healthy Sandbox Leases. It may be replaced without changing the Agent Conversation or Execution Workspace identity.
 _Avoid_: Slack thread ID, conversation ID, permanent sandbox
 
-**Capability Grant**:
-A short-lived authorization allowing one Sandbox Lease to perform specified operations against one integration resource. It conveys permission without containing the integration's reusable credential.
-_Avoid_: API key, sandbox credential, access token
-
 **Credential Proxy**:
-A trusted integration boundary that validates Capability Grants and acts with reusable credentials without revealing them to a Sandbox. It exposes integration-specific operations rather than arbitrary authenticated HTTP forwarding.
+A trusted in-process integration boundary that authorizes named operations from conversation-owned context and acts with the GitHub App credential. Worker-side read and trusted-write tokens never enter a Sandbox. The bounded exception is checkpoint push: one fresh, repository-scoped `contents:write` token enters one Sandbox process, is confirmed against the remote ref, and is immediately revoked.
 _Avoid_: Open proxy, credential vending service, universal API gateway
 
 **Sandbox Lease**:
