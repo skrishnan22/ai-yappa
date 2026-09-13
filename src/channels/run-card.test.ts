@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
 	__resetRunCardForTests,
 	applyCardEvent,
@@ -15,6 +15,7 @@ import {
 
 afterEach(() => {
 	__resetRunCardForTests();
+	vi.restoreAllMocks();
 });
 
 function working(overrides?: Partial<RunCardState>): RunCardState {
@@ -277,6 +278,7 @@ describe('publishCardEvent', () => {
 	});
 
 	test('posts once then updates the same message, and notifies on settle', async () => {
+		const info = vi.spyOn(console, 'info').mockImplementation(() => {});
 		const posts: unknown[] = [];
 		const updates: unknown[] = [];
 		const notifies: unknown[] = [];
@@ -327,6 +329,13 @@ describe('publishCardEvent', () => {
 		]);
 		expect(persisted.at(-1)?.messageTs).toBe('card.ts');
 		expect(persisted.at(-1)?.notifyPosted).toBe(true);
+		const telemetry = JSON.stringify(info.mock.calls);
+		expect(telemetry).toContain('run_card_post');
+		expect(telemetry).toContain('run_card_update');
+		expect(telemetry).toContain('terminal_notification');
+		expect(telemetry).toContain('conversation-1');
+		expect(telemetry).toContain('sub-1');
+		expect(telemetry).not.toContain('Done:');
 	});
 
 	test('a new submission posts a new Slack message', async () => {

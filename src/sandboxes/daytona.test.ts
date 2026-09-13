@@ -134,6 +134,32 @@ function createFakeSandbox(
 }
 
 describe('daytona factory', () => {
+	test('emits a correlated command terminal event without command, env, or output content', async () => {
+		const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+		try {
+			const sandbox = createFakeSandbox();
+			const flueSandbox = await daytona(sandbox, { cwd: '/workspace' }).createSandbox({
+				id: 'conversation-1',
+			});
+
+			await flueSandbox.exec('echo private-command', {
+				cwd: '/workspace/repo',
+				env: { API_TOKEN: 'private-token' },
+				timeoutMs: 1_500,
+			});
+
+			const serialized = JSON.stringify(info.mock.calls);
+			expect(serialized).toContain('sandbox.command');
+			expect(serialized).toContain('conversation-1');
+			expect(serialized).toContain('sb-1');
+			expect(serialized).toContain('repository');
+			expect(serialized).not.toContain('private-command');
+			expect(serialized).not.toContain('private-token');
+		} finally {
+			info.mockRestore();
+		}
+	});
+
 	test('exec forwards cwd, env, and timeout rounded up to seconds', async () => {
 		const sandbox = createFakeSandbox();
 		const flueSandbox = await daytona(sandbox, { cwd: '/workspace' }).createSandbox({ id: 'c1' });
@@ -239,6 +265,54 @@ describe('daytona factory', () => {
 });
 
 describe('container lease', () => {
+	test('emits lookup, snapshot, and create lifecycle terminal events', async () => {
+		const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+		try {
+			const sandbox = createFakeSandbox({ id: 'container-observed' });
+			const client: DaytonaClientLike = {
+				async create() {
+					return sandbox;
+				},
+				async get() {
+					throw new DaytonaNotFoundError('missing');
+				},
+				async *list() {},
+				snapshot: {
+					async get() {
+						throw new DaytonaNotFoundError('missing');
+					},
+					async create() {
+						return {};
+					},
+				},
+			};
+
+			await createContainerSandbox(client, { conversationId: 'conversation-observed' });
+
+			const records = info.mock.calls.map((call) => call[0]);
+			expect(records).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						event_name: 'sandbox.lifecycle',
+						phase: 'lookup',
+						conversation_id: 'conversation-observed',
+					}),
+					expect.objectContaining({
+						event_name: 'sandbox.lifecycle',
+						phase: 'snapshot',
+					}),
+					expect.objectContaining({
+						event_name: 'sandbox.lifecycle',
+						phase: 'create',
+						sandbox_id: 'container-observed',
+					}),
+				]),
+			);
+		} finally {
+			info.mockRestore();
+		}
+	});
+
 	test('toolchain snapshot enables git, corepack/pnpm, and native builds', () => {
 		expect(CONTAINER_SNAPSHOT_NAME).toBe('slack-agent-container-v2');
 		expect(CONTAINER_IMAGE_COMMANDS.join('\n')).toMatch(/git/);

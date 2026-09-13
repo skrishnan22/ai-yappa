@@ -17,6 +17,7 @@ import {
 } from '@daytona/sdk';
 import { sandboxFromDriver, SandboxDiedError } from '@flue/runtime';
 import type { FileStat, Sandbox, SandboxDriver, SandboxFactory } from '@flue/runtime';
+import { classifyTelemetryError, emitTelemetry } from '../observability.ts';
 
 export const CONTAINER_SNAPSHOT_NAME = 'slack-agent-container-v2';
 export const CONTAINER_AUTO_STOP_MINUTES = 15;
@@ -170,7 +171,10 @@ function raceSandboxDeath<T>(
 }
 
 class DaytonaSandboxDriver implements SandboxDriver {
-	constructor(private sandbox: DaytonaSandboxLike) {}
+	constructor(
+		private sandbox: DaytonaSandboxLike,
+		private conversationId: string,
+	) {}
 
 	private guarded<T>(operation: string, call: Promise<T>): Promise<T> {
 		return raceSandboxDeath(this.sandbox, operation, call);
@@ -254,7 +258,7 @@ class DaytonaSandboxDriver implements SandboxDriver {
 	}
 
 	private async runCommand(
-		operation: string,
+		operation: 'exec' | 'mkdir',
 		command: string,
 		options?: {
 			cwd?: string;
@@ -262,6 +266,8 @@ class DaytonaSandboxDriver implements SandboxDriver {
 			timeoutMs?: number;
 		},
 	): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+		const started = Date.now();
+		const sandboxCommandId = crypto.randomUUID();
 		const timeoutSeconds =
 			typeof options?.timeoutMs === 'number' ? Math.ceil(options.timeoutMs / 1000) : undefined;
 		try {
@@ -269,15 +275,58 @@ class DaytonaSandboxDriver implements SandboxDriver {
 				operation,
 				this.sandbox.process.executeCommand(command, options?.cwd, options?.env, timeoutSeconds),
 			);
-			return { stdout: response.result, stderr: '', exitCode: response.exitCode };
+			const result = { stdout: response.result, stderr: '', exitCode: response.exitCode };
+			emitTelemetry({
+				event_name: 'sandbox.command',
+				outcome: response.exitCode === 0 ? 'ok' : 'failed',
+				conversation_id: this.conversationId,
+				sandbox_id: this.sandbox.id,
+				sandbox_command_id: sandboxCommandId,
+				operation,
+				cwd_class: cwdClass(options?.cwd),
+				timeout_bucket: timeoutBucket(options?.timeoutMs),
+				exit_code: response.exitCode,
+				stdout_bytes: byteLength(result.stdout),
+				stderr_bytes: 0,
+				duration_ms: Math.max(0, Date.now() - started),
+			});
+			return result;
 		} catch (error) {
 			if (error instanceof DaytonaProcessExecutionTimeoutError) {
-				return {
+				const result = {
 					stdout: '',
 					stderr: `[flue:daytona] Command timed out after ${options?.timeoutMs} milliseconds.`,
 					exitCode: 124,
 				};
+				emitTelemetry({
+					event_name: 'sandbox.command',
+					outcome: 'timeout',
+					conversation_id: this.conversationId,
+					sandbox_id: this.sandbox.id,
+					sandbox_command_id: sandboxCommandId,
+					operation,
+					cwd_class: cwdClass(options?.cwd),
+					timeout_bucket: timeoutBucket(options?.timeoutMs),
+					exit_code: result.exitCode,
+					stdout_bytes: 0,
+					stderr_bytes: byteLength(result.stderr),
+					duration_ms: Math.max(0, Date.now() - started),
+					...classifyTelemetryError(error),
+				});
+				return result;
 			}
+			emitTelemetry({
+				event_name: 'sandbox.command',
+				outcome: 'failed',
+				conversation_id: this.conversationId,
+				sandbox_id: this.sandbox.id,
+				sandbox_command_id: sandboxCommandId,
+				operation,
+				cwd_class: cwdClass(options?.cwd),
+				timeout_bucket: timeoutBucket(options?.timeoutMs),
+				duration_ms: Math.max(0, Date.now() - started),
+				...classifyTelemetryError(error),
+			});
 			throw error;
 		}
 	}
@@ -291,7 +340,7 @@ export function assertContainer(sandbox: DaytonaSandboxLike): void {
 	}
 }
 
-async function ensureContainerSnapshot(client: DaytonaClientLike): Promise<void> {
+async function ensureContainerSnapshot(client: DaytonaClientLike): Promise<'existing' | 'created'> {
 	try {
 		const snapshot = await client.snapshot.get(CONTAINER_SNAPSHOT_NAME);
 		if (snapshot.sandboxClass !== undefined && snapshot.sandboxClass !== SandboxClass.CONTAINER) {
@@ -299,7 +348,7 @@ async function ensureContainerSnapshot(client: DaytonaClientLike): Promise<void>
 				`[slack-agent] snapshot ${CONTAINER_SNAPSHOT_NAME} is ${snapshot.sandboxClass}, not container`,
 			);
 		}
-		return;
+		return 'existing';
 	} catch (error) {
 		if (!(error instanceof DaytonaNotFoundError)) throw error;
 	}
@@ -310,6 +359,7 @@ async function ensureContainerSnapshot(client: DaytonaClientLike): Promise<void>
 		sandboxClass: SandboxClass.CONTAINER,
 		resources: CONTAINER_RESOURCES,
 	});
+	return 'created';
 }
 
 async function sandboxNameForConversation(conversationId: string): Promise<string> {
@@ -364,31 +414,130 @@ export async function createContainerSandbox(
 	args: { conversationId: string },
 ): Promise<DaytonaSandboxLike> {
 	const name = await sandboxNameForConversation(args.conversationId);
-	const existing = await findConversationSandbox(client, { ...args, name });
-	if (existing) return startConversationSandbox(existing);
-
-	await ensureContainerSnapshot(client);
-	const sandbox = await client.create(
-		{
-			name,
-			snapshot: CONTAINER_SNAPSHOT_NAME,
-			language: 'typescript',
-			autoStopInterval: CONTAINER_AUTO_STOP_MINUTES,
-			autoPauseInterval: 0,
-			autoArchiveInterval: CONTAINER_AUTO_ARCHIVE_MINUTES,
-			autoDeleteInterval: -1,
-			ephemeral: false,
-			labels: { flueConversationId: args.conversationId },
-		},
-		{ timeout: 180 },
-	);
+	const lookupStarted = Date.now();
+	let existing: DaytonaSandboxLike | undefined;
 	try {
-		assertContainer(sandbox);
+		existing = await findConversationSandbox(client, { ...args, name });
+		emitTelemetry({
+			event_name: 'sandbox.lifecycle',
+			outcome: 'ok',
+			conversation_id: args.conversationId,
+			sandbox_id: existing?.id,
+			phase: 'lookup',
+			reused: existing !== undefined,
+			duration_ms: Math.max(0, Date.now() - lookupStarted),
+		});
 	} catch (error) {
-		await sandbox.delete?.(60, true);
+		emitTelemetry({
+			event_name: 'sandbox.lifecycle',
+			outcome: 'failed',
+			conversation_id: args.conversationId,
+			phase: 'lookup',
+			duration_ms: Math.max(0, Date.now() - lookupStarted),
+			...classifyTelemetryError(error),
+		});
 		throw error;
 	}
-	return sandbox;
+	if (existing) {
+		const priorState = existing.state;
+		const phase = priorState === SandboxState.STARTED ? 'reuse' : 'start';
+		const reuseStarted = Date.now();
+		try {
+			const reused = await startConversationSandbox(existing);
+			emitTelemetry({
+				event_name: 'sandbox.lifecycle',
+				outcome: 'ok',
+				conversation_id: args.conversationId,
+				sandbox_id: reused.id,
+				phase,
+				sandbox_class: reused.sandboxClass,
+				prior_state: priorState,
+				final_state: reused.state,
+				reused: true,
+				duration_ms: Math.max(0, Date.now() - reuseStarted),
+			});
+			return reused;
+		} catch (error) {
+			emitTelemetry({
+				event_name: 'sandbox.lifecycle',
+				outcome: 'failed',
+				conversation_id: args.conversationId,
+				sandbox_id: existing.id,
+				phase,
+				prior_state: priorState,
+				duration_ms: Math.max(0, Date.now() - reuseStarted),
+				...classifyTelemetryError(error),
+			});
+			throw error;
+		}
+	}
+
+	const snapshotStarted = Date.now();
+	try {
+		const snapshot = await ensureContainerSnapshot(client);
+		emitTelemetry({
+			event_name: 'sandbox.lifecycle',
+			outcome: snapshot === 'existing' ? 'skipped' : 'ok',
+			conversation_id: args.conversationId,
+			phase: 'snapshot',
+			skipped: snapshot === 'existing',
+			duration_ms: Math.max(0, Date.now() - snapshotStarted),
+		});
+	} catch (error) {
+		emitTelemetry({
+			event_name: 'sandbox.lifecycle',
+			outcome: 'failed',
+			conversation_id: args.conversationId,
+			phase: 'snapshot',
+			duration_ms: Math.max(0, Date.now() - snapshotStarted),
+			...classifyTelemetryError(error),
+		});
+		throw error;
+	}
+
+	const createStarted = Date.now();
+	let sandbox: DaytonaSandboxLike | undefined;
+	try {
+		sandbox = await client.create(
+			{
+				name,
+				snapshot: CONTAINER_SNAPSHOT_NAME,
+				language: 'typescript',
+				autoStopInterval: CONTAINER_AUTO_STOP_MINUTES,
+				autoPauseInterval: 0,
+				autoArchiveInterval: CONTAINER_AUTO_ARCHIVE_MINUTES,
+				autoDeleteInterval: -1,
+				ephemeral: false,
+				labels: { flueConversationId: args.conversationId },
+			},
+			{ timeout: 180 },
+		);
+		assertContainer(sandbox);
+		emitTelemetry({
+			event_name: 'sandbox.lifecycle',
+			outcome: 'ok',
+			conversation_id: args.conversationId,
+			sandbox_id: sandbox.id,
+			phase: 'create',
+			sandbox_class: sandbox.sandboxClass,
+			final_state: sandbox.state,
+			reused: false,
+			duration_ms: Math.max(0, Date.now() - createStarted),
+		});
+		return sandbox;
+	} catch (error) {
+		if (sandbox !== undefined) await sandbox.delete?.(60, true);
+		emitTelemetry({
+			event_name: 'sandbox.lifecycle',
+			outcome: 'failed',
+			conversation_id: args.conversationId,
+			sandbox_id: sandbox?.id,
+			phase: 'create',
+			duration_ms: Math.max(0, Date.now() - createStarted),
+			...classifyTelemetryError(error),
+		});
+		throw error;
+	}
 }
 
 export async function verifyContainerStopStartPersistence(
@@ -415,10 +564,28 @@ export function daytona(
 	options?: DaytonaAdapterOptions,
 ): SandboxFactory {
 	return {
-		async createSandbox(): Promise<Sandbox> {
+		async createSandbox(createOptions): Promise<Sandbox> {
 			const sandboxCwd = options?.cwd ?? '/workspace';
-			const driver = new DaytonaSandboxDriver(sandbox);
+			const driver = new DaytonaSandboxDriver(sandbox, createOptions.id);
 			return sandboxFromDriver(driver, sandboxCwd);
 		},
 	};
+}
+
+function cwdClass(cwd: string | undefined): 'workspace' | 'repository' | 'other' | 'default' {
+	if (cwd === undefined) return 'default';
+	if (cwd === '/workspace/repo' || cwd.startsWith('/workspace/repo/')) return 'repository';
+	if (cwd === '/workspace' || cwd.startsWith('/workspace/')) return 'workspace';
+	return 'other';
+}
+
+function timeoutBucket(timeoutMs: number | undefined): 'none' | 'short' | 'medium' | 'long' {
+	if (timeoutMs === undefined) return 'none';
+	if (timeoutMs <= 5_000) return 'short';
+	if (timeoutMs <= 60_000) return 'medium';
+	return 'long';
+}
+
+function byteLength(value: string): number {
+	return new TextEncoder().encode(value).byteLength;
 }

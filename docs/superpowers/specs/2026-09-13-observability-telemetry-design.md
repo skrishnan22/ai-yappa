@@ -1,6 +1,6 @@
 # Observability Telemetry Design
 
-**Status:** Proposed for implementation after review
+**Status:** Implemented
 
 **Date:** 2026-09-13
 

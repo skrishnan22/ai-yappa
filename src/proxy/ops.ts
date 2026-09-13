@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { emitTelemetry } from '../observability.ts';
 import { assertOpAllowed, canonicalRepo, type ProxyOp, type SubmissionType } from './policy.ts';
 
 export type OperationContext = {
@@ -53,7 +54,8 @@ export async function executeProxy(args: {
 		outcome: AuditRecord['outcome'],
 		result: ProxyResult,
 	): ProxyResult => {
-		args.audit.append({
+		const latencyMs = Math.max(0, Date.now() - started);
+		const record: AuditRecord = {
 			ts: args.now,
 			conversationId,
 			submissionId,
@@ -61,7 +63,18 @@ export async function executeProxy(args: {
 			op: args.op,
 			paramsDigest: digest,
 			outcome,
-			latencyMs: Math.max(0, Date.now() - started),
+			latencyMs,
+		};
+		args.audit.append(record);
+		emitTelemetry({
+			event_name: 'proxy.operation',
+			outcome,
+			conversation_id: conversationId,
+			submission_id: submissionId,
+			...(repo === null ? {} : { repo }),
+			proxy_operation: args.op,
+			params_digest: digest,
+			duration_ms: latencyMs,
 		});
 		return result;
 	};
