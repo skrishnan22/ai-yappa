@@ -7,8 +7,18 @@
 	// Destination names are account-specific and are documented in README.md.
 	"observability": {
 		"enabled": true,
-		"logs": { "enabled": true, "head_sampling_rate": 1, "persist": true },
-		"traces": { "enabled": true, "head_sampling_rate": 1, "persist": true },
+		"logs": {
+			"enabled": true,
+			"destinations": ["honeycomb-logs"],
+			"head_sampling_rate": 1,
+			"persist": true,
+		},
+		"traces": {
+			"enabled": true,
+			"destinations": ["honeycomb-traces"],
+			"head_sampling_rate": 1,
+			"persist": true,
+		},
 	},
 	// Every agent generates a Durable Object class named after its identity
 	// (Hello -> FlueHelloAgent), and Cloudflare requires a migration entry
