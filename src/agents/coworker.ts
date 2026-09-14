@@ -30,64 +30,11 @@ import {
 import { githubTools } from './github-tools.ts';
 import { installOpenCodeGoSessionHeader } from './opencode-session.ts';
 
-const noisyDebugEvents = new Set(['text_delta', 'thinking_delta', 'toolcall_delta']);
-
-// ponytail: local hang diagnosis after hydration; delete once the stall is identified
 observe((event, context) => {
-	if (!noisyDebugEvents.has(event.type)) {
-		console.info('[slack-agent]', event.type, debugFields(event));
-	}
 	const cardEvent = cardEventFromObservation(event);
 	if (!cardEvent) return Promise.resolve();
 	return enqueueCardEvent({ ...cardEvent, instanceId: context.id });
 });
-
-function debugFields(event: FlueObservation): Record<string, unknown> {
-	switch (event.type) {
-		case 'turn_start':
-			return { turnId: event.turnId, purpose: event.purpose };
-		case 'turn_request':
-			return {
-				turnId: event.turnId,
-				model: event.request.requestedModel,
-				api: event.request.api,
-				tools: event.request.input.tools?.length ?? 0,
-				messages: event.request.input.messages.length,
-			};
-		case 'turn':
-			return {
-				turnId: event.turnId,
-				durationMs: event.durationMs,
-				isError: event.isError,
-				finishReason: event.response.finishReason,
-				error: event.response.error?.message,
-			};
-		case 'tool_start':
-			return { toolName: event.toolName, toolCallId: event.toolCallId, args: event.args };
-		case 'tool': {
-			const error = toolDebugError(event);
-			return {
-				toolName: event.toolName,
-				durationMs: event.durationMs,
-				isError: event.isError,
-				...(error !== undefined ? { error } : {}),
-			};
-		}
-		case 'operation_start':
-			return { operationKind: event.operationKind, operationId: event.operationId };
-		case 'operation':
-			return {
-				operationKind: event.operationKind,
-				durationMs: event.durationMs,
-				isError: event.isError,
-				error: event.errorInfo?.message,
-			};
-		case 'submission_settled':
-			return { outcome: event.outcome, error: event.error?.message ?? event.errorInfo?.message };
-		default:
-			return {};
-	}
-}
 
 const initialDataSchema = v.object({
 	channelId: v.string(),
@@ -150,20 +97,13 @@ export function Coworker(props: { id: string }) {
 				conversationId: options.id,
 				git: gitAuthorFromEnv(agentEnv),
 			});
-			console.info(
-				`[slack-agent] hydration skipped=${result.skipped} durationMs=${result.durationMs} cwd=${result.cwd}`,
-			);
 			await publishCardEvent({
 				instanceId: props.id,
 				type: 'hydration',
 				phase: 'done',
 				skipped: result.skipped,
 			});
-			const attached = await daytona(sandbox, { cwd: WORKSPACE_REPO_DIR }).createSandbox(options);
-			console.info(
-				'[slack-agent] sandbox attached, Flue will discover workspace then call the model',
-			);
-			return attached;
+			return daytona(sandbox, { cwd: WORKSPACE_REPO_DIR }).createSandbox(options);
 		},
 	});
 
@@ -199,21 +139,4 @@ function cardEventFromObservation(event: FlueObservation): CardEvent | undefined
 		default:
 			return undefined;
 	}
-}
-
-function toolDebugError(event: Extract<FlueObservation, { type: 'tool' }>): string | undefined {
-	if (event.isError) {
-		if (typeof event.result === 'string' && event.result.length > 0) return event.result;
-		const nested = findErrorString(event.result) ?? findErrorString(event.effectiveResult);
-		if (nested) return nested;
-		return 'tool failed';
-	}
-	return findErrorString(event.result) ?? findErrorString(event.effectiveResult);
-}
-
-function findErrorString(value: unknown): string | undefined {
-	if (typeof value !== 'object' || value === null) return undefined;
-	const record = value as Record<string, unknown>;
-	if (typeof record.error === 'string' && record.error.length > 0) return record.error;
-	return findErrorString(record.output) ?? findErrorString(record.details);
 }

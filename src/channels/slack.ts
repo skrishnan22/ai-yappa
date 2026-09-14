@@ -3,6 +3,7 @@ import { dispatch, getAgentInstance } from '@flue/runtime';
 import { createSlackChannel, type SlackThreadRef } from '@flue/slack';
 import { Coworker } from '../agents/coworker.ts';
 import { isAllowedInvoker, repoForChannel } from '../config.ts';
+import { emitSemanticEvent } from '../observability.ts';
 import { decideAdmit, mentionsAuthorizedBot } from './admit.ts';
 import type { SlackSignal } from './admit.ts';
 import { getSlackClient } from './slack-reply.ts';
@@ -101,6 +102,14 @@ async function admitThread({
 
 	switch (decision.kind) {
 		case 'refuse-invoker':
+			emitSemanticEvent({
+				event_name: 'slack_admission',
+				outcome: 'refused',
+				conversation_id: id,
+				slack_event_id: eventId,
+				signal_type: signalType,
+				decision: decision.kind,
+			});
 			await getSlackClient(env.SLACK_BOT_TOKEN).chat.postMessage({
 				channel: thread.channelId,
 				thread_ts: thread.threadTs,
@@ -108,6 +117,14 @@ async function admitThread({
 			});
 			return;
 		case 'no-repo':
+			emitSemanticEvent({
+				event_name: 'slack_admission',
+				outcome: 'refused',
+				conversation_id: id,
+				slack_event_id: eventId,
+				signal_type: signalType,
+				decision: decision.kind,
+			});
 			await getSlackClient(env.SLACK_BOT_TOKEN).chat.postMessage({
 				channel: thread.channelId,
 				thread_ts: thread.threadTs,
@@ -115,35 +132,62 @@ async function admitThread({
 			});
 			return;
 		case 'drop-untracked':
+			emitSemanticEvent({
+				event_name: 'slack_admission',
+				outcome: 'dropped',
+				conversation_id: id,
+				slack_event_id: eventId,
+				signal_type: signalType,
+				decision: decision.kind,
+			});
 			return;
 		case 'dispatch': {
 			const attributes: Record<string, string> = { eventId };
 			try {
 				const threadContext = await loadThreadContext(getSlackClient(env.SLACK_BOT_TOKEN), thread);
 				if (threadContext !== undefined) attributes.threadContext = threadContext;
-			} catch (error) {
-				console.info(
-					'[slack-agent] thread context fetch failed',
-					error instanceof Error ? error.message : error,
-				);
+			} catch {
+				// Thread history is context for the agent, not a dispatch requirement.
 			}
-			await dispatch(Coworker, {
-				id,
-				idempotencyKey: eventId,
-				initialData: {
-					channelId: thread.channelId,
-					threadTs: thread.threadTs,
-					startedBy: userId,
-					startedAt: new Date().toISOString(),
-					repo: decision.repo,
-				},
-				message: {
-					kind: 'signal',
-					type: signalType,
-					body: text,
-					attributes,
-				},
-			});
+			try {
+				const receipt = await dispatch(Coworker, {
+					id,
+					idempotencyKey: eventId,
+					initialData: {
+						channelId: thread.channelId,
+						threadTs: thread.threadTs,
+						startedBy: userId,
+						startedAt: new Date().toISOString(),
+						repo: decision.repo,
+					},
+					message: {
+						kind: 'signal',
+						type: signalType,
+						body: text,
+						attributes,
+					},
+				});
+				emitSemanticEvent({
+					event_name: 'slack_admission',
+					outcome: receipt.deduplicated ? 'deduplicated' : 'dispatched',
+					conversation_id: id,
+					slack_event_id: eventId,
+					signal_type: signalType,
+					decision: decision.kind,
+					submission_id: receipt.submissionId,
+					agent_uid: receipt.uid,
+				});
+			} catch (error) {
+				emitSemanticEvent({
+					event_name: 'slack_admission',
+					outcome: 'failed',
+					conversation_id: id,
+					slack_event_id: eventId,
+					signal_type: signalType,
+					decision: decision.kind,
+				});
+				throw error;
+			}
 			return;
 		}
 		default: {

@@ -103,6 +103,60 @@ npm run deploy
 
 Use a Cloudflare account that is not the Codevil account. `npx wrangler secret put OPENCODE_API_KEY` (and the Slack/Daytona secrets). Do not put them in git.
 
+## Observability
+
+The Worker uses Cloudflare's native Workers Logs and Workers Traces. Flue provides the
+`invoke_agent`, `chat`, and `execute_tool` spans automatically; `src/app.ts` installs
+`createCloudflareTracing({ content: false })`, so production traces do not contain
+prompts, tool arguments, or tool results. The small `slack_admission` log is the only
+application-owned semantic event; it contains IDs and the admission decision, never
+Slack message text or secrets.
+
+The checked-in Wrangler config intentionally leaves `destinations` empty. Destination
+names and credentials belong to the Cloudflare account, not source control. To export
+to Honeycomb:
+
+1. In Honeycomb, create an ingest API key for the target environment with permission
+   to create services/datasets. Store it only in the Cloudflare destination settings.
+2. In Cloudflare Dashboard → Workers Observability → Destinations, add a **Traces**
+   destination named `honeycomb-traces`, endpoint
+   `https://api.honeycomb.io/v1/traces`, with custom header `x-honeycomb-team` set to
+   the Honeycomb key.
+3. Add a **Logs** destination named `honeycomb-logs`, endpoint
+   `https://api.honeycomb.io/v1/logs`, with the same custom header.
+4. After saving both destinations, add their exact names to `wrangler.jsonc` and
+   redeploy. The resulting export block is:
+
+```jsonc
+"observability": {
+  "enabled": true,
+  "logs": {
+    "enabled": true,
+    "destinations": ["honeycomb-logs"],
+    "head_sampling_rate": 1,
+    "persist": true
+  },
+  "traces": {
+    "enabled": true,
+    "destinations": ["honeycomb-traces"],
+    "head_sampling_rate": 1,
+    "persist": true
+  }
+}
+```
+
+Start at 100% sampling while traffic is low. Confirm that both destinations receive
+logs and traces, then set `persist: false` for each section if Honeycomb is the system
+of record and Cloudflare dashboard retention is not needed. Cloudflare OTLP export is
+currently beta, requires Workers Paid or higher, and its pricing/availability can
+change; check the account's current Workers Observability terms before enabling it.
+As of the current beta terms, Workers Paid includes 10 million trace events and 10
+million log events per month separately, then charges $0.05 per additional million.
+Cloudflare dashboard persistence is a
+separate meter (20 million events per month included, then $0.60 per additional
+million); `persist: false` avoids that dashboard-storage meter but does not remove
+OTLP export charges. Recheck both figures after October 1, 2026.
+
 ## Learn more
 
 - `SLACK_AGENT_SPEC.md` — v1 design

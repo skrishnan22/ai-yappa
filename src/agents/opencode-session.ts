@@ -20,11 +20,11 @@ export function installOpenCodeGoSessionHeader(): void {
 		...inner,
 		stream: ((model, context, options) =>
 			recoverMissingFinishReason(
-				inner.stream(model, context, withOpenCodeRequestLog(model.id, options)),
+				inner.stream(model, context, withOpenCodeSessionHeader(options)),
 			)) as typeof inner.stream,
 		streamSimple: ((model, context, options) =>
 			recoverMissingFinishReason(
-				inner.streamSimple(model, context, withOpenCodeRequestLog(model.id, options)),
+				inner.streamSimple(model, context, withOpenCodeSessionHeader(options)),
 			)) as typeof inner.streamSimple,
 	});
 }
@@ -73,11 +73,6 @@ function recoverMissingFinishReason(
 		try {
 			for await (const event of stream) {
 				const recovered = recoverOpenCodeStreamError(event);
-				if (recovered) {
-					console.info('[slack-agent] recovered missing finish_reason', {
-						reason: recovered.reason,
-					});
-				}
 				const next: AssistantMessageEvent = recovered ?? event;
 				out.push(next);
 				if (next.type === 'done' || next.type === 'error') return;
@@ -87,26 +82,4 @@ function recoverMissingFinishReason(
 		}
 	})();
 	return out;
-}
-
-function withOpenCodeRequestLog<T extends StreamOptions>(
-	modelId: string,
-	options: T | undefined,
-): T {
-	const started = Date.now();
-	console.info('[slack-agent] opencode request', { model: modelId, sessionId: options?.sessionId });
-	const next = (withOpenCodeSessionHeader(options) ?? {}) as T & {
-		onResponse?: (response: { status: number }, model: unknown) => unknown;
-	};
-	const previous = next.onResponse;
-	return {
-		...next,
-		onResponse: (response: { status: number }, model: unknown) => {
-			console.info('[slack-agent] opencode response', {
-				status: response.status,
-				waitMs: Date.now() - started,
-			});
-			return previous?.(response, model);
-		},
-	};
 }
