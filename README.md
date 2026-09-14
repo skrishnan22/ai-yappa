@@ -150,8 +150,9 @@ logs and traces, then set `persist: false` for each section if Honeycomb is the 
 of record and Cloudflare dashboard retention is not needed. Cloudflare OTLP export is
 currently beta, requires Workers Paid or higher, and its pricing/availability can
 change; check the account's current Workers Observability terms before enabling it.
-As of the current beta terms, Workers Paid includes 10 million OTLP events per month,
-then charges $0.05 per additional million. Cloudflare dashboard persistence is a
+As of the current beta terms, Workers Paid includes 10 million trace events and 10
+million log events per month separately, then charges $0.05 per additional million.
+Cloudflare dashboard persistence is a
 separate meter (20 million events per month included, then $0.60 per additional
 million); `persist: false` avoids that dashboard-storage meter but does not remove
 OTLP export charges. Recheck both figures after October 1, 2026.
