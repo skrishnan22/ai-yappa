@@ -1,6 +1,13 @@
 import { Hono } from 'hono';
+import { instrument } from '@flue/runtime';
 import { createSlackChannelForEnv } from './channels/slack.ts';
 import { loadServerEnv } from './env.ts';
+
+// Keep prompts, tool arguments, and tool results out of production traces.
+if (process.env.NODE_ENV !== 'test') {
+	const { createCloudflareTracing } = await import('@flue/runtime/cloudflare');
+	instrument(createCloudflareTracing({ content: false }));
+}
 
 const app = new Hono();
 

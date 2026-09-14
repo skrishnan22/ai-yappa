@@ -19,7 +19,6 @@ import {
 } from '../channels/run-card.ts';
 import { replyInThread } from '../channels/slack-reply.ts';
 import { gitAuthorFromEnv, loadAgentEnv } from '../env.ts';
-import { classifyTelemetryError, emitTelemetry, observeFlueTelemetry } from '../observability.ts';
 import type { AuditRecord } from '../proxy/ops.ts';
 import { createContainerSandbox, daytona } from '../sandboxes/daytona.ts';
 import {
@@ -32,7 +31,6 @@ import { githubTools } from './github-tools.ts';
 import { installOpenCodeGoSessionHeader } from './opencode-session.ts';
 
 observe((event, context) => {
-	observeFlueTelemetry(event, context.id);
 	const cardEvent = cardEventFromObservation(event);
 	if (!cardEvent) return Promise.resolve();
 	return enqueueCardEvent({ ...cardEvent, instanceId: context.id });
@@ -59,12 +57,7 @@ export function Coworker(props: { id: string }) {
 	// reply tool degrades to `posted: false` without a token).
 	const agentEnv = loadAgentEnv();
 
-	useTool(
-		replyInThread(
-			{ channelId: data.channelId, threadTs: data.threadTs, conversationId: props.id },
-			agentEnv.SLACK_BOT_TOKEN,
-		),
-	);
+	useTool(replyInThread(data, agentEnv.SLACK_BOT_TOKEN));
 	const [runCard, setRunCard] = usePersistentState<RunCardState | null>('run-card', null);
 	bindRunCard({
 		instanceId: props.id,
@@ -99,67 +92,18 @@ export function Coworker(props: { id: string }) {
 				type: 'hydration',
 				phase: 'start',
 			});
-			const hydrationStarted = Date.now();
-			let result: Awaited<ReturnType<typeof hydrateWorkspace>>;
-			try {
-				result = await hydrateWorkspace(hydrateIoFromDaytona(sandbox), {
-					repo: data.repo,
-					conversationId: options.id,
-					git: gitAuthorFromEnv(agentEnv),
-				});
-				emitTelemetry({
-					event_name: 'sandbox.lifecycle',
-					outcome: result.skipped ? 'skipped' : 'ok',
-					conversation_id: options.id,
-					sandbox_id: sandbox.id,
-					phase: 'hydrate',
-					skipped: result.skipped,
-					repo: data.repo,
-					duration_ms: result.durationMs,
-				});
-			} catch (error) {
-				emitTelemetry({
-					event_name: 'sandbox.lifecycle',
-					outcome: 'failed',
-					conversation_id: options.id,
-					sandbox_id: sandbox.id,
-					phase: 'hydrate',
-					repo: data.repo,
-					duration_ms: Math.max(0, Date.now() - hydrationStarted),
-					...classifyTelemetryError(error),
-				});
-				throw error;
-			}
+			const result = await hydrateWorkspace(hydrateIoFromDaytona(sandbox), {
+				repo: data.repo,
+				conversationId: options.id,
+				git: gitAuthorFromEnv(agentEnv),
+			});
 			await publishCardEvent({
 				instanceId: props.id,
 				type: 'hydration',
 				phase: 'done',
 				skipped: result.skipped,
 			});
-			const attachStarted = Date.now();
-			try {
-				const attached = await daytona(sandbox, { cwd: WORKSPACE_REPO_DIR }).createSandbox(options);
-				emitTelemetry({
-					event_name: 'sandbox.lifecycle',
-					outcome: 'ok',
-					conversation_id: options.id,
-					sandbox_id: sandbox.id,
-					phase: 'attach',
-					duration_ms: Math.max(0, Date.now() - attachStarted),
-				});
-				return attached;
-			} catch (error) {
-				emitTelemetry({
-					event_name: 'sandbox.lifecycle',
-					outcome: 'failed',
-					conversation_id: options.id,
-					sandbox_id: sandbox.id,
-					phase: 'attach',
-					duration_ms: Math.max(0, Date.now() - attachStarted),
-					...classifyTelemetryError(error),
-				});
-				throw error;
-			}
+			return daytona(sandbox, { cwd: WORKSPACE_REPO_DIR }).createSandbox(options);
 		},
 	});
 

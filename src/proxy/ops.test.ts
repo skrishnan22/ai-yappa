@@ -42,30 +42,6 @@ describe('digestParams', () => {
 });
 
 describe('executeProxy', () => {
-	test('emits the terminal proxy operation with the audit correlation and no raw params', async () => {
-		const info = vi.spyOn(console, 'info').mockImplementation(() => {});
-		try {
-			await executeProxy({
-				context: CODE_CHANGE_CONTEXT,
-				op: 'readIssue',
-				params: { number: 3, authorization: 'Bearer never-log-me' },
-				now: 1_000_000,
-				handlers: stubHandlers({ readIssue: async () => ({ title: 'Bug' }) }),
-				audit: { append: () => {} },
-			});
-
-			const serialized = JSON.stringify(info.mock.calls);
-			expect(serialized).toContain('proxy.operation');
-			expect(serialized).toContain('c1');
-			expect(serialized).toContain(
-				digestParams({ number: 3, authorization: 'Bearer never-log-me' }),
-			);
-			expect(serialized).not.toContain('never-log-me');
-		} finally {
-			info.mockRestore();
-		}
-	});
-
 	test('runs a code-change read and audits the canonical repo', async () => {
 		const audit: AuditRecord[] = [];
 		const result = await executeProxy({

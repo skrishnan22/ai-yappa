@@ -1,4 +1,4 @@
-import { getSlackClient, observeSlackDelivery } from './slack-reply.ts';
+import { getSlackClient } from './slack-reply.ts';
 
 export type CardStatus = 'queued' | 'hydrating' | 'working' | 'completed' | 'failed' | 'aborted';
 
@@ -135,59 +135,28 @@ export async function publishCardEvent(event: RoutedCardEvent, now = Date.now())
 		const port = handle.port ?? (handle.token ? slackCardPort(handle.token) : undefined);
 		if (port !== undefined) {
 			const rendered = renderRunCard(applied.state, now);
-			const submissionId =
-				applied.state.submissionId === 'active' ? undefined : applied.state.submissionId;
-			const messageTs = applied.state.messageTs;
-			if (messageTs) {
-				await observeSlackDelivery(
-					{
-						conversationId: event.instanceId,
-						submissionId,
-						deliveryKind: 'run_card_update',
-						method: 'chat.update',
-					},
-					() =>
-						port.update({
-							channel: handle.channelId,
-							ts: messageTs,
-							text: rendered.text,
-							blocks: rendered.blocks,
-						}),
-				);
+			if (applied.state.messageTs) {
+				await port.update({
+					channel: handle.channelId,
+					ts: applied.state.messageTs,
+					text: rendered.text,
+					blocks: rendered.blocks,
+				});
 			} else {
-				const posted = await observeSlackDelivery(
-					{
-						conversationId: event.instanceId,
-						submissionId,
-						deliveryKind: 'run_card_post',
-						method: 'chat.postMessage',
-					},
-					() =>
-						port.post({
-							channel: handle.channelId,
-							threadTs: handle.threadTs,
-							text: rendered.text,
-							blocks: rendered.blocks,
-						}),
-				);
+				const posted = await port.post({
+					channel: handle.channelId,
+					threadTs: handle.threadTs,
+					text: rendered.text,
+					blocks: rendered.blocks,
+				});
 				handle.state = { ...applied.state, messageTs: posted.ts };
 			}
-			const notify = applied.notify;
-			if (notify !== undefined && handle.state.notifyPosted !== true) {
-				await observeSlackDelivery(
-					{
-						conversationId: event.instanceId,
-						submissionId,
-						deliveryKind: 'terminal_notification',
-						method: 'chat.postMessage',
-					},
-					() =>
-						port.notify({
-							channel: handle.channelId,
-							threadTs: handle.threadTs,
-							text: notify,
-						}),
-				);
+			if (applied.notify !== undefined && handle.state.notifyPosted !== true) {
+				await port.notify({
+					channel: handle.channelId,
+					threadTs: handle.threadTs,
+					text: applied.notify,
+				});
 				handle.state = { ...handle.state, notifyPosted: true };
 			}
 		}

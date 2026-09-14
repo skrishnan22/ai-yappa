@@ -32,7 +32,6 @@ vi.mock('@slack/web-api', () => ({
 afterEach(() => {
 	constructed.length = 0;
 	posted.length = 0;
-	vi.restoreAllMocks();
 	vi.unstubAllEnvs();
 	vi.resetModules();
 });
@@ -105,14 +104,8 @@ describe('slack WebClient fetch', () => {
 	});
 
 	test('uses the local fallback when no Slack token was supplied', async () => {
-		const info = vi.spyOn(console, 'info').mockImplementation(() => {});
 		const { replyInThread } = await import('./slack-reply.ts');
-		const ref = {
-			channelId: 'C-local',
-			threadTs: '1.2',
-			conversationId: 'conversation-local',
-		};
-		const tool = replyInThread(ref);
+		const tool = replyInThread({ channelId: 'C-local', threadTs: '1.2' });
 		await expect(
 			tool.run({
 				data: { text: 'local reply' },
@@ -122,26 +115,11 @@ describe('slack WebClient fetch', () => {
 		).resolves.toEqual({
 			output: { posted: false, text: 'local reply', channel: null, ts: null },
 		});
-		expect(info.mock.calls).toEqual([
-			[
-				expect.objectContaining({
-					event_name: 'slack.delivery',
-					outcome: 'skipped',
-					conversation_id: 'conversation-local',
-					tool_call_id: 'local',
-					delivery_kind: 'agent_reply',
-					posted: false,
-				}),
-			],
-		]);
-		expect(JSON.stringify(info.mock.calls)).not.toContain('local reply');
 	});
 
 	test('posts with the injected token and thread reference', async () => {
-		const info = vi.spyOn(console, 'info').mockImplementation(() => {});
 		const { replyInThread } = await import('./slack-reply.ts');
-		const ref = { channelId: 'C-test', threadTs: '2.3', conversationId: 'conversation-post' };
-		const tool = replyInThread(ref, 'xoxb-injected');
+		const tool = replyInThread({ channelId: 'C-test', threadTs: '2.3' }, 'xoxb-injected');
 		await expect(
 			tool.run({
 				data: { text: 'hello Slack' },
@@ -152,42 +130,5 @@ describe('slack WebClient fetch', () => {
 			output: { posted: true, text: 'hello Slack', channel: null, ts: null },
 		});
 		expect(posted).toEqual([{ channel: 'C-test', thread_ts: '2.3', text: 'hello Slack' }]);
-		expect(info.mock.calls).toEqual([
-			[
-				expect.objectContaining({
-					event_name: 'slack.delivery',
-					outcome: 'ok',
-					conversation_id: 'conversation-post',
-					tool_call_id: 'post',
-					posted: true,
-				}),
-			],
-		]);
-		expect(JSON.stringify(info.mock.calls)).not.toContain('hello Slack');
-	});
-
-	test('emits a failed delivery without the Slack error message', async () => {
-		const info = vi.spyOn(console, 'info').mockImplementation(() => {});
-		const { observeSlackDelivery } = await import('./slack-reply.ts');
-
-		await expect(
-			observeSlackDelivery(
-				{
-					conversationId: 'conversation-failed',
-					deliveryKind: 'agent_reply',
-					method: 'chat.postMessage',
-					toolCallId: 'tool-failed',
-				},
-				async () => {
-					throw new Error('Slack response contained private message text');
-				},
-			),
-		).rejects.toThrow('Slack response contained private message text');
-
-		const serialized = JSON.stringify(info.mock.calls);
-		expect(serialized).toContain('slack.delivery');
-		expect(serialized).toContain('failed');
-		expect(serialized).toContain('conversation-failed');
-		expect(serialized).not.toContain('private message text');
 	});
 });
