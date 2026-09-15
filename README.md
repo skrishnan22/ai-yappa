@@ -1,6 +1,6 @@
 # slack-agent
 
-Slack-native engineering coworker. Investigates a repo, makes changes, and opens PRs. It never merges or deploys.
+Slack-native engineering coworker. Investigates a repo, makes changes, and opens PRs via native GitHub tools. Mounted MCP tools may exercise the authority of the deployment-scoped secrets you configure.
 
 Built as a Flue app on the Cloudflare target. Execution is Daytona container Sandboxes, not Cloudflare Sandbox. A stopped container retains its filesystem but loses RAM and running processes. The model is OpenCode Go (`opencode-go/deepseek-v4-flash`).
 
@@ -23,9 +23,12 @@ GIT_AUTHOR_EMAIL=
 GITHUB_APP_ID=
 GITHUB_APP_PRIVATE_KEY=
 GITHUB_APP_INSTALLATION_ID=
+CLOUDFLARE_API_TOKEN=
 ```
 
 `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` are optional. If both are set, hydration configures that identity in the cloned repo (GitHub App bot: `{slug}[bot]` / `{id}+{slug}[bot]@users.noreply.github.com`). If neither is set, commits would otherwise be `root` — do not guess. If only one is set, boot fails.
+
+`CLOUDFLARE_API_TOKEN` is optional catalog auth for the Cloudflare MCP row (see [MCP Integration Catalog](#mcp-integration-catalog)). It is not part of the fixed boot schema; leave it empty to skip that server.
 
 GitHub tools require `GITHUB_APP_ID`, the RSA `.pem` GitHub downloads for `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_APP_INSTALLATION_ID`. PEM values may use `\n` in `.dev.vars`. Install the App only on the enrolled pilot repository. Its minimum application permissions are **Contents: Read and write**, **Pull requests: Read and write**, and **Issues: Read-only** (GitHub grants metadata read access automatically); do not grant administration, workflows/actions, deployments, secrets, or merge bypass.
 
@@ -38,6 +41,21 @@ cp .env .dev.vars
 ```
 
 `flue run` reads `.env`. `TUNNEL_HOSTNAME` is only for local Vite; it does not need to be a Worker secret.
+
+## MCP Integration Catalog
+
+Remote MCP servers are listed in `src/integrations/mcp-catalog.ts` and mounted on Coworker via Flue `useMcpConnection`. Auth is a deployment Worker secret (Bearer). Neither the model nor Slack input may choose a server URL, secret name, or optional policy.
+
+To add a server:
+
+1. Mint an API token scoped as tightly as you accept (prefer read-only for pilots).
+2. Put the value in `.env` (for `flue run`) and `.dev.vars` (for `npm run dev`). For production: `npx wrangler secret put THAT_TOKEN`.
+3. Append `{ name, url, authEnv: 'THAT_TOKEN', optional: true }` to `INTEGRATION_CATALOG`.
+4. Redeploy (or restart local). The next Coworker submission resolves the secret at render, connects, discovers tools, and mounts them as `mcp__<name>__<tool>`.
+
+The shipped catalog includes optional Cloudflare MCP (`https://mcp.cloudflare.com/mcp`, `CLOUDFLARE_API_TOKEN`). A missing optional secret skips only that connection and logs a credential-free warning; Slack, native GitHub tools, and the sandbox still work. Required rows (`optional: false`) fail before the model runs and name the missing env key, never its value. Reusable MCP tokens never enter Daytona; authenticated `wrangler` / `gh` in the sandbox stay rejected. Native `create_working_branch` / `open_pull_request` / `checkpoint_working_branch` remain the GitHub App Credential Proxy path.
+
+Do not paste real secret values into git, chat, or logs.
 
 ## Slack app
 
@@ -101,7 +119,7 @@ A threaded reply that reflects work in the already-cloned repo (not clone/`ls` a
 npm run deploy
 ```
 
-Use a Cloudflare account that is not the Codevil account. `npx wrangler secret put OPENCODE_API_KEY` (and the Slack/Daytona secrets). Do not put them in git.
+Use a Cloudflare account that is not the Codevil account. `npx wrangler secret put OPENCODE_API_KEY` (and the Slack/Daytona/GitHub secrets). Optional catalog secrets such as `CLOUDFLARE_API_TOKEN` use the same command. Do not put them in git.
 
 ## Observability
 

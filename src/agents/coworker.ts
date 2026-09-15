@@ -3,6 +3,7 @@ import { Daytona } from '@daytona/sdk';
 import {
 	observe,
 	useInitialData,
+	useMcpConnection,
 	useModel,
 	usePersistentState,
 	useSandbox,
@@ -19,6 +20,7 @@ import {
 } from '../channels/run-card.ts';
 import { replyInThread } from '../channels/slack-reply.ts';
 import { gitAuthorFromEnv, loadAgentEnv } from '../env.ts';
+import { INTEGRATION_CATALOG, resolveIntegrationCatalog } from '../integrations/mcp-catalog.ts';
 import type { AuditRecord } from '../proxy/ops.ts';
 import { createContainerSandbox, daytona } from '../sandboxes/daytona.ts';
 import {
@@ -82,6 +84,22 @@ export function Coworker(props: { id: string }) {
 	})) {
 		useTool(tool);
 	}
+
+	// Resolve MCP catalog at render (not module init). Secrets stay out of
+	// loadAgentEnv so optional integrations are not boot requirements.
+	const mcp = resolveIntegrationCatalog(INTEGRATION_CATALOG, process.env);
+	for (const warning of mcp.warnings) {
+		console.warn(warning);
+	}
+	for (const connection of mcp.connections) {
+		useMcpConnection({
+			name: connection.name,
+			url: connection.url,
+			auth: connection.auth,
+			optional: connection.optional,
+		});
+	}
+
 	useSandbox({
 		async createSandbox(options) {
 			const apiKey = agentEnv.DAYTONA_API_KEY;

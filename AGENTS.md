@@ -10,6 +10,7 @@ Implementation source of truth: `SLACK_AGENT_SPEC.md`. Milestone scope: `SLACK_A
 - `src/channels/slack.ts` — verified Slack ingress. A mention may create a Coworker; an unmentioned thread reply continues only if `getAgentInstance` finds one. Loaded by `app.ts` only, so `flue run` does not need a signing secret.
 - `src/channels/slack-reply.ts` — thread-bound reply tool. Without `SLACK_BOT_TOKEN`, the tool returns the text and does not post.
 - `src/sandboxes/daytona.ts` — Flue `SandboxFactory` over an already-created Daytona container sandbox. Application code owns create/stop/start; stop/start preserves files but not RAM or processes.
+- `src/integrations/mcp-catalog.ts` — deploy-time Integration Catalog; Coworker resolves Worker secrets at render and mounts via `useMcpConnection`.
 - `src/config.ts` — channel→repo map and invoker allowlist. Fail closed when empty.
 - `src/app.ts` — route map. Slack channel only.
 - `src/cloudflare.ts` — Worker-level exports and non-HTTP handlers.
