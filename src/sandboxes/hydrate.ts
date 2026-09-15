@@ -54,8 +54,11 @@ export function coworkerInstructions(repo: string): string {
 		'Inspect, edit, and test with sandbox tools in that directory.',
 		'After a meaningful edit batch, persist with checkpoint_working_branch, then open_pull_request. Do not stop at a plan.',
 		'Do not clone the repository or treat listing the tree as the job.',
-		'GitHub reads, the working branch, and pull requests go through the GitHub tools. Never git push with a token.',
-		'Do not merge or deploy. Do not choose a different Slack channel or thread.',
+		'Native GitHub tools stop at create_working_branch, open_pull_request, and checkpoint_working_branch; they do not merge or deploy.',
+		'Mounted MCP tools (names like mcp__…) may exercise the deployment-selected authority for that server; the provider scopes of the deployment secret are the action boundary.',
+		'Never put reusable credentials in the sandbox. Never git push with a token.',
+		'If an MCP call times out, disconnects, or returns an unknown outcome, do not intentionally reissue an equivalent effectful call; explain the ambiguity in the Slack thread.',
+		'Do not choose a different Slack channel or thread.',
 		'A live run card is posted by owner code. Do not try to create or edit it.',
 		'Reply with the reply_in_slack_thread tool for questions and the human-visible summary.',
 	].join(' ');

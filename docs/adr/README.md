@@ -19,4 +19,5 @@
 | 0013 Credentials stay outside sandboxes | Partially superseded by ADR 0016. Reusable credentials remain outside sandboxes; the Capability Grant mechanism does not hold |
 | 0014 Unknown remote tool outcomes | Principle holds (spec D9). The AgentCore one-shot mechanic is superseded by spec §4.4 (`commandId` markers and reconciling) |
 | 0015 Daytona for sandbox compute | Holds (spec D2). Direct Durable Object control; container filesystem persists across stop/start; Git remains recovery truth |
-| 0016 Simplify GitHub authorization inside the Worker | Holds (spec D13, D14). Direct trusted context policy with bounded checkpoint-token exposure |
+| 0016 Simplify GitHub authorization inside the Worker | Holds (spec D13, D14) for **native** Credential Proxy ops. Direct trusted context policy with bounded checkpoint-token exposure |
+| 0017 Open MCP catalog with deployment secrets | Accepted; ready for implementation. Ease-first MCP mounts via Flue `useMcpConnection`; auth is deployment Worker secrets; native GitHub proxy remains for branch/PR/checkpoint. Defines D10 for MCP-backed calls, limits D14 to native operations, and relies on Flue plus Coworker guidance—not a generic retry gate—for unknown MCP outcomes |

@@ -201,4 +201,14 @@ describe('coworkerInstructions', () => {
 		expect(prompt.toLowerCase()).not.toContain('clone that repo');
 		expect(prompt).not.toMatch(/\bls\b/);
 	});
+
+	test('distinguishes native GitHub authority from MCP and forbids reissuing uncertain MCP calls', () => {
+		const prompt = coworkerInstructions('https://github.com/skrishnan22/codevil.git');
+		expect(prompt).toMatch(/Native GitHub tools stop at create_working_branch/);
+		expect(prompt).toMatch(/do not merge or deploy/i);
+		expect(prompt).toMatch(/Mounted MCP tools/);
+		expect(prompt).toMatch(/deployment-selected authority/);
+		expect(prompt).toMatch(/do not intentionally reissue an equivalent effectful call/i);
+		expect(prompt).toMatch(/explain the ambiguity in the Slack thread/i);
+	});
 });

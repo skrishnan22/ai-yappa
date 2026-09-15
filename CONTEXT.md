@@ -1,6 +1,6 @@
 # Slack Agent
 
-Slack Agent is an internal coding coworker operated through Slack. It turns requests into code changes and pull requests without merging or deploying them.
+Slack Agent is an internal coding coworker operated through Slack. Its native GitHub operations produce branches and pull requests; mounted MCP tools may exercise the authority selected by the deployment operator.
 
 Implementation source of truth is `SLACK_AGENT_SPEC.md` (handoff: `SLACK_AGENT_HANDOFF.md`). This file is the glossary. `docs/adr/` is historical; see `docs/adr/README.md` for what the spec kept or replaced.
 
@@ -111,8 +111,16 @@ The opaque provider session identity stored on an Agent Conversation and reused 
 _Avoid_: Slack thread ID, conversation ID, permanent sandbox
 
 **Credential Proxy**:
-A trusted in-process integration boundary that authorizes named operations from conversation-owned context and acts with the GitHub App credential. Worker-side read and trusted-write tokens never enter a Sandbox. The bounded exception is checkpoint push: one fresh, repository-scoped `contents:write` token enters one Sandbox process, is confirmed against the remote ref, and is immediately revoked.
-_Avoid_: Open proxy, credential vending service, universal API gateway
+A trusted in-process integration boundary that authorizes named operations from conversation-owned context and acts with the GitHub App credential. Worker-side read and trusted-write tokens never enter a Sandbox. The bounded exception is checkpoint push: one fresh, repository-scoped `contents:write` token enters one Sandbox process, is confirmed against the remote ref, and is immediately revoked. It does not front remote MCP servers.
+_Avoid_: Open proxy, credential vending service, universal API gateway, Integration Catalog
+
+**Integration Catalog**:
+The deploy-time list of remote MCP servers a Slack Agent Deployment mounts on the Coworker. Each entry names a server URL and the deployment secret used as bearer auth.
+_Avoid_: Tool marketplace, plugin registry, Credential Proxy
+
+**MCP Connection**:
+A Flue-declared remote MCP server whose discovered tools the model may call. Authentication is a deployment-scoped bearer token held in Worker secrets, not a Sandbox env or per-user OAuth grant.
+_Avoid_: Sandbox CLI, Credential Proxy operation, personal integration
 
 **Sandbox Lease**:
 A temporary attachment of Sandbox compute to one Agent Conversation. It is reused during active work, kept running for at most fifteen idle minutes by default, then stopped while its filesystem is retained. Starting or replacing it does not change conversation identity; no process is expected to survive a stop.
