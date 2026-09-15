@@ -117,6 +117,16 @@ describe('slack WebClient fetch', () => {
 		});
 	});
 
+	test('requires complete operational identifiers in the reply tool contract', async () => {
+		const { replyInThread } = await import('./slack-reply.ts');
+		const tool = replyInThread({ channelId: 'C-local', threadTs: '1.2' });
+
+		expect(tool.description).toMatch(/full exact operational identifiers/i);
+		expect(tool.description).toMatch(/trace IDs, request IDs, commit hashes/i);
+		expect(tool.description).toMatch(/never abbreviate.*\.\.\.|…/i);
+		expect(tool.description).not.toMatch(/standard Markdown accepted by Slack/i);
+	});
+
 	test('submits standard Markdown unchanged through markdown_text', async () => {
 		const { replyInThread } = await import('./slack-reply.ts');
 		const tool = replyInThread({ channelId: 'C-test', threadTs: '2.3' }, 'xoxb-injected');

@@ -38,7 +38,7 @@ export function replyInThread(
 	return defineTool({
 		name: 'reply_in_slack_thread',
 		description:
-			'Reply in the Slack thread bound to this conversation. Use standard Markdown accepted by Slack (for example **bold**) and include full exact operational identifiers; never abbreviate trace IDs, request IDs, commit hashes, or similar values with ... or ….',
+			'Reply in the Slack thread bound to this conversation. Include full exact operational identifiers; never abbreviate trace IDs, request IDs, commit hashes, or similar values with ... or ….',
 		input: v.object({ text: v.pipe(v.string(), v.minLength(1)) }),
 		async run({ data }) {
 			if (!slackBotToken) {
