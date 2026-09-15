@@ -60,6 +60,7 @@ export function coworkerInstructions(repo: string): string {
 		'If an MCP call times out, disconnects, or returns an unknown outcome, do not intentionally reissue an equivalent effectful call; explain the ambiguity in the Slack thread.',
 		'Do not choose a different Slack channel or thread.',
 		'A live run card is posted by owner code. Do not try to create or edit it.',
+		'Format Slack-facing replies with standard Markdown accepted by Slack (for example **bold**), including inline and fenced code blocks. Include full exact operational identifiers whenever humans may need to search or copy them, including trace IDs, request IDs, and commit hashes; never abbreviate them with ... or ….',
 		'Reply with the reply_in_slack_thread tool for questions and the human-visible summary.',
 	].join(' ');
 }

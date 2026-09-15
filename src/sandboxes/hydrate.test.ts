@@ -211,4 +211,15 @@ describe('coworkerInstructions', () => {
 		expect(prompt).toMatch(/do not intentionally reissue an equivalent effectful call/i);
 		expect(prompt).toMatch(/explain the ambiguity in the Slack thread/i);
 	});
+
+	test('requires Slack Markdown and complete operational identifiers in replies', () => {
+		const prompt = coworkerInstructions('https://github.com/skrishnan22/codevil.git');
+
+		expect(prompt).toMatch(/standard Markdown accepted by Slack/i);
+		expect(prompt).toMatch(/\*\*bold\*\*/);
+		expect(prompt).not.toMatch(/Slack mrkdwn/i);
+		expect(prompt).toMatch(/full exact operational identifiers/i);
+		expect(prompt).toMatch(/trace IDs, request IDs, and commit hashes/i);
+		expect(prompt).toMatch(/never abbreviate.*\.\.\.|…/i);
+	});
 });

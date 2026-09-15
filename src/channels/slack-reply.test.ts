@@ -108,13 +108,38 @@ describe('slack WebClient fetch', () => {
 		const tool = replyInThread({ channelId: 'C-local', threadTs: '1.2' });
 		await expect(
 			tool.run({
-				data: { text: 'local reply' },
+				data: { text: 'local **reply**' },
 				toolCallId: 'local',
 				log: { info() {}, warn() {}, error() {} },
 			}),
 		).resolves.toEqual({
-			output: { posted: false, text: 'local reply', channel: null, ts: null },
+			output: { posted: false, text: 'local **reply**', channel: null, ts: null },
 		});
+	});
+
+	test('submits standard Markdown unchanged through markdown_text', async () => {
+		const { replyInThread } = await import('./slack-reply.ts');
+		const tool = replyInThread({ channelId: 'C-test', threadTs: '2.3' }, 'xoxb-injected');
+		const text =
+			'Completed at **17:43:23.056Z**. Inline `**requestId**`.\n```text\n**traceId**\n```\n_italic_ and [link](https://example.com)';
+
+		await expect(
+			tool.run({
+				data: { text },
+				toolCallId: 'post-formatted',
+				log: { info() {}, warn() {}, error() {} },
+			}),
+		).resolves.toEqual({
+			output: { posted: true, text, channel: null, ts: null },
+		});
+		expect(posted).toEqual([
+			{
+				channel: 'C-test',
+				thread_ts: '2.3',
+				markdown_text: text,
+			},
+		]);
+		expect(posted[0]).not.toHaveProperty('text');
 	});
 
 	test('posts with the injected token and thread reference', async () => {
@@ -129,6 +154,6 @@ describe('slack WebClient fetch', () => {
 		).resolves.toEqual({
 			output: { posted: true, text: 'hello Slack', channel: null, ts: null },
 		});
-		expect(posted).toEqual([{ channel: 'C-test', thread_ts: '2.3', text: 'hello Slack' }]);
+		expect(posted).toEqual([{ channel: 'C-test', thread_ts: '2.3', markdown_text: 'hello Slack' }]);
 	});
 });
