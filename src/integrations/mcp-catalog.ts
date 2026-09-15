@@ -6,14 +6,34 @@
  * outside the fixed boot schema so an optional integration is not an
  * application-wide requirement (ADR 0017).
  */
+import * as v from 'valibot';
 
-export type CatalogEntry = {
-	name: string;
-	url: string;
-	authEnv: string;
+const nonEmpty = v.pipe(v.string(), v.trim(), v.minLength(1));
+
+const httpUrl = v.pipe(
+	nonEmpty,
+	// One check: valibot may still run later pipe steps after a failed `v.url()`,
+	// so avoid a bare `new URL(...)` that throws out of `safeParse`.
+	v.check((value) => {
+		try {
+			const protocol = new URL(value).protocol;
+			return protocol === 'http:' || protocol === 'https:';
+		} catch {
+			return false;
+		}
+	}, 'url must be an absolute http(s) URL'),
+);
+
+const catalogEntrySchema = v.object({
+	name: nonEmpty,
+	url: httpUrl,
+	authEnv: nonEmpty,
 	/** Defaults to true when omitted. */
-	optional?: boolean;
-};
+	optional: v.optional(v.boolean(), true),
+});
+
+export type CatalogEntry = v.InferInput<typeof catalogEntrySchema>;
+type ValidatedEntry = v.InferOutput<typeof catalogEntrySchema>;
 
 /** Static, reviewed catalog. Adding a server is one row + one Worker secret. */
 export const INTEGRATION_CATALOG: readonly CatalogEntry[] = [
@@ -41,46 +61,18 @@ export type ResolveCatalogResult = {
 
 export type EnvMap = Record<string, string | undefined>;
 
-function failValidation(message: string): never {
-	throw new Error(`[mcp-catalog] ${message}`);
-}
-
-function validateEntry(
-	entry: CatalogEntry,
-	index: number,
-): {
-	name: string;
-	url: string;
-	authEnv: string;
-	optional: boolean;
-} {
-	const label = `entry[${index}]`;
-	if (typeof entry !== 'object' || entry === null) {
-		failValidation(`${label}: must be an object`);
-	}
-	const name = typeof entry.name === 'string' ? entry.name.trim() : '';
-	const url = typeof entry.url === 'string' ? entry.url.trim() : '';
-	const authEnv = typeof entry.authEnv === 'string' ? entry.authEnv.trim() : '';
-	if (!name) failValidation(`${label}: name is required`);
-	if (!url) failValidation(`${label}: url is required`);
-	if (!authEnv) failValidation(`${label}: authEnv is required`);
-	try {
-		const parsed = new URL(url);
-		if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-			failValidation(`${label}: url must be http(s)`);
-		}
-	} catch {
-		failValidation(`${label}: url must be an absolute URL`);
-	}
-	if (entry.optional !== undefined && typeof entry.optional !== 'boolean') {
-		failValidation(`${label}: optional must be a boolean when set`);
-	}
-	return {
-		name,
-		url,
-		authEnv,
-		optional: entry.optional !== false,
-	};
+function validateEntry(entry: unknown, index: number): ValidatedEntry {
+	const result = v.safeParse(catalogEntrySchema, entry);
+	if (result.success) return result.output;
+	const detail = result.issues
+		.map((issue) => {
+			const key = issue.path?.[0]?.key;
+			return typeof key === 'string' ? key : 'entry';
+		})
+		.filter((value, i, all) => all.indexOf(value) === i)
+		.join(', ');
+	// Field names only — never echo received values (could be mistaken for secrets).
+	throw new Error(`[mcp-catalog] entry[${index}]: invalid ${detail || 'entry'}`);
 }
 
 /**
@@ -95,7 +87,7 @@ export function resolveIntegrationCatalog(
 	const warnings: string[] = [];
 
 	for (let i = 0; i < catalog.length; i++) {
-		const entry = validateEntry(catalog[i]!, i);
+		const entry = validateEntry(catalog[i], i);
 		const raw = env[entry.authEnv];
 		const secret = typeof raw === 'string' ? raw.trim() : '';
 		if (!secret) {
