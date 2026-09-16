@@ -2,6 +2,7 @@
 import { Daytona } from '@daytona/sdk';
 import {
 	observe,
+	useAgentFinish,
 	useInitialData,
 	useMcpConnection,
 	useModel,
@@ -60,6 +61,16 @@ export function Coworker(props: { id: string }) {
 	const agentEnv = loadAgentEnv();
 
 	useTool(replyInThread(data, agentEnv.SLACK_BOT_TOKEN));
+	// Assistant text never reaches Slack. If the model would stop without a
+	// non-error reply_in_slack_thread call, send it back to work in this response.
+	useAgentFinish(({ response, append }) => {
+		if (hasSuccessfulSlackReply(response.toolCalls)) return;
+		append({
+			kind: 'signal',
+			type: 'reminder',
+			body: 'You ended without calling reply_in_slack_thread — nothing reached the user. Call it now with your answer.',
+		});
+	});
 	const [runCard, setRunCard] = usePersistentState<RunCardState | null>('run-card', null);
 	bindRunCard({
 		instanceId: props.id,
@@ -130,6 +141,12 @@ export function Coworker(props: { id: string }) {
 
 Coworker.initialData = initialDataSchema;
 Coworker.agentName = 'coworker';
+
+export function hasSuccessfulSlackReply(
+	toolCalls: readonly { tool: string; isError: boolean }[],
+): boolean {
+	return toolCalls.some((call) => call.tool === 'reply_in_slack_thread' && !call.isError);
+}
 
 function cardEventFromObservation(event: FlueObservation): CardEvent | undefined {
 	switch (event.type) {
