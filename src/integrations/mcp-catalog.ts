@@ -40,7 +40,13 @@ export const INTEGRATION_CATALOG: readonly CatalogEntry[] = [
 	{
 		name: 'cloudflare',
 		url: 'https://mcp.cloudflare.com/mcp',
-		authEnv: 'CLOUDFLARE_API_TOKEN',
+		authEnv: 'CLOUDFLARE_MCP_API_TOKEN',
+		optional: true,
+	},
+	{
+		name: 'honeycomb',
+		url: 'https://mcp.honeycomb.io/mcp',
+		authEnv: 'HONEYCOMB_MCP_API_TOKEN',
 		optional: true,
 	},
 ];

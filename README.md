@@ -23,12 +23,13 @@ GIT_AUTHOR_EMAIL=
 GITHUB_APP_ID=
 GITHUB_APP_PRIVATE_KEY=
 GITHUB_APP_INSTALLATION_ID=
-CLOUDFLARE_API_TOKEN=
+CLOUDFLARE_MCP_API_TOKEN=
+HONEYCOMB_MCP_API_TOKEN=
 ```
 
 `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` are optional. If both are set, hydration configures that identity in the cloned repo (GitHub App bot: `{slug}[bot]` / `{id}+{slug}[bot]@users.noreply.github.com`). If neither is set, commits would otherwise be `root` — do not guess. If only one is set, boot fails.
 
-`CLOUDFLARE_API_TOKEN` is optional catalog auth for the Cloudflare MCP row (see [MCP Integration Catalog](#mcp-integration-catalog)). It is not part of the fixed boot schema; leave it empty to skip that server.
+`CLOUDFLARE_MCP_API_TOKEN` and `HONEYCOMB_MCP_API_TOKEN` are optional catalog auth for the Cloudflare and Honeycomb MCP rows (see [MCP Integration Catalog](#mcp-integration-catalog)). They are not part of the fixed boot schema; leave a value empty to skip that server. Do not name the Cloudflare MCP secret `CLOUDFLARE_API_TOKEN` — Wrangler uses that variable to authenticate CLI calls.
 
 GitHub tools require `GITHUB_APP_ID`, the RSA `.pem` GitHub downloads for `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_APP_INSTALLATION_ID`. PEM values may use `\n` in `.dev.vars`. Install the App only on the enrolled pilot repository. Its minimum application permissions are **Contents: Read and write**, **Pull requests: Read and write**, and **Issues: Read-only** (GitHub grants metadata read access automatically); do not grant administration, workflows/actions, deployments, secrets, or merge bypass.
 
@@ -53,7 +54,7 @@ To add a server:
 3. Append `{ name, url, authEnv: 'THAT_TOKEN', optional: true }` to `INTEGRATION_CATALOG`.
 4. Redeploy (or restart local). The next Coworker submission resolves the secret at render, connects, discovers tools, and mounts them as `mcp__<name>__<tool>`.
 
-The shipped catalog includes optional Cloudflare MCP (`https://mcp.cloudflare.com/mcp`, `CLOUDFLARE_API_TOKEN`). A missing optional secret skips only that connection and logs a credential-free warning; Slack, native GitHub tools, and the sandbox still work. Required rows (`optional: false`) fail before the model runs and name the missing env key, never its value. Reusable MCP tokens never enter Daytona; authenticated `wrangler` / `gh` in the sandbox stay rejected. Native `create_working_branch` / `open_pull_request` / `checkpoint_working_branch` remain the GitHub App Credential Proxy path.
+The shipped catalog includes optional Cloudflare MCP (`https://mcp.cloudflare.com/mcp`, `CLOUDFLARE_MCP_API_TOKEN`) and optional Honeycomb MCP (`https://mcp.honeycomb.io/mcp`, `HONEYCOMB_MCP_API_TOKEN`). Honeycomb needs a Management API key in `KEY_ID:SECRET_KEY` form with Model Context Protocol and Environments read scopes; prefer read-only for pilots, and do not reuse the ingest key used for Workers Observability destinations. A missing optional secret skips only that connection and logs a credential-free warning; Slack, native GitHub tools, and the sandbox still work. Required rows (`optional: false`) fail before the model runs and name the missing env key, never its value. Reusable MCP tokens never enter Daytona; authenticated `wrangler` / `gh` in the sandbox stay rejected. Native `create_working_branch` / `open_pull_request` / `checkpoint_working_branch` remain the GitHub App Credential Proxy path.
 
 Do not paste real secret values into git, chat, or logs.
 
@@ -119,7 +120,7 @@ A threaded reply that reflects work in the already-cloned repo (not clone/`ls` a
 npm run deploy
 ```
 
-Use a Cloudflare account that is not the Codevil account. `npx wrangler secret put OPENCODE_API_KEY` (and the Slack/Daytona/GitHub secrets). Optional catalog secrets such as `CLOUDFLARE_API_TOKEN` use the same command. Do not put them in git.
+Use a Cloudflare account that is not the Codevil account. `npx wrangler secret put OPENCODE_API_KEY` (and the Slack/Daytona/GitHub secrets). Optional catalog secrets such as `CLOUDFLARE_MCP_API_TOKEN` and `HONEYCOMB_MCP_API_TOKEN` use the same command. If `CLOUDFLARE_API_TOKEN` is set in the shell (or `.env`) to an MCP-scoped token, unset it for Wrangler commands so the CLI can use `wrangler login` or a token with **Workers Scripts Write**. Do not put secrets in git.
 
 ## Observability
 
