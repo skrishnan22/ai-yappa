@@ -8,7 +8,7 @@ import {
 const cloudflare: CatalogEntry = {
 	name: 'cloudflare',
 	url: 'https://mcp.cloudflare.com/mcp',
-	authEnv: 'CLOUDFLARE_API_TOKEN',
+	authEnv: 'CLOUDFLARE_MCP_API_TOKEN',
 	optional: true,
 };
 
@@ -20,12 +20,18 @@ const requiredLinear: CatalogEntry = {
 };
 
 describe('INTEGRATION_CATALOG', () => {
-	test('ships a reviewed Cloudflare row that is optional by default policy', () => {
+	test('ships reviewed optional Cloudflare and Honeycomb rows', () => {
 		expect(INTEGRATION_CATALOG).toEqual([
 			{
 				name: 'cloudflare',
 				url: 'https://mcp.cloudflare.com/mcp',
-				authEnv: 'CLOUDFLARE_API_TOKEN',
+				authEnv: 'CLOUDFLARE_MCP_API_TOKEN',
+				optional: true,
+			},
+			{
+				name: 'honeycomb',
+				url: 'https://mcp.honeycomb.io/mcp',
+				authEnv: 'HONEYCOMB_MCP_API_TOKEN',
 				optional: true,
 			},
 		]);
@@ -36,7 +42,7 @@ describe('resolveIntegrationCatalog', () => {
 	test('resolves a present secret to static name, URL, optional policy, and Bearer auth', () => {
 		const token = 'cf-token-value-for-test';
 		const result = resolveIntegrationCatalog([cloudflare], {
-			CLOUDFLARE_API_TOKEN: token,
+			CLOUDFLARE_MCP_API_TOKEN: token,
 		});
 		expect(result.warnings).toEqual([]);
 		expect(result.connections).toEqual([
@@ -63,7 +69,7 @@ describe('resolveIntegrationCatalog', () => {
 		const token = 'super-secret-should-not-leak';
 		const result = resolveIntegrationCatalog([cloudflare, requiredLinear], {
 			LINEAR_API_KEY: 'lin-ok',
-			// CLOUDFLARE_API_TOKEN intentionally absent
+			// CLOUDFLARE_MCP_API_TOKEN intentionally absent
 		});
 		expect(result.connections).toEqual([
 			{
@@ -74,7 +80,7 @@ describe('resolveIntegrationCatalog', () => {
 			},
 		]);
 		expect(result.warnings).toEqual([
-			'[mcp-catalog] skipping optional MCP "cloudflare": missing CLOUDFLARE_API_TOKEN',
+			'[mcp-catalog] skipping optional MCP "cloudflare": missing CLOUDFLARE_MCP_API_TOKEN',
 		]);
 		const blob = JSON.stringify(result);
 		expect(blob).not.toContain(token);
@@ -125,9 +131,9 @@ describe('resolveIntegrationCatalog', () => {
 
 	test('trims whitespace-only secrets as missing', () => {
 		const result = resolveIntegrationCatalog([cloudflare], {
-			CLOUDFLARE_API_TOKEN: '   ',
+			CLOUDFLARE_MCP_API_TOKEN: '   ',
 		});
 		expect(result.connections).toEqual([]);
-		expect(result.warnings[0]).toContain('CLOUDFLARE_API_TOKEN');
+		expect(result.warnings[0]).toContain('CLOUDFLARE_MCP_API_TOKEN');
 	});
 });

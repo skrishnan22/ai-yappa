@@ -29,7 +29,7 @@ We chose **open MCP** (mount all tools from each catalogued server) and **deploy
   ┌─────────────────────────────────────────────┐
   │ Integration Catalog                         │
   │  cloudflare → mcp.cloudflare.com            │
-  │    authEnv = CLOUDFLARE_API_TOKEN           │
+  │    authEnv = CLOUDFLARE_MCP_API_TOKEN       │
   │  (later) other MCP rows…                    │
   └───────────────────┬─────────────────────────┘
                       │
@@ -77,7 +77,7 @@ Slack mention ──► Coworker render
 | Piece | Choice |
 |-------|--------|
 | Catalog URL | `https://mcp.cloudflare.com/mcp` |
-| Secret | `CLOUDFLARE_API_TOKEN` (operator-scoped; prefer read-only for pilots) |
+| Secret | `CLOUDFLARE_MCP_API_TOKEN` (operator-scoped; prefer read-only for pilots; not Wrangler's `CLOUDFLARE_API_TOKEN`) |
 | Model tools | Whatever that MCP exposes (e.g. search/execute), all mounted |
 | Not used | `wrangler login` in Daytona; per-user OAuth to mcp.cloudflare.com |
 
@@ -108,7 +108,7 @@ Expected implementation surface: one catalog/resolver module with colocated test
 4. Flue connection/discovery failure for an optional server leaves the rest of the submission usable. Its next submission attempts the connection again.
 5. Coworker instructions distinguish native and MCP authority and contain the uncertain-outcome/no-reissue rule. Existing native GitHub tool behavior is unchanged.
 6. Unit tests cover catalog validation, present/missing optional/missing required credentials, and secret redaction. Existing tests, typecheck, lint, and build pass.
-7. With a real read-scoped `CLOUDFLARE_API_TOKEN`, a deployed smoke test discovers the Cloudflare `search`/`execute` tools and completes one harmless read. Report the live check separately; do not claim it passed when credentials or network access are unavailable.
+7. With a real read-scoped `CLOUDFLARE_MCP_API_TOKEN`, a deployed smoke test discovers the Cloudflare `search`/`execute` tools and completes one harmless read. Report the live check separately; do not claim it passed when credentials or network access are unavailable.
 
 ## Consequences
 
