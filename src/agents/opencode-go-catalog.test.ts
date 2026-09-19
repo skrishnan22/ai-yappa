@@ -2,8 +2,11 @@ import { describe, expect, test, vi, afterEach } from 'vitest';
 import type { Api, Model } from '@earendil-works/pi-ai';
 import {
 	loadOpenCodeGoCatalog,
+	openCodeGoModelId,
 	overlayModelsDevCatalog,
 	MODELS_DEV_CATALOG_URL,
+	OPENCODE_GO_BUNDLED_ID,
+	OPENCODE_GO_PREFERRED_ID,
 } from './opencode-go-catalog.ts';
 
 afterEach(() => {
@@ -173,6 +176,7 @@ describe('loadOpenCodeGoCatalog', () => {
 			},
 		});
 		expect(models.some((model) => model.id === 'deepseek-v4.1-flash')).toBe(true);
+		expect(openCodeGoModelId(models)).toBe(OPENCODE_GO_PREFERRED_ID);
 		expect(info).toHaveBeenCalledWith('[opencode-go] loaded 5 models from models.dev');
 	});
 
@@ -183,8 +187,9 @@ describe('loadOpenCodeGoCatalog', () => {
 			fetch: async () => new Response('nope', { status: 503 }),
 		});
 		expect(models).toEqual([flash]);
+		expect(openCodeGoModelId(models)).toBe(OPENCODE_GO_BUNDLED_ID);
 		expect(warn).toHaveBeenCalledWith(
-			'[opencode-go] models.dev catalog unavailable (http 503); using bundled pi-ai models',
+			`[opencode-go] models.dev catalog unavailable (http 503); using bundled pi-ai models (opencode-go/${OPENCODE_GO_BUNDLED_ID})`,
 		);
 	});
 
@@ -196,5 +201,20 @@ describe('loadOpenCodeGoCatalog', () => {
 		});
 		expect(models).toEqual([flash]);
 		expect(warn.mock.calls[0]?.[0]).toContain('fetch failed');
+		expect(openCodeGoModelId(models)).toBe(OPENCODE_GO_BUNDLED_ID);
+	});
+});
+
+describe('openCodeGoModelId', () => {
+	test('prefers deepseek-v4.1-flash when the live catalog has it', () => {
+		expect(openCodeGoModelId([{ id: OPENCODE_GO_BUNDLED_ID }, { id: OPENCODE_GO_PREFERRED_ID }])).toBe(
+			OPENCODE_GO_PREFERRED_ID,
+		);
+	});
+
+	test('selects deepseek-v4-flash from the bundled catalog when the preferred id is missing', () => {
+		expect(openCodeGoModelId([{ id: OPENCODE_GO_BUNDLED_ID }, { id: 'qwen3.7-plus' }])).toBe(
+			OPENCODE_GO_BUNDLED_ID,
+		);
 	});
 });

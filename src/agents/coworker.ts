@@ -31,6 +31,7 @@ import {
 	WORKSPACE_REPO_DIR,
 } from '../sandboxes/hydrate.ts';
 import { githubTools } from './github-tools.ts';
+import { openCodeGoModelSpecifier } from './opencode-go-catalog.ts';
 import { installOpenCodeGoSessionHeader } from './opencode-session.ts';
 
 observe((event, context) => {
@@ -49,7 +50,7 @@ const initialDataSchema = v.object({
 
 export function Coworker(props: { id: string }) {
 	installOpenCodeGoSessionHeader();
-	useModel('opencode-go/deepseek-v4.1-flash');
+	useModel(openCodeGoModelSpecifier);
 
 	const data = useInitialData<v.InferOutput<typeof initialDataSchema> | undefined>();
 	if (!data) {

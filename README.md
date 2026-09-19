@@ -2,7 +2,7 @@
 
 Slack-native engineering coworker. Investigates a repo, makes changes, and opens PRs via native GitHub tools. Mounted MCP tools may exercise the authority of the deployment-scoped secrets you configure.
 
-Built as a Flue app on the Cloudflare target. Execution is Daytona container Sandboxes, not Cloudflare Sandbox. A stopped container retains its filesystem but loses RAM and running processes. The model is OpenCode Go (`opencode-go/deepseek-v4.1-flash`). Isolate start loads the live OpenCode Go list from [models.dev](https://models.dev/providers/opencode-go/) (`https://models.dev/api.json` → `opencode-go`); if that fetch fails, the bundled pi-ai catalog is used.
+Built as a Flue app on the Cloudflare target. Execution is Daytona container Sandboxes, not Cloudflare Sandbox. A stopped container retains its filesystem but loses RAM and running processes. The model is OpenCode Go (`opencode-go/deepseek-v4.1-flash` when models.dev loads, otherwise bundled `opencode-go/deepseek-v4-flash`). Isolate start loads the live OpenCode Go list from [models.dev](https://models.dev/providers/opencode-go/) (`https://models.dev/api.json` → `opencode-go`); if that fetch fails, the bundled pi-ai catalog is used and Coworker stays on `deepseek-v4-flash`.
 
 ## Setup
 

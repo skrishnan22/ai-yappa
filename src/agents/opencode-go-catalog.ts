@@ -16,6 +16,8 @@ import { opencodeGoProvider } from '@earendil-works/pi-ai/providers/opencode-go'
 
 export const MODELS_DEV_CATALOG_URL = 'https://models.dev/api.json';
 export const MODELS_DEV_PROVIDER_ID = 'opencode-go';
+export const OPENCODE_GO_PREFERRED_ID = 'deepseek-v4.1-flash';
+export const OPENCODE_GO_BUNDLED_ID = 'deepseek-v4-flash';
 
 const OPENCODE_GO_COMPLETIONS_URL = 'https://opencode.ai/zen/go/v1';
 const OPENCODE_GO_MESSAGES_URL = 'https://opencode.ai/zen/go';
@@ -70,6 +72,13 @@ export function overlayModelsDevCatalog(
 		if (model !== undefined) mapped.push(model);
 	}
 	return mapped;
+}
+
+export function openCodeGoModelId(models: readonly { id: string }[]): string {
+	if (models.some((model) => model.id === OPENCODE_GO_PREFERRED_ID)) {
+		return OPENCODE_GO_PREFERRED_ID;
+	}
+	return OPENCODE_GO_BUNDLED_ID;
 }
 
 type ModelsDevProvider = {
@@ -230,7 +239,7 @@ function modelsDevRequest(timeoutMs: number): RequestInit {
 
 function warnUnavailable(reason: string): void {
 	console.warn(
-		`[opencode-go] models.dev catalog unavailable (${reason}); using bundled pi-ai models`,
+		`[opencode-go] models.dev catalog unavailable (${reason}); using bundled pi-ai models (opencode-go/${OPENCODE_GO_BUNDLED_ID})`,
 	);
 }
 
@@ -273,3 +282,4 @@ if (skipNetworkCatalog()) {
 	openCodeGoModels = await loadOpenCodeGoCatalog({ bundled });
 }
 export { openCodeGoModels };
+export const openCodeGoModelSpecifier = `opencode-go/${openCodeGoModelId(openCodeGoModels)}`;
