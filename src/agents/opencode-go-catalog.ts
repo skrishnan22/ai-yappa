@@ -21,7 +21,10 @@ export async function resolveOpenCodeGoModel(args?: {
 			signal: AbortSignal.timeout(8_000),
 		});
 		if (!response.ok) throw new Error(`http ${response.status}`);
-		if (catalogLists(await response.json(), OPENCODE_GO_PREFERRED_ID)) {
+		const catalog = (await response.json()) as {
+			'opencode-go'?: { models?: Record<string, unknown> };
+		};
+		if (catalog['opencode-go']?.models?.[OPENCODE_GO_PREFERRED_ID]) {
 			return {
 				models: withPreferredId(models),
 				modelId: OPENCODE_GO_PREFERRED_ID,
@@ -37,13 +40,6 @@ export async function resolveOpenCodeGoModel(args?: {
 	return { models, modelId: OPENCODE_GO_BUNDLED_ID };
 }
 
-function catalogLists(payload: unknown, modelId: string): boolean {
-	if (!isRecord(payload)) return false;
-	const provider = payload['opencode-go'];
-	if (!isRecord(provider) || !isRecord(provider.models)) return false;
-	return Object.hasOwn(provider.models, modelId);
-}
-
 // useModel() looks up this id in getModels(). Clone the bundled fallback's
 // wire settings when pi-ai does not yet ship the preferred id.
 function withPreferredId(models: readonly Model<Api>[]): readonly Model<Api>[] {
@@ -51,10 +47,6 @@ function withPreferredId(models: readonly Model<Api>[]): readonly Model<Api>[] {
 	const template = models.find((model) => model.id === OPENCODE_GO_BUNDLED_ID);
 	if (template === undefined) return models;
 	return [{ ...template, id: OPENCODE_GO_PREFERRED_ID, name: OPENCODE_GO_PREFERRED_ID }, ...models];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 let resolved: { models: readonly Model<Api>[]; modelId: string };
