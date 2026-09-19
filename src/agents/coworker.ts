@@ -49,7 +49,7 @@ const initialDataSchema = v.object({
 
 export function Coworker(props: { id: string }) {
 	installOpenCodeGoSessionHeader();
-	useModel('opencode-go/deepseek-v4-flash');
+	useModel('opencode-go/deepseek-v4.1-flash');
 
 	const data = useInitialData<v.InferOutput<typeof initialDataSchema> | undefined>();
 	if (!data) {
