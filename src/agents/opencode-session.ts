@@ -6,6 +6,7 @@ import {
 } from '@earendil-works/pi-ai';
 import { opencodeGoProvider } from '@earendil-works/pi-ai/providers/opencode-go';
 import { setProvider } from '@flue/runtime';
+import { openCodeGoModels } from './opencode-go-catalog.ts';
 
 type StreamOptions = {
 	sessionId?: string;
@@ -18,6 +19,7 @@ const inner = opencodeGoProvider();
 export function installOpenCodeGoSessionHeader(): void {
 	setProvider({
 		...inner,
+		getModels: () => openCodeGoModels,
 		stream: ((model, context, options) =>
 			recoverMissingFinishReason(
 				inner.stream(model, context, withOpenCodeSessionHeader(options)),
@@ -28,6 +30,10 @@ export function installOpenCodeGoSessionHeader(): void {
 			)) as typeof inner.streamSimple,
 	});
 }
+
+// Flue resolves useModel() after the first render, but docs require setProvider
+// at module load so flue run / harness init never see the bundled snapshot.
+installOpenCodeGoSessionHeader();
 
 export function withOpenCodeSessionHeader<T extends StreamOptions>(
 	options: T | undefined,
