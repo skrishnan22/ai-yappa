@@ -207,9 +207,9 @@ describe('loadOpenCodeGoCatalog', () => {
 
 describe('openCodeGoModelId', () => {
 	test('prefers deepseek-v4.1-flash when the live catalog has it', () => {
-		expect(openCodeGoModelId([{ id: OPENCODE_GO_BUNDLED_ID }, { id: OPENCODE_GO_PREFERRED_ID }])).toBe(
-			OPENCODE_GO_PREFERRED_ID,
-		);
+		expect(
+			openCodeGoModelId([{ id: OPENCODE_GO_BUNDLED_ID }, { id: OPENCODE_GO_PREFERRED_ID }]),
+		).toBe(OPENCODE_GO_PREFERRED_ID);
 	});
 
 	test('selects deepseek-v4-flash from the bundled catalog when the preferred id is missing', () => {
