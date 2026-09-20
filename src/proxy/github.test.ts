@@ -1,5 +1,7 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, test } from 'vitest';
+import * as v from 'valibot';
+import { jsonValueSchema, type JsonValue } from '../json.ts';
 import type { OperationContext } from './ops.ts';
 import {
 	createGitHubPort,
@@ -16,13 +18,14 @@ type FakeCall =
 			permissions: GitHubInstallationPermissions;
 	  }
 	| { kind: 'revoke' }
-	| { kind: 'request'; method: string; path: string; body: unknown; token: string };
+	| { kind: 'request'; method: string; path: string; body?: JsonValue; token: string };
 
 function fakePort(args?: {
 	expiresAt?: (createCount: number) => string;
 }): GitHubPort & { calls: FakeCall[]; readonly createCount: number } {
 	const calls: FakeCall[] = [];
 	let createCount = 0;
+
 	return {
 		calls,
 		get createCount() {
@@ -31,6 +34,7 @@ function fakePort(args?: {
 		async createInstallationToken(input) {
 			createCount += 1;
 			calls.push({ kind: 'createInstallationToken', ...input });
+
 			return {
 				token: `ghs_${createCount}`,
 				expiresAt: args?.expiresAt?.(createCount) ?? '2099-01-01T00:00:00.000Z',
@@ -39,7 +43,7 @@ function fakePort(args?: {
 		async revokeInstallationToken() {
 			calls.push({ kind: 'revoke' });
 		},
-		async request(input) {
+		async request(input): Promise<{ status: number; json: JsonValue }> {
 			calls.push({
 				kind: 'request',
 				method: input.method,
@@ -47,6 +51,7 @@ function fakePort(args?: {
 				body: input.body,
 				token: input.token,
 			});
+
 			if (input.path.includes('/issues/')) {
 				return {
 					status: 200,
@@ -59,12 +64,14 @@ function fakePort(args?: {
 					},
 				};
 			}
+
 			if (input.path.includes('/git/ref/')) {
 				return {
 					status: 200,
 					json: { ref: 'refs/heads/agent/c1', object: { sha: 'abc' } },
 				};
 			}
+
 			if (input.path.endsWith('/pulls')) {
 				return {
 					status: 201,
@@ -76,12 +83,14 @@ function fakePort(args?: {
 					},
 				};
 			}
+
 			if (input.path.endsWith('/git/refs')) {
 				return {
 					status: 201,
 					json: { ref: 'refs/heads/agent/c1', object: { sha: 'abc' } },
 				};
 			}
+
 			return {
 				status: 200,
 				json: {
@@ -106,6 +115,7 @@ function context(repo = 'skrishnan22/codevil'): OperationContext {
 describe('githubHandlers', () => {
 	test('maps a GitHub issue without returning its cached read token', async () => {
 		const port = fakePort();
+
 		const data = await githubHandlers(port).readIssue({
 			context: context(),
 			params: { number: 3 },
@@ -166,6 +176,7 @@ describe('githubHandlers', () => {
 			context: context(),
 			params: { name: 'agent/c1', fromSha: 'abc' },
 		});
+
 		const pull = await handlers.createPullRequest({
 			context: context(),
 			params: { head: 'agent/c1', base: 'main', title: 'Fix', body: 'n' },
@@ -249,7 +260,9 @@ describe('normalizeGithubAppPrivateKey', () => {
 		const otherKey = generateKeyPairSync('ed25519')
 			.privateKey.export({ type: 'pkcs8', format: 'pem' })
 			.toString();
+
 		let message = '';
+
 		try {
 			normalizeGithubAppPrivateKey(otherKey);
 		} catch (error) {
@@ -274,24 +287,37 @@ describe('createGitHubPort', () => {
 		.toString();
 
 	test('requests a token for exactly one repository and sends a User-Agent', async () => {
-		const seen: { userAgent: string; body: unknown }[] = [];
+		const seen: { userAgent: string; body: JsonValue | null }[] = [];
 		const original = globalThis.fetch;
+
 		const fakeFetch: typeof fetch = async (_input, init) => {
+			const rawBody = init?.body;
+			let body: JsonValue | null = null;
+
+			if (v.is(v.string(), rawBody)) {
+				const parsed = JSON.parse(rawBody);
+				body = v.is(jsonValueSchema, parsed) ? parsed : null;
+			}
+
 			seen.push({
 				userAgent: new Headers(init?.headers).get('user-agent') ?? '',
-				body: typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : null,
+				body,
 			});
+
 			return new Response(JSON.stringify({ token: 'ghs_x', expires_at: '2099-01-01T00:00:00Z' }), {
 				status: 201,
 			});
 		};
+
 		globalThis.fetch = fakeFetch;
+
 		try {
 			const port = createGitHubPort({
 				GITHUB_APP_ID: '1',
 				GITHUB_APP_PRIVATE_KEY: rsaPem,
 				GITHUB_APP_INSTALLATION_ID: '2',
 			});
+
 			await port.createInstallationToken({
 				repo: 'skrishnan22/codevil',
 				permissions: { contents: 'write' },

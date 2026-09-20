@@ -22,6 +22,7 @@ function stubHandlers(
 	const refuse: ProxyHandler = async () => {
 		throw new Error('handler not stubbed');
 	};
+
 	return {
 		readIssue: refuse,
 		readRepoMetadata: refuse,
@@ -44,6 +45,7 @@ describe('digestParams', () => {
 describe('executeProxy', () => {
 	test('runs a code-change read and audits the canonical repo', async () => {
 		const audit: AuditRecord[] = [];
+
 		const result = await executeProxy({
 			context: CODE_CHANGE_CONTEXT,
 			op: 'readIssue',
@@ -86,6 +88,7 @@ describe('executeProxy', () => {
 		async (op) => {
 			const handler = vi.fn<ProxyHandler>();
 			const audit: AuditRecord[] = [];
+
 			const result = await executeProxy({
 				context: { ...CODE_CHANGE_CONTEXT, submissionType: 'investigation' },
 				op,
@@ -114,6 +117,7 @@ describe('executeProxy', () => {
 			handlers: stubHandlers({
 				readIssue: async ({ context }) => {
 					received = context;
+
 					return {};
 				},
 			}),
@@ -125,6 +129,7 @@ describe('executeProxy', () => {
 
 	test('returns invalid and audits repo null for a malformed context repo', async () => {
 		const audit: AuditRecord[] = [];
+
 		const result = await executeProxy({
 			context: { ...CODE_CHANGE_CONTEXT, repo: 'not a repo' },
 			op: 'readIssue',
@@ -143,6 +148,7 @@ describe('executeProxy', () => {
 
 	test('audits upstream when the handler throws', async () => {
 		const audit: AuditRecord[] = [];
+
 		const result = await executeProxy({
 			context: CODE_CHANGE_CONTEXT,
 			op: 'readIssue',

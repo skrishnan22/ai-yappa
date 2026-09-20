@@ -1,65 +1,62 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import {
+	__resetSlackClientForTests,
+	__setSlackClientFactoryForTests,
+	getSlackClient,
+	replyInThread,
+	slackFetch,
+	type SlackBotClient,
+} from './slack-reply.ts';
 
-const { constructed, posted } = vi.hoisted(() => ({
-	constructed: [] as Array<
-		| {
-				token?: string;
-				fetch?: (url: string | URL, init?: RequestInit) => Promise<Response>;
-		  }
-		| undefined
-	>,
-	posted: [] as Array<Record<string, string>>,
-}));
+const constructed: string[] = [];
 
-vi.mock('@slack/web-api', () => ({
-	WebClient: class WebClient {
-		constructor(
-			token?: string,
-			opts?: { fetch?: (url: string | URL, init?: RequestInit) => Promise<Response> },
-		) {
-			constructed.push({ token, ...opts });
-		}
+const posted: Array<Parameters<SlackBotClient['chat']['postMessage']>[0]> = [];
 
-		chat = {
-			async postMessage(args: Record<string, string>) {
+function fakeClient(token: string): SlackBotClient {
+	constructed.push(token);
+
+	return {
+		chat: {
+			async postMessage(args) {
 				posted.push(args);
+
 				return { ok: true };
 			},
-		};
-	},
-}));
+			async update() {
+				return { ok: true };
+			},
+		},
+		conversations: {
+			async replies() {
+				return { ok: true, messages: [] };
+			},
+		},
+	};
+}
 
 afterEach(() => {
 	constructed.length = 0;
 	posted.length = 0;
 	vi.unstubAllEnvs();
-	vi.resetModules();
+	__setSlackClientFactoryForTests();
+	__resetSlackClientForTests();
 });
 
-async function fetchFnFromLazyClient() {
-	vi.stubEnv('SLACK_BOT_TOKEN', 'xoxb-test');
-	const { getSlackClient, __resetSlackClientForTests } = await import('./slack-reply.ts');
-	__resetSlackClientForTests();
-	getSlackClient('xoxb-test');
-	return constructed[0]?.fetch;
-}
-
-describe('slack WebClient fetch', () => {
-	test('constructs WebClient with a fetch that can be called unbound', async () => {
-		const fetchFn = await fetchFnFromLazyClient();
-		expect(fetchFn).toEqual(expect.any(Function));
-
+describe('slackFetch', () => {
+	test('can be called unbound', async () => {
 		const original = globalThis.fetch;
-		const seen: unknown[] = [];
-		globalThis.fetch = (async (
+		const seen: Array<{ input: Parameters<typeof fetch>[0]; init?: RequestInit }> = [];
+		globalThis.fetch = async (
 			input: Parameters<typeof fetch>[0],
 			init?: Parameters<typeof fetch>[1],
 		) => {
 			seen.push({ input, init });
+
 			return new Response('{}', { status: 200 });
-		}) as typeof fetch;
+		};
+
 		try {
-			await fetchFn!('https://slack.com/api/chat.postMessage', { method: 'POST' });
+			await slackFetch('https://slack.com/api/chat.postMessage', { method: 'POST' });
 			expect(seen).toEqual([
 				{ input: 'https://slack.com/api/chat.postMessage', init: { method: 'POST' } },
 			]);
@@ -69,42 +66,42 @@ describe('slack WebClient fetch', () => {
 	});
 
 	test('maps redirect error to manual before calling fetch', async () => {
-		const fetchFn = await fetchFnFromLazyClient();
-		expect(fetchFn).toEqual(expect.any(Function));
-
 		const original = globalThis.fetch;
-		const seen: unknown[] = [];
-		globalThis.fetch = (async (
+		const seen: Array<RequestInit | undefined> = [];
+		globalThis.fetch = async (
 			_input: Parameters<typeof fetch>[0],
 			init?: Parameters<typeof fetch>[1],
 		) => {
 			seen.push(init);
+
 			return new Response('{}', { status: 200 });
-		}) as typeof fetch;
+		};
+
 		try {
-			await fetchFn!('https://slack.com/api/chat.postMessage', { redirect: 'error' });
+			await slackFetch('https://slack.com/api/chat.postMessage', { redirect: 'error' });
 			expect(seen).toEqual([{ redirect: 'manual' }]);
 		} finally {
 			globalThis.fetch = original;
 		}
 	});
+});
 
+describe('slack WebClient factory', () => {
 	test('importing the module does not construct a client without a token', async () => {
 		vi.stubEnv('SLACK_BOT_TOKEN', '');
+		__setSlackClientFactoryForTests(fakeClient);
 		await import('./slack-reply.ts');
 		expect(constructed).toEqual([]);
 	});
 
-	test('replaces the cached client when the validated token changes', async () => {
-		const { getSlackClient, __resetSlackClientForTests } = await import('./slack-reply.ts');
-		__resetSlackClientForTests();
+	test('replaces the cached client when the validated token changes', () => {
+		__setSlackClientFactoryForTests(fakeClient);
 		getSlackClient('xoxb-first');
 		getSlackClient('xoxb-second');
-		expect(constructed.map((entry) => entry?.token)).toEqual(['xoxb-first', 'xoxb-second']);
+		expect(constructed).toEqual(['xoxb-first', 'xoxb-second']);
 	});
 
 	test('uses the local fallback when no Slack token was supplied', async () => {
-		const { replyInThread } = await import('./slack-reply.ts');
 		const tool = replyInThread({ channelId: 'C-local', threadTs: '1.2' });
 		await expect(
 			tool.run({
@@ -117,8 +114,7 @@ describe('slack WebClient fetch', () => {
 		});
 	});
 
-	test('requires complete operational identifiers in the reply tool contract', async () => {
-		const { replyInThread } = await import('./slack-reply.ts');
+	test('requires complete operational identifiers in the reply tool contract', () => {
 		const tool = replyInThread({ channelId: 'C-local', threadTs: '1.2' });
 
 		expect(tool.description).toMatch(/full exact operational identifiers/i);
@@ -128,8 +124,9 @@ describe('slack WebClient fetch', () => {
 	});
 
 	test('submits standard Markdown unchanged through markdown_text', async () => {
-		const { replyInThread } = await import('./slack-reply.ts');
+		__setSlackClientFactoryForTests(fakeClient);
 		const tool = replyInThread({ channelId: 'C-test', threadTs: '2.3' }, 'xoxb-injected');
+
 		const text =
 			'Completed at **17:43:23.056Z**. Inline `**requestId**`.\n```text\n**traceId**\n```\n_italic_ and [link](https://example.com)';
 
@@ -153,7 +150,7 @@ describe('slack WebClient fetch', () => {
 	});
 
 	test('posts with the injected token and thread reference', async () => {
-		const { replyInThread } = await import('./slack-reply.ts');
+		__setSlackClientFactoryForTests(fakeClient);
 		const tool = replyInThread({ channelId: 'C-test', threadTs: '2.3' }, 'xoxb-injected');
 		await expect(
 			tool.run({

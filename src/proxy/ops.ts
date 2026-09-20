@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import * as v from 'valibot';
+import { errorMessage, jsonObjectSchema, jsonValueSchema, type JsonValue } from '../json.ts';
 import { assertOpAllowed, canonicalRepo, type ProxyOp, type SubmissionType } from './policy.ts';
 
 export type OperationContext = {
@@ -25,27 +27,28 @@ export type AuditSink = {
 
 export type ProxyHandler = (args: {
 	context: OperationContext;
-	params: unknown;
-}) => Promise<unknown>;
+	params: JsonValue;
+}) => Promise<JsonValue>;
 
 export type ProxyResult =
-	| { ok: true; data: unknown }
+	| { ok: true; data: JsonValue }
 	| { ok: false; error: { kind: AuditRecord['outcome']; message: string } };
 
-export function digestParams(params: unknown): string {
+export function digestParams(params: JsonValue): string {
 	return createHash('sha256').update(canonicalJson(params)).digest('hex');
 }
 
 export async function executeProxy(args: {
 	context: OperationContext;
 	op: ProxyOp;
-	params: unknown;
+	params: JsonValue;
 	now: number;
 	handlers: Record<ProxyOp, ProxyHandler>;
 	audit: AuditSink;
 }): Promise<ProxyResult> {
 	const started = Date.now();
 	const digest = digestParams(args.params);
+
 	const finish = (
 		conversationId: string,
 		submissionId: string,
@@ -63,10 +66,12 @@ export async function executeProxy(args: {
 			outcome,
 			latencyMs: Math.max(0, Date.now() - started),
 		});
+
 		return result;
 	};
 
 	let context: OperationContext;
+
 	try {
 		context = { ...args.context, repo: canonicalRepo(args.context.repo) };
 	} catch (error) {
@@ -87,6 +92,7 @@ export async function executeProxy(args: {
 
 	try {
 		const data = await args.handlers[args.op]({ context, params: args.params });
+
 		return finish(context.conversationId, context.submissionId, context.repo, 'ok', {
 			ok: true,
 			data,
@@ -98,24 +104,25 @@ export async function executeProxy(args: {
 		});
 	}
 }
-function canonicalJson(value: unknown): string {
-	if (value === null || typeof value !== 'object') {
-		return JSON.stringify(value);
-	}
+
+function canonicalJson(value: JsonValue): string {
 	if (Array.isArray(value)) {
 		return `[${value.map((entry) => canonicalJson(entry)).join(',')}]`;
 	}
-	if (!isRecord(value)) {
-		return JSON.stringify(null);
+
+	if (v.is(jsonObjectSchema, value)) {
+		const keys = Object.keys(value).toSorted();
+
+		return `{${keys
+			.flatMap((key) => {
+				const nested = value[key];
+
+				return nested === undefined ? [] : [`${JSON.stringify(key)}:${canonicalJson(nested)}`];
+			})
+			.join(',')}}`;
 	}
-	const keys = Object.keys(value).toSorted();
-	return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
-}
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+	if (!v.is(jsonValueSchema, value)) return JSON.stringify(null);
 
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : 'unknown error';
+	return JSON.stringify(value);
 }

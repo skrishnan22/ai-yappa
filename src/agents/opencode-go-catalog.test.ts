@@ -38,7 +38,9 @@ const flash: Model<Api> = {
 
 function catalogResponse(ids: string[], status = 200): Response {
 	const models: Record<string, { id: string }> = {};
+
 	for (const id of ids) models[id] = { id };
+
 	return new Response(JSON.stringify({ 'opencode-go': { models } }), {
 		status,
 		headers: { 'content-type': 'application/json' },
@@ -51,9 +53,11 @@ describe('resolveOpenCodeGoModel', () => {
 			bundled: [flash],
 			fetch: async (input) => {
 				expect(input).toBe(MODELS_DEV_CATALOG_URL);
+
 				return catalogResponse([OPENCODE_GO_PREFERRED_ID, OPENCODE_GO_BUNDLED_ID]);
 			},
 		});
+
 		expect(resolved.modelId).toBe(OPENCODE_GO_PREFERRED_ID);
 		expect(resolved.models[0]).toMatchObject({
 			id: OPENCODE_GO_PREFERRED_ID,
@@ -68,6 +72,7 @@ describe('resolveOpenCodeGoModel', () => {
 			bundled: [flash],
 			fetch: async () => catalogResponse([OPENCODE_GO_BUNDLED_ID]),
 		});
+
 		expect(resolved).toEqual({ models: [flash], modelId: OPENCODE_GO_BUNDLED_ID });
 		expect(console.warn).toHaveBeenCalled();
 	});
@@ -77,6 +82,7 @@ describe('resolveOpenCodeGoModel', () => {
 			bundled: [flash],
 			fetch: async () => new Response('nope', { status: 503 }),
 		});
+
 		expect(resolved).toEqual({ models: [flash], modelId: OPENCODE_GO_BUNDLED_ID });
 	});
 
@@ -85,6 +91,7 @@ describe('resolveOpenCodeGoModel', () => {
 			bundled: [flash],
 			fetch: async () => new Response('<html>', { status: 200 }),
 		});
+
 		expect(resolved).toEqual({ models: [flash], modelId: OPENCODE_GO_BUNDLED_ID });
 	});
 });
@@ -105,6 +112,7 @@ describe('withMissingFinishReasonCompat', () => {
 			api: 'anthropic-messages',
 			compat: undefined,
 		};
+
 		expect(withMissingFinishReasonCompat([anthropic])).toEqual([anthropic]);
 	});
 });

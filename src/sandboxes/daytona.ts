@@ -19,10 +19,15 @@ import { sandboxFromDriver, SandboxDiedError } from '@flue/runtime';
 import type { FileStat, Sandbox, SandboxDriver, SandboxFactory } from '@flue/runtime';
 
 export const CONTAINER_SNAPSHOT_NAME = 'slack-agent-container-v2';
+
 export const CONTAINER_AUTO_STOP_MINUTES = 15;
+
 export const CONTAINER_AUTO_ARCHIVE_MINUTES = 7 * 24 * 60;
+
 export const CONTAINER_RESOURCES = { cpu: 2, memory: 4, disk: 3 };
+
 export const M1_PERSISTENCE_PROBE_PATH = '/workspace/.slack-agent-persistence-probe';
+
 export const CONTAINER_IMAGE_COMMANDS = [
 	'RUN apt-get update && apt-get install -y git build-essential python3 && rm -rf /var/lib/apt/lists/*',
 	'RUN corepack enable',
@@ -31,6 +36,7 @@ export const CONTAINER_IMAGE_COMMANDS = [
 ];
 
 const SANDBOX_LIVENESS_POLL_MS = 5_000;
+
 const PROBE_SILENCE_MS = 10_000;
 
 const DEAD_STATES = new Set<SandboxState>([
@@ -86,7 +92,12 @@ export type DaytonaClientLike = {
 	list(query?: ListSandboxesQuery): AsyncIterableIterator<DaytonaSandboxLike>;
 	snapshot: {
 		get(name: string): Promise<{ sandboxClass?: SandboxClass }>;
-		create(params: CreateSnapshotParams, options?: { timeout?: number }): Promise<unknown>;
+		create(
+			params: CreateSnapshotParams,
+			options?: { timeout?: number },
+		): Promise<{
+			sandboxClass?: SandboxClass;
+		}>;
 	};
 };
 
@@ -98,8 +109,8 @@ function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function isMissingPathError(error: unknown): boolean {
-	return error instanceof DaytonaNotFoundError;
+function isMissingPathError(cause: unknown): boolean {
+	return cause instanceof DaytonaNotFoundError;
 }
 
 function containerImage(): Image {
@@ -141,30 +152,39 @@ function raceSandboxDeath<T>(
 			}, PROBE_SILENCE_MS);
 			sandbox.refreshData().then(
 				() => {
-					if (settled) return;
+					if (settled) return null;
 					clearTimeout(silenceTimer);
+
 					if (sandbox.state !== undefined && DEAD_STATES.has(sandbox.state)) {
 						settle(() => reject(new SandboxDiedError({ operation, reason: 'stopped' })));
 					} else {
 						pollTimer = setTimeout(probe, SANDBOX_LIVENESS_POLL_MS);
 					}
+
+					return null;
 				},
-				(error: unknown) => {
-					if (settled) return;
+				(cause) => {
+					if (settled) return null;
 					clearTimeout(silenceTimer);
-					if (error instanceof DaytonaNotFoundError) {
+
+					if (cause instanceof DaytonaNotFoundError) {
 						settle(() => reject(new SandboxDiedError({ operation, reason: 'stopped' })));
-						return;
+
+						return null;
 					}
+
 					pollTimer = setTimeout(probe, SANDBOX_LIVENESS_POLL_MS);
+
+					return null;
 				},
 			);
 		};
+
 		pollTimer = setTimeout(probe, SANDBOX_LIVENESS_POLL_MS);
 
 		call.then(
 			(value) => settle(() => resolve(value)),
-			(error: unknown) => settle(() => reject(error)),
+			(cause) => settle(() => reject(cause)),
 		);
 	});
 }
@@ -178,21 +198,26 @@ class DaytonaSandboxDriver implements SandboxDriver {
 
 	async readFile(path: string): Promise<string> {
 		const bytes = await this.guarded('readFile', this.sandbox.fs.downloadFile(path));
+
 		return bytes.toString('utf8');
 	}
 
 	async readFileBuffer(path: string): Promise<Uint8Array> {
 		const bytes = await this.guarded('readFile', this.sandbox.fs.downloadFile(path));
+
 		return new Uint8Array(bytes);
 	}
 
 	async writeFile(path: string, content: string | Uint8Array): Promise<void> {
-		const file = typeof content === 'string' ? Buffer.from(content, 'utf8') : Buffer.from(content);
+		const file =
+			content instanceof Uint8Array ? Buffer.from(content) : Buffer.from(content, 'utf8');
+
 		await this.guarded('writeFile', this.sandbox.fs.uploadFile(file, path));
 	}
 
 	async stat(path: string): Promise<FileStat> {
 		const details = await this.guarded('stat', this.sandbox.fs.getFileDetails(path));
+
 		return {
 			isFile: !details.isDir,
 			isDirectory: details.isDir,
@@ -203,15 +228,18 @@ class DaytonaSandboxDriver implements SandboxDriver {
 
 	async readdir(path: string): Promise<string[]> {
 		const entries = await this.guarded('readdir', this.sandbox.fs.listFiles(path));
+
 		return entries.map((entry) => entry.name);
 	}
 
 	async exists(path: string): Promise<boolean> {
 		try {
 			await this.guarded('exists', this.sandbox.fs.getFileDetails(path));
+
 			return true;
 		} catch (error) {
 			if (error instanceof SandboxDiedError) throw error;
+
 			if (isMissingPathError(error)) return false;
 			throw error;
 		}
@@ -220,14 +248,17 @@ class DaytonaSandboxDriver implements SandboxDriver {
 	async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
 		if (options?.recursive === true) {
 			const result = await this.runCommand('mkdir', `mkdir -p ${shellQuote(path)}`);
+
 			if (result.exitCode !== 0) {
 				throw new Error(
 					`[flue:daytona] mkdir failed for ${path}: ` +
 						(result.stderr || result.stdout || `exit ${result.exitCode}`),
 				);
 			}
+
 			return;
 		}
+
 		await this.guarded('mkdir', this.sandbox.fs.createFolder(path, '755'));
 	}
 
@@ -236,6 +267,7 @@ class DaytonaSandboxDriver implements SandboxDriver {
 			await this.guarded('rm', this.sandbox.fs.deleteFile(path, options?.recursive === true));
 		} catch (error) {
 			if (error instanceof SandboxDiedError) throw error;
+
 			if (options?.force === true && isMissingPathError(error)) return;
 			throw error;
 		}
@@ -263,12 +295,14 @@ class DaytonaSandboxDriver implements SandboxDriver {
 		},
 	): Promise<{ stdout: string; stderr: string; exitCode: number }> {
 		const timeoutSeconds =
-			typeof options?.timeoutMs === 'number' ? Math.ceil(options.timeoutMs / 1000) : undefined;
+			options?.timeoutMs === undefined ? undefined : Math.ceil(options.timeoutMs / 1000);
+
 		try {
 			const response = await this.guarded(
 				operation,
 				this.sandbox.process.executeCommand(command, options?.cwd, options?.env, timeoutSeconds),
 			);
+
 			return { stdout: response.result, stderr: '', exitCode: response.exitCode };
 		} catch (error) {
 			if (error instanceof DaytonaProcessExecutionTimeoutError) {
@@ -278,6 +312,7 @@ class DaytonaSandboxDriver implements SandboxDriver {
 					exitCode: 124,
 				};
 			}
+
 			throw error;
 		}
 	}
@@ -294,11 +329,13 @@ export function assertContainer(sandbox: DaytonaSandboxLike): void {
 async function ensureContainerSnapshot(client: DaytonaClientLike): Promise<void> {
 	try {
 		const snapshot = await client.snapshot.get(CONTAINER_SNAPSHOT_NAME);
+
 		if (snapshot.sandboxClass !== undefined && snapshot.sandboxClass !== SandboxClass.CONTAINER) {
 			throw new Error(
 				`[slack-agent] snapshot ${CONTAINER_SNAPSHOT_NAME} is ${snapshot.sandboxClass}, not container`,
 			);
 		}
+
 		return;
 	} catch (error) {
 		if (!(error instanceof DaytonaNotFoundError)) throw error;
@@ -314,9 +351,11 @@ async function ensureContainerSnapshot(client: DaytonaClientLike): Promise<void>
 
 async function sandboxNameForConversation(conversationId: string): Promise<string> {
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(conversationId));
+
 	const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join(
 		'',
 	);
+
 	return `slack-agent-${hex.slice(0, 32)}`;
 }
 
@@ -331,29 +370,37 @@ async function findConversationSandbox(
 	}
 
 	const matches: DaytonaSandboxLike[] = [];
+
 	for await (const sandbox of client.list({
 		labels: { flueConversationId: args.conversationId },
 		limit: 2,
 	})) {
 		matches.push(sandbox);
+
 		if (matches.length === 2) break;
 	}
+
 	if (matches.length > 1) {
 		throw new Error(
 			`[slack-agent] multiple Daytona sandboxes found for conversation ${args.conversationId}`,
 		);
 	}
+
 	return matches[0];
 }
 
 async function startConversationSandbox(sandbox: DaytonaSandboxLike): Promise<DaytonaSandboxLike> {
 	await sandbox.refreshData();
 	assertContainer(sandbox);
+
 	if (sandbox.state === SandboxState.STARTED) return sandbox;
+
 	if (sandbox.state === SandboxState.STOPPED || sandbox.state === SandboxState.ARCHIVED) {
 		await sandbox.start(180);
+
 		return sandbox;
 	}
+
 	throw new Error(
 		`[slack-agent] Daytona sandbox ${sandbox.id} cannot be attached from state ${sandbox.state ?? 'unknown'}`,
 	);
@@ -365,9 +412,11 @@ export async function createContainerSandbox(
 ): Promise<DaytonaSandboxLike> {
 	const name = await sandboxNameForConversation(args.conversationId);
 	const existing = await findConversationSandbox(client, { ...args, name });
+
 	if (existing) return startConversationSandbox(existing);
 
 	await ensureContainerSnapshot(client);
+
 	const sandbox = await client.create(
 		{
 			name,
@@ -382,12 +431,14 @@ export async function createContainerSandbox(
 		},
 		{ timeout: 180 },
 	);
+
 	try {
 		assertContainer(sandbox);
 	} catch (error) {
 		await sandbox.delete?.(60, true);
 		throw error;
 	}
+
 	return sandbox;
 }
 
@@ -399,10 +450,13 @@ export async function verifyContainerStopStartPersistence(
 	await sandbox.stop();
 	await sandbox.start();
 	const restored = await sandbox.fs.downloadFile(M1_PERSISTENCE_PROBE_PATH);
+
 	if (!restored.equals(marker)) {
 		throw new Error('[slack-agent] Daytona container filesystem did not survive stop/start');
 	}
+
 	await sandbox.fs.deleteFile(M1_PERSISTENCE_PROBE_PATH);
+
 	return sandbox;
 }
 
@@ -418,6 +472,7 @@ export function daytona(
 		async createSandbox(): Promise<Sandbox> {
 			const sandboxCwd = options?.cwd ?? '/workspace';
 			const driver = new DaytonaSandboxDriver(sandbox);
+
 			return sandboxFromDriver(driver, sandboxCwd);
 		},
 	};

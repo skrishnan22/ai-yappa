@@ -4,6 +4,8 @@ import {
 	DaytonaProcessExecutionTimeoutError,
 	SandboxClass,
 	SandboxState,
+	type CreateSandboxFromSnapshotParams,
+	type CreateSnapshotParams,
 } from '@daytona/sdk';
 import { SandboxDiedError } from '@flue/runtime';
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -48,29 +50,36 @@ function createFakeSandbox(
 		async refreshData() {
 			if (overrides?.refreshData) {
 				await overrides.refreshData();
+
 				return;
 			}
 		},
 		async stop() {
 			if (overrides?.stop) {
 				await overrides.stop();
+
 				return;
 			}
+
 			state = 'stopped';
 		},
 		async start() {
 			if (overrides?.start) {
 				await overrides.start();
+
 				return;
 			}
+
 			state = 'started';
 		},
 		fs: overrides?.fs ?? {
 			async downloadFile(remotePath: string) {
 				const content = files.get(remotePath);
+
 				if (!content) {
 					throw new DaytonaFileNotFoundError(`missing ${remotePath}`);
 				}
+
 				return content;
 			},
 			async uploadFile(file: Buffer, remotePath: string) {
@@ -85,10 +94,13 @@ function createFakeSandbox(
 						name: path,
 					});
 				}
+
 				const content = files.get(path);
+
 				if (!content) {
 					throw new DaytonaFileNotFoundError(`missing ${path}`);
 				}
+
 				return fileDetails({
 					isDir: false,
 					size: content.byteLength,
@@ -100,15 +112,19 @@ function createFakeSandbox(
 				if (!dirs.has(path)) {
 					throw new DaytonaFileNotFoundError(`missing ${path}`);
 				}
+
 				const prefix = path.endsWith('/') ? path : `${path}/`;
 				const names = new Set<string>();
+
 				for (const filePath of files.keys()) {
 					if (filePath.startsWith(prefix)) {
 						const rest = filePath.slice(prefix.length);
 						const name = rest.split('/')[0];
+
 						if (name) names.add(name);
 					}
 				}
+
 				return [...names].map((name) => ({ name }));
 			},
 			async createFolder(path: string) {
@@ -157,6 +173,7 @@ describe('daytona factory', () => {
 				},
 			},
 		});
+
 		const flueSandbox = await daytona(sandbox, { cwd: '/workspace' }).createSandbox({ id: 'c1' });
 
 		const result = await flueSandbox.exec('sleep 10', { timeoutMs: 1000 });
@@ -195,6 +212,7 @@ describe('daytona factory', () => {
 
 	test('rejects in-flight work with SandboxDiedError when the sandbox is gone', async () => {
 		vi.useFakeTimers();
+
 		const sandbox = createFakeSandbox({
 			process: {
 				async executeCommand() {
@@ -202,9 +220,11 @@ describe('daytona factory', () => {
 				},
 			},
 		});
+
 		sandbox.refreshData = async () => {
 			sandbox.state = 'destroyed';
 		};
+
 		const flueSandbox = await daytona(sandbox, { cwd: '/workspace' }).createSandbox({ id: 'c1' });
 
 		const pending = flueSandbox.exec('sleep 30');
@@ -216,6 +236,7 @@ describe('daytona factory', () => {
 
 	test('rejects in-flight work when the sandbox lookup returns not found', async () => {
 		vi.useFakeTimers();
+
 		const sandbox = createFakeSandbox({
 			process: {
 				async executeCommand() {
@@ -223,13 +244,15 @@ describe('daytona factory', () => {
 				},
 			},
 		});
+
 		sandbox.refreshData = async () => {
 			throw new DaytonaNotFoundError('sandbox deleted');
 		};
+
 		const flueSandbox = await daytona(sandbox, { cwd: '/workspace' }).createSandbox({ id: 'c1' });
-		let failure: unknown;
-		void flueSandbox.exec('sleep 30').catch((error: unknown) => {
-			failure = error;
+		let failure: Error | undefined;
+		void flueSandbox.exec('sleep 30').catch((cause) => {
+			failure = cause instanceof Error ? cause : new Error('exec failed');
 		});
 
 		await vi.advanceTimersByTimeAsync(5_000);
@@ -253,12 +276,14 @@ describe('container lease', () => {
 	});
 
 	test('creates a retained container with the specified lifecycle', async () => {
-		const created: unknown[] = [];
-		const snapshots: unknown[] = [];
+		const created: CreateSandboxFromSnapshotParams[] = [];
+		const snapshots: CreateSnapshotParams[] = [];
 		const sandbox = createFakeSandbox({ id: 'container-1' });
+
 		const client: DaytonaClientLike = {
 			async create(params) {
-				created.push(params);
+				if (params !== undefined) created.push(params);
+
 				return sandbox;
 			},
 			async get() {
@@ -271,7 +296,8 @@ describe('container lease', () => {
 				},
 				async create(params) {
 					snapshots.push(params);
-					return { name: CONTAINER_SNAPSHOT_NAME, sandboxClass: 'container' };
+
+					return { name: CONTAINER_SNAPSHOT_NAME, sandboxClass: SandboxClass.CONTAINER };
 				},
 			},
 		};
@@ -300,11 +326,13 @@ describe('container lease', () => {
 
 	test('reuses the single sandbox already labeled for the conversation', async () => {
 		const existing = createFakeSandbox({ id: 'container-existing' });
-		const created: unknown[] = [];
+		const created: CreateSandboxFromSnapshotParams[] = [];
 		const requestedNames: string[] = [];
+
 		const client = {
-			async create(params: unknown) {
+			async create(params: CreateSandboxFromSnapshotParams) {
 				created.push(params);
+
 				return createFakeSandbox({ id: 'container-new' });
 			},
 			async get(name: string) {
@@ -340,6 +368,7 @@ describe('container lease', () => {
 				events.push('start');
 				existing.state = 'started';
 			};
+
 			const client = {
 				async create() {
 					throw new Error('should not create a replacement');
@@ -366,12 +395,14 @@ describe('container lease', () => {
 	);
 
 	test('creates a deterministically named sandbox when none exists', async () => {
-		const created: unknown[] = [];
+		const created: CreateSandboxFromSnapshotParams[] = [];
 		const requestedNames: string[] = [];
 		const sandbox = createFakeSandbox({ id: 'container-new' });
+
 		const client = {
-			async create(params: unknown) {
+			async create(params: CreateSandboxFromSnapshotParams) {
 				created.push(params);
+
 				return sandbox;
 			},
 			async get(name: string) {
@@ -436,6 +467,7 @@ describe('container lease', () => {
 			events.push('stop');
 			sandbox.state = 'stopped';
 		};
+
 		sandbox.start = async () => {
 			events.push('start');
 			sandbox.state = 'started';

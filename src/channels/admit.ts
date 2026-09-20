@@ -20,8 +20,11 @@ export function decideAdmit(args: {
 	if (args.signalType === 'slack.message' && !args.conversationExists) {
 		return { kind: 'drop-untracked' };
 	}
+
 	if (!args.allowed) return { kind: 'refuse-invoker' };
+
 	if (args.repo === undefined) return { kind: 'no-repo' };
+
 	return { kind: 'dispatch', repo: args.repo };
 }
 
@@ -30,5 +33,6 @@ export function mentionsAuthorizedBot(
 	authorizations: SlackAuthorization[] | undefined,
 ): boolean {
 	const botUserId = authorizations?.find((authorization) => authorization.is_bot)?.user_id;
+
 	return botUserId !== undefined && text.includes(`<@${botUserId}>`);
 }

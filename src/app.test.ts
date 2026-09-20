@@ -16,6 +16,7 @@ function env(signingSecret: string) {
 function signedRequest(secret: string, timestamp: string): Request {
 	const base = `v0:${timestamp}:${body}`;
 	const signature = `v0=${createHmac('sha256', secret).update(base).digest('hex')}`;
+
 	return new Request('https://example.test/channels/slack/events', {
 		method: 'POST',
 		headers: {
@@ -40,6 +41,7 @@ describe('Slack HTTP boundary', () => {
 			signedRequest('first-secret', timestamp),
 			env('second-secret'),
 		);
+
 		expect(oldSignature.status).toBe(401);
 	});
 });

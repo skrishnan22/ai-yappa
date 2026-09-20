@@ -1,10 +1,13 @@
 import { DaytonaFileNotFoundError, DaytonaNotFoundError } from '@daytona/sdk';
+import * as v from 'valibot';
+import { jsonValueSchema } from '../json.ts';
 import { workingBranchName } from '../proxy/checkpoint.ts';
 import type { DaytonaSandboxLike } from './daytona.ts';
 
 export { workingBranchName };
 
 export const WORKSPACE_REPO_DIR = '/workspace/repo';
+
 export const WORKSPACE_READY_PATH = '/workspace/.workspace_ready';
 
 const LOCKFILES = ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lock'] as const;
@@ -66,6 +69,7 @@ export function coworkerInstructions(repo: string): string {
 
 export function markerMatchesRepo(contents: string, repo: string): boolean {
 	const marker = parseReadyMarker(contents);
+
 	return marker !== undefined && marker.repo === repo;
 }
 
@@ -78,15 +82,27 @@ type ReadyMarker = {
 
 function parseReadyMarker(contents: string): ReadyMarker | undefined {
 	try {
-		const parsed: unknown = JSON.parse(contents);
-		if (typeof parsed !== 'object' || parsed === null) return undefined;
-		const record = parsed as Record<string, unknown>;
-		if (record.version !== 1 || typeof record.repo !== 'string') return undefined;
+		const parsed = JSON.parse(contents);
+
+		if (!v.is(jsonValueSchema, parsed)) return undefined;
+
+		const result = v.safeParse(
+			v.object({
+				version: v.literal(1),
+				repo: v.string(),
+				lockfile: v.optional(v.nullable(v.string())),
+				lockfileSha256: v.optional(v.nullable(v.string())),
+			}),
+			parsed,
+		);
+
+		if (!result.success) return undefined;
+
 		return {
-			version: 1,
-			repo: record.repo,
-			lockfile: typeof record.lockfile === 'string' ? record.lockfile : null,
-			lockfileSha256: typeof record.lockfileSha256 === 'string' ? record.lockfileSha256 : null,
+			version: result.output.version,
+			repo: result.output.repo,
+			lockfile: result.output.lockfile ?? null,
+			lockfileSha256: result.output.lockfileSha256 ?? null,
 		};
 	} catch {
 		return undefined;
@@ -99,23 +115,33 @@ async function workspaceFingerprintHolds(
 	contents: string,
 ): Promise<boolean> {
 	const marker = parseReadyMarker(contents);
+
 	if (!marker || marker.repo !== args.repo) return false;
+
 	if (!(await io.exists(`${WORKSPACE_REPO_DIR}/.git`))) return false;
+
 	if (marker.lockfile) {
 		const lockPath = `${WORKSPACE_REPO_DIR}/${marker.lockfile}`;
+
 		if (!(await io.exists(lockPath))) return false;
+
 		if (marker.lockfileSha256) {
 			const digest = await sha256Hex(await io.readFile(lockPath));
+
 			if (digest !== marker.lockfileSha256) return false;
 		}
 	}
+
 	const head = await io.exec('git rev-parse --abbrev-ref HEAD', { cwd: WORKSPACE_REPO_DIR });
+
 	if (head.exitCode !== 0) return false;
+
 	return head.stdout.trim() === workingBranchName(args.conversationId);
 }
 
 async function sha256Hex(text: string): Promise<string> {
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+
 	return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
@@ -125,6 +151,7 @@ async function mustExec(
 	options?: { cwd?: string; env?: Record<string, string>; timeoutMs?: number },
 ): Promise<void> {
 	const result = await io.exec(command, options);
+
 	if (result.exitCode !== 0) {
 		throw new Error(
 			`[slack-agent] hydration failed: ${command}: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
@@ -136,6 +163,7 @@ export async function detectLockfile(io: HydrateIo, repoDir: string): Promise<st
 	for (const name of LOCKFILES) {
 		if (await io.exists(`${repoDir}/${name}`)) return name;
 	}
+
 	return undefined;
 }
 
@@ -144,8 +172,10 @@ export async function hydrateWorkspace(
 	args: { repo: string; conversationId: string; git?: GitAuthor },
 ): Promise<{ cwd: string; skipped: boolean; durationMs: number; lockfile?: string }> {
 	const started = Date.now();
+
 	if (await io.exists(WORKSPACE_READY_PATH)) {
 		const raw = await io.readFile(WORKSPACE_READY_PATH);
+
 		if (await workspaceFingerprintHolds(io, args, raw)) {
 			return {
 				cwd: WORKSPACE_REPO_DIR,
@@ -166,6 +196,7 @@ export async function hydrateWorkspace(
 
 	const lockfile = await detectLockfile(io, WORKSPACE_REPO_DIR);
 	const install = lockfile ? installCommandForLockfile(lockfile) : undefined;
+
 	if (install) {
 		await mustExec(io, install, { cwd: WORKSPACE_REPO_DIR, timeoutMs: 600_000 });
 	}
@@ -184,6 +215,7 @@ export async function hydrateWorkspace(
 	}
 
 	let lockfileSha256: string | null = null;
+
 	if (lockfile) {
 		lockfileSha256 = await sha256Hex(await io.readFile(`${WORKSPACE_REPO_DIR}/${lockfile}`));
 	}
@@ -211,13 +243,15 @@ export function hydrateIoFromDaytona(sandbox: DaytonaSandboxLike): HydrateIo {
 	return {
 		async exec(command, options) {
 			const timeoutSeconds =
-				typeof options?.timeoutMs === 'number' ? Math.ceil(options.timeoutMs / 1000) : 600;
+				options?.timeoutMs === undefined ? 600 : Math.ceil(options.timeoutMs / 1000);
+
 			const response = await sandbox.process.executeCommand(
 				command,
 				options?.cwd,
 				options?.env,
 				timeoutSeconds,
 			);
+
 			return { stdout: response.result, stderr: '', exitCode: response.exitCode };
 		},
 		async readFile(path) {
@@ -229,11 +263,13 @@ export function hydrateIoFromDaytona(sandbox: DaytonaSandboxLike): HydrateIo {
 		async exists(path) {
 			try {
 				await sandbox.fs.getFileDetails(path);
+
 				return true;
 			} catch (error) {
 				if (error instanceof DaytonaNotFoundError || error instanceof DaytonaFileNotFoundError) {
 					return false;
 				}
+
 				throw error;
 			}
 		},

@@ -1,3 +1,6 @@
+import type { KnownBlock } from '@slack/web-api';
+import * as v from 'valibot';
+import { jsonObjectSchema, jsonValueSchema, type JsonValue } from '../json.ts';
 import { getSlackClient } from './slack-reply.ts';
 
 export type CardStatus = 'queued' | 'hydrating' | 'working' | 'completed' | 'failed' | 'aborted';
@@ -22,7 +25,7 @@ export type CardEvent =
 	| { type: 'submission_running'; submissionId: string }
 	| { type: 'hydration'; phase: 'start' | 'done'; skipped?: boolean }
 	| { type: 'tool_start'; submissionId?: string; toolName: string }
-	| { type: 'tool'; submissionId?: string; toolName: string; isError?: boolean; result?: unknown }
+	| { type: 'tool'; submissionId?: string; toolName: string; isError?: boolean; result?: JsonValue }
 	| {
 			type: 'submission_settled';
 			submissionId: string;
@@ -37,7 +40,7 @@ export type CardApply = {
 	notify?: string;
 };
 
-const STEP_BY_TOOL: Record<string, string> = {
+const STEP_BY_TOOL = {
 	read_github_issue: 'Reading GitHub issue',
 	read_github_repo: 'Reading repository metadata',
 	create_working_branch: 'Creating working branch',
@@ -50,9 +53,9 @@ const STEP_BY_TOOL: Record<string, string> = {
 	edit: 'Editing files',
 	grep: 'Searching the workspace',
 	glob: 'Searching the workspace',
-};
+} as const;
 
-type SlackBlock = Record<string, unknown>;
+type SlackBlock = KnownBlock;
 
 export type SlackCardPort = {
 	post(args: {
@@ -91,11 +94,14 @@ export function bindRunCard(args: {
 	thinkingLevel?: string;
 }): void {
 	let handle = handles.get(args.instanceId);
+
 	if (handle === undefined) {
 		handle = { ...args, chain: Promise.resolve() };
 		handles.set(args.instanceId, handle);
+
 		return;
 	}
+
 	handle.channelId = args.channelId;
 	handle.threadTs = args.threadTs;
 	handle.token = args.token;
@@ -103,10 +109,13 @@ export function bindRunCard(args: {
 	handle.port = args.port;
 	handle.model = args.model;
 	handle.thinkingLevel = args.thinkingLevel;
+
 	if (handle.state === null && args.state !== null) {
 		handle.state = args.state;
+
 		return;
 	}
+
 	if (
 		handle.state !== null &&
 		args.state !== null &&
@@ -124,28 +133,35 @@ export function __resetRunCardForTests(): void {
 
 export function enqueueCardEvent(event: RoutedCardEvent, now = Date.now()): Promise<void> {
 	const handle = handles.get(event.instanceId);
+
 	if (handle === undefined) return Promise.resolve();
 	handle.chain = handle.chain.then(
 		() => publishCardEvent(event, now).catch(() => publishCardEvent(event, now)),
 		() => publishCardEvent(event, now),
 	);
+
 	return handle.chain;
 }
 
 export async function publishCardEvent(event: RoutedCardEvent, now = Date.now()): Promise<void> {
 	const handle = handles.get(event.instanceId);
+
 	if (handle === undefined) return;
 	const applied = applyCardEvent(handle.state, event, now);
+
 	if (applied === undefined) return;
 	const nextState = withModelRoute(applied.state, handle);
+
 	if (!cardChanged(handle.state, nextState) && applied.notify === undefined) return;
 
 	handle.state = nextState;
 
 	try {
 		const port = handle.port ?? (handle.token ? slackCardPort(handle.token) : undefined);
+
 		if (port !== undefined) {
 			const rendered = renderRunCard(nextState, now);
+
 			if (nextState.messageTs) {
 				await port.update({
 					channel: handle.channelId,
@@ -160,8 +176,10 @@ export async function publishCardEvent(event: RoutedCardEvent, now = Date.now())
 					text: rendered.text,
 					blocks: rendered.blocks,
 				});
+
 				handle.state = { ...nextState, messageTs: posted.ts };
 			}
+
 			if (applied.notify !== undefined && handle.state.notifyPosted !== true) {
 				await port.notify({
 					channel: handle.channelId,
@@ -193,7 +211,9 @@ export function applyCardEvent(
 					: event.skipped
 						? 'Workspace ready'
 						: 'Workspace hydrated';
+
 			const status: CardStatus = event.phase === 'start' ? 'hydrating' : 'working';
+
 			if (state === null) {
 				return {
 					state: {
@@ -205,23 +225,30 @@ export function applyCardEvent(
 					},
 				};
 			}
+
 			if (isTerminal(state.status)) return undefined;
+
 			return { state: { ...state, status, step } };
 		}
+
 		case 'tool_start': {
 			if (state === null || isTerminal(state.status)) return undefined;
+
 			return {
 				state: {
 					...state,
 					status: 'working',
-					step: STEP_BY_TOOL[event.toolName] ?? `Running ${event.toolName}`,
+					step: stepForTool(event.toolName),
 				},
 			};
 		}
+
 		case 'tool': {
 			if (state === null || isTerminal(state.status)) return undefined;
 			const links = linksFromTool(event.toolName, event.result);
+
 			if (links.branchUrl === undefined && links.prUrl === undefined) return undefined;
+
 			return {
 				state: {
 					...state,
@@ -230,10 +257,12 @@ export function applyCardEvent(
 				},
 			};
 		}
+
 		case 'submission_settled': {
 			const same =
 				state !== null &&
 				(state.submissionId === event.submissionId || state.submissionId === 'active');
+
 			const base = same
 				? state
 				: {
@@ -243,33 +272,44 @@ export function applyCardEvent(
 						step: 'Working',
 						startedAt: now,
 					};
+
 			const next = settle(
 				{ ...base, submissionId: event.submissionId },
 				event.outcome,
 				event.error,
 			);
+
 			return { state: next.state, notify: next.notify };
 		}
+
 		default: {
 			const _exhaustive: never = event;
+
 			return _exhaustive;
 		}
 	}
 }
 
-export function renderRunCard(
-	state: RunCardState,
-	now: number,
-): { text: string; blocks: SlackBlock[] } {
+export type CardRender = {
+	text: string;
+	blocks: SlackBlock[];
+};
+
+export function renderRunCard(state: RunCardState, now: number): CardRender {
 	const statusLabel = statusText(state.status);
 	const elapsed = formatElapsed(now - state.startedAt);
 	const route = formatModelRoute(state);
+
 	const text = route
 		? `${statusLabel} · ${state.step} · ${elapsed} · ${route}`
 		: `${statusLabel} · ${state.step} · ${elapsed}`;
+
 	const links: string[] = [];
+
 	if (state.branchUrl) links.push(`<${state.branchUrl}|branch>`);
+
 	if (state.prUrl) links.push(`<${state.prUrl}|pull request>`);
+
 	const blocks: SlackBlock[] = [
 		{
 			type: 'section',
@@ -279,20 +319,26 @@ export function renderRunCard(
 			},
 		},
 	];
+
 	const contextBits: string[] = [];
+
 	if (route) contextBits.push(escapeMrkdwn(route));
+
 	if (links.length > 0) contextBits.push(links.join('  ·  '));
+
 	if (contextBits.length > 0) {
 		blocks.push({
 			type: 'context',
 			elements: [{ type: 'mrkdwn', text: contextBits.join('  ·  ') }],
 		});
 	}
+
 	return { text, blocks };
 }
 
 function withModelRoute(state: RunCardState, handle: CardHandle): RunCardState {
 	if (handle.model === undefined && handle.thinkingLevel === undefined) return state;
+
 	return {
 		...state,
 		model: handle.model ?? state.model,
@@ -304,15 +350,19 @@ export function formatModelRoute(
 	state: Pick<RunCardState, 'model' | 'thinkingLevel'>,
 ): string | undefined {
 	if (state.model === undefined) return undefined;
+
 	if (state.thinkingLevel === undefined) return state.model;
+
 	return `${state.model} · thinking ${state.thinkingLevel}`;
 }
 
 export function formatElapsed(ms: number): string {
 	const seconds = Math.max(0, Math.floor(ms / 1000));
+
 	if (seconds < 60) return `${seconds}s`;
 	const minutes = Math.floor(seconds / 60);
 	const rest = seconds % 60;
+
 	return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`;
 }
 
@@ -327,13 +377,17 @@ function beginOrRefresh(
 		if (isTerminal(state.status) || statusRank(status) < statusRank(state.status)) {
 			return { state };
 		}
+
 		return { state: { ...state, status, step } };
 	}
+
 	if (state !== null && state.submissionId === 'active' && !isTerminal(state.status)) {
 		const nextStatus = statusRank(status) < statusRank(state.status) ? state.status : status;
 		const nextStep = statusRank(status) < statusRank(state.status) ? state.step : step;
+
 		return { state: { ...state, submissionId, status: nextStatus, step: nextStep } };
 	}
+
 	return {
 		state: {
 			submissionId,
@@ -359,6 +413,7 @@ function statusRank(status: CardStatus): number {
 			return 3;
 		default: {
 			const _exhaustive: never = status;
+
 			return _exhaustive;
 		}
 	}
@@ -368,46 +423,81 @@ function settle(
 	state: RunCardState,
 	outcome: 'completed' | 'failed' | 'aborted',
 	error: string | undefined,
-): { state: RunCardState; notify?: string } {
+): CardApply {
 	if (outcome === 'completed') {
 		const step = state.prUrl ? 'Pull request opened' : 'Completed';
 		const notify = state.prUrl ? `Done: ${state.prUrl}` : undefined;
+
 		return { state: { ...state, status: 'completed', step }, notify };
 	}
+
 	if (outcome === 'aborted') {
 		return { state: { ...state, status: 'aborted', step: 'Aborted' }, notify: 'Aborted.' };
 	}
+
 	const detail = error && error.length > 0 ? truncate(error, 200) : 'see thread';
+
 	return {
 		state: { ...state, status: 'failed', step: `Failed: ${detail}` },
 		notify: `Failed: ${detail}`,
 	};
 }
 
-function linksFromTool(toolName: string, result: unknown): { branchUrl?: string; prUrl?: string } {
+function stepForTool(toolName: string): string {
+	for (const [name, step] of Object.entries(STEP_BY_TOOL)) {
+		if (name === toolName) return step;
+	}
+
+	return `Running ${toolName}`;
+}
+
+type ToolLinks = {
+	branchUrl?: string;
+	prUrl?: string;
+};
+
+function linksFromTool(toolName: string, result: JsonValue | undefined): ToolLinks {
+	if (result === undefined) return {};
 	const url = findHtmlUrl(result);
+
 	if (url === undefined) return {};
+
 	if (toolName === 'open_pull_request') return { prUrl: url };
+
 	if (toolName === 'checkpoint_working_branch' || toolName === 'create_working_branch') {
 		return { branchUrl: url };
 	}
+
 	return {};
 }
 
-function findHtmlUrl(value: unknown): string | undefined {
-	if (typeof value === 'string' && value.startsWith('https://github.com/')) return value;
-	if (!isRecord(value)) return undefined;
-	if (typeof value.htmlUrl === 'string' && value.htmlUrl.startsWith('https://github.com/')) {
-		return value.htmlUrl;
+const githubHttpsUrlSchema = v.pipe(v.string(), v.startsWith('https://github.com/'));
+
+function findHtmlUrl(value: JsonValue): string | undefined {
+	if (v.is(githubHttpsUrlSchema, value)) return value;
+
+	if (!v.is(jsonObjectSchema, value)) return undefined;
+
+	const htmlUrl = value.htmlUrl;
+
+	if (v.is(githubHttpsUrlSchema, htmlUrl)) return htmlUrl;
+
+	const nested = [value.output, value.details, value.result];
+
+	for (const candidate of nested) {
+		if (candidate !== undefined && v.is(jsonValueSchema, candidate)) {
+			const found = findHtmlUrl(candidate);
+
+			if (found !== undefined) return found;
+		}
 	}
-	if (value.output !== undefined) return findHtmlUrl(value.output);
-	if (value.details !== undefined) return findHtmlUrl(value.details);
-	if (value.result !== undefined) return findHtmlUrl(value.result);
+
 	return undefined;
 }
 
 function cardChanged(prev: RunCardState | null, next: RunCardState): boolean {
 	if (prev === null) return true;
+
 	return (
 		prev.submissionId !== next.submissionId ||
 		prev.status !== next.status ||
@@ -439,6 +529,7 @@ function statusText(status: CardStatus): string {
 			return 'Aborted';
 		default: {
 			const _exhaustive: never = status;
+
 			return _exhaustive;
 		}
 	}
@@ -459,6 +550,7 @@ function statusEmoji(status: CardStatus): string {
 			return ':stop_sign:';
 		default: {
 			const _exhaustive: never = status;
+
 			return _exhaustive;
 		}
 	}
@@ -472,20 +564,18 @@ function truncate(value: string, max: number): string {
 	return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function slackCardPort(token: string): SlackCardPort {
 	const client = getSlackClient(token);
+
 	return {
 		async post({ channel, threadTs, text, blocks }) {
 			const result = await client.chat.postMessage({
 				channel,
 				thread_ts: threadTs,
 				text,
-				blocks: blocks as never,
+				blocks,
 			});
+
 			return { ts: result.ts ?? null };
 		},
 		async update({ channel, ts, text, blocks }) {
@@ -493,7 +583,7 @@ function slackCardPort(token: string): SlackCardPort {
 				channel,
 				ts,
 				text,
-				blocks: blocks as never,
+				blocks,
 			});
 		},
 		async notify({ channel, threadTs, text }) {

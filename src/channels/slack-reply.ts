@@ -2,26 +2,46 @@ import { defineTool } from '@flue/runtime';
 import { WebClient } from '@slack/web-api';
 import * as v from 'valibot';
 
-function slackFetch(url: string | URL, init?: RequestInit): Promise<Response> {
+export function slackFetch(url: string | URL, init?: RequestInit): Promise<Response> {
 	return fetch(url, init?.redirect === 'error' ? { ...init, redirect: 'manual' } : init);
 }
+
+export type SlackBotClient = {
+	chat: {
+		postMessage: WebClient['chat']['postMessage'];
+		update: WebClient['chat']['update'];
+	};
+	conversations: {
+		replies: WebClient['conversations']['replies'];
+	};
+};
+
+export type SlackClientFactory = (token: string) => SlackBotClient;
+
+function defaultSlackClient(token: string): SlackBotClient {
+	return new WebClient(token, {
+		// workerd's fetch is a method. WebClient stores globalThis.fetch and calls it
+		// unbound, which throws Illegal invocation. It also sets redirect: 'error',
+		// which workerd does not implement.
+		fetch: slackFetch,
+	});
+}
+
+let createSlackClient: SlackClientFactory = defaultSlackClient;
 
 // Lazily constructed: importing this module (e.g. from `flue run`, which has
 // no Slack token) must not build a client with an `undefined` token. The
 // caller supplies the value validated at its execution boundary.
 let cachedForToken: string | undefined;
-let cached: WebClient | undefined;
 
-export function getSlackClient(token: string): WebClient {
+let cached: SlackBotClient | undefined;
+
+export function getSlackClient(token: string): SlackBotClient {
 	if (!cached || cachedForToken !== token) {
-		cached = new WebClient(token, {
-			// workerd's fetch is a method. WebClient stores globalThis.fetch and calls it
-			// unbound, which throws Illegal invocation. It also sets redirect: 'error',
-			// which workerd does not implement.
-			fetch: slackFetch,
-		});
+		cached = createSlackClient(token);
 		cachedForToken = token;
 	}
+
 	return cached;
 }
 
@@ -29,6 +49,12 @@ export function getSlackClient(token: string): WebClient {
 export function __resetSlackClientForTests(): void {
 	cached = undefined;
 	cachedForToken = undefined;
+}
+
+/** Test-only: replace the Slack client constructor. */
+export function __setSlackClientFactoryForTests(factory?: SlackClientFactory): void {
+	createSlackClient = factory ?? defaultSlackClient;
+	__resetSlackClientForTests();
 }
 
 export function replyInThread(
@@ -51,11 +77,13 @@ export function replyInThread(
 					},
 				};
 			}
+
 			const result = await getSlackClient(slackBotToken).chat.postMessage({
 				channel: ref.channelId,
 				thread_ts: ref.threadTs,
 				markdown_text: data.text,
 			});
+
 			return {
 				output: {
 					posted: true,

@@ -13,6 +13,7 @@ import type { ServerEnv } from '../env.ts';
 async function conversationExistsInThread(signalType: SlackSignal, id: string): Promise<boolean> {
 	if (signalType === 'slack.app_mention') return false;
 	const existing = await getAgentInstance(Coworker, id);
+
 	return existing !== null;
 }
 
@@ -39,13 +40,19 @@ export function createSlackChannelForEnv(env: ServerEnv) {
 						text: event.text,
 						signalType: 'slack.app_mention',
 					});
+
 					return;
 				}
+
 				case 'message': {
 					const event = payload.event;
+
 					if (event.subtype !== undefined) return;
+
 					if (event.bot_id !== undefined) return;
+
 					if (event.thread_ts === undefined) return;
+
 					if (mentionsAuthorizedBot(event.text ?? '', payload.authorizations)) return;
 					await admitThread({
 						channel,
@@ -60,13 +67,16 @@ export function createSlackChannelForEnv(env: ServerEnv) {
 						text: event.text ?? '',
 						signalType: 'slack.message',
 					});
+
 					return;
 				}
+
 				default:
 					return;
 			}
 		},
 	});
+
 	return channel;
 }
 
@@ -115,6 +125,7 @@ async function admitThread({
 				thread_ts: thread.threadTs,
 				text: 'You are not on the invoker allowlist for this deployment.',
 			});
+
 			return;
 		case 'no-repo':
 			emitSemanticEvent({
@@ -130,6 +141,7 @@ async function admitThread({
 				thread_ts: thread.threadTs,
 				text: 'This channel has no default repo. Add it to `src/config.ts` (or pass `repo:` once that override exists).',
 			});
+
 			return;
 		case 'drop-untracked':
 			emitSemanticEvent({
@@ -140,15 +152,23 @@ async function admitThread({
 				signal_type: signalType,
 				decision: decision.kind,
 			});
+
 			return;
 		case 'dispatch': {
-			const attributes: Record<string, string> = { eventId };
+			let threadContext: string | undefined;
+
 			try {
-				const threadContext = await loadThreadContext(getSlackClient(env.SLACK_BOT_TOKEN), thread);
-				if (threadContext !== undefined) attributes.threadContext = threadContext;
+				threadContext = await loadThreadContext(getSlackClient(env.SLACK_BOT_TOKEN), thread);
 			} catch {
 				// Thread history is context for the agent, not a dispatch requirement.
 			}
+
+			type SignalAttributes = { eventId: string; threadContext?: string };
+
+			const attributes: SignalAttributes = { eventId };
+
+			if (threadContext !== undefined) attributes.threadContext = threadContext;
+
 			try {
 				const receipt = await dispatch(Coworker, {
 					id,
@@ -167,6 +187,7 @@ async function admitThread({
 						attributes,
 					},
 				});
+
 				emitSemanticEvent({
 					event_name: 'slack_admission',
 					outcome: receipt.deduplicated ? 'deduplicated' : 'dispatched',
@@ -188,10 +209,13 @@ async function admitThread({
 				});
 				throw error;
 			}
+
 			return;
 		}
+
 		default: {
 			const _exhaustive: never = decision;
+
 			return _exhaustive;
 		}
 	}

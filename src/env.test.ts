@@ -32,6 +32,7 @@ describe('loadAgentEnv', () => {
 			DAYTONA_API_KEY: 'dtn-test',
 			OPENCODE_API_KEY: 'sk-test',
 		});
+
 		expect(env.DAYTONA_API_KEY).toBe('dtn-test');
 	});
 

@@ -17,6 +17,7 @@ const httpUrl = v.pipe(
 	v.check((value) => {
 		try {
 			const protocol = new URL(value).protocol;
+
 			return protocol === 'http:' || protocol === 'https:';
 		} catch {
 			return false;
@@ -33,6 +34,7 @@ const catalogEntrySchema = v.object({
 });
 
 export type CatalogEntry = v.InferInput<typeof catalogEntrySchema>;
+
 type ValidatedEntry = v.InferOutput<typeof catalogEntrySchema>;
 
 /** Static, reviewed catalog. Adding a server is one row + one Worker secret. */
@@ -65,18 +67,24 @@ export type ResolveCatalogResult = {
 	warnings: string[];
 };
 
-export type EnvMap = Record<string, string | undefined>;
+export type EnvMap = {
+	readonly [key: string]: string | undefined;
+};
 
-function validateEntry(entry: unknown, index: number): ValidatedEntry {
+function validateEntry(entry: CatalogEntry, index: number): ValidatedEntry {
 	const result = v.safeParse(catalogEntrySchema, entry);
+
 	if (result.success) return result.output;
+
 	const detail = result.issues
 		.map((issue) => {
 			const key = issue.path?.[0]?.key;
-			return typeof key === 'string' ? key : 'entry';
+
+			return v.is(v.string(), key) ? key : 'entry';
 		})
 		.filter((value, i, all) => all.indexOf(value) === i)
 		.join(', ');
+
 	// Field names only — never echo received values (could be mistaken for secrets).
 	throw new Error(`[mcp-catalog] entry[${index}]: invalid ${detail || 'entry'}`);
 }
@@ -93,9 +101,16 @@ export function resolveIntegrationCatalog(
 	const warnings: string[] = [];
 
 	for (let i = 0; i < catalog.length; i++) {
-		const entry = validateEntry(catalog[i], i);
+		const rawEntry = catalog[i];
+
+		if (rawEntry === undefined) {
+			throw new Error(`[mcp-catalog] entry[${i}]: missing entry`);
+		}
+
+		const entry = validateEntry(rawEntry, i);
 		const raw = env[entry.authEnv];
-		const secret = typeof raw === 'string' ? raw.trim() : '';
+		const secret = v.is(v.string(), raw) ? raw.trim() : '';
+
 		if (!secret) {
 			if (entry.optional) {
 				warnings.push(
@@ -103,8 +118,10 @@ export function resolveIntegrationCatalog(
 				);
 				continue;
 			}
+
 			throw new Error(`[mcp-catalog] required MCP "${entry.name}" missing secret ${entry.authEnv}`);
 		}
+
 		connections.push({
 			name: entry.name,
 			url: entry.url,
