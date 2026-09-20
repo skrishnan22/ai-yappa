@@ -2,6 +2,7 @@ import { describe, expect, test, vi, afterEach, beforeEach } from 'vitest';
 import type { Api, Model } from '@earendil-works/pi-ai';
 import {
 	resolveOpenCodeGoModel,
+	withMissingFinishReasonCompat,
 	MODELS_DEV_CATALOG_URL,
 	OPENCODE_GO_BUNDLED_ID,
 	OPENCODE_GO_PREFERRED_ID,
@@ -85,5 +86,25 @@ describe('resolveOpenCodeGoModel', () => {
 			fetch: async () => new Response('<html>', { status: 200 }),
 		});
 		expect(resolved).toEqual({ models: [flash], modelId: OPENCODE_GO_BUNDLED_ID });
+	});
+});
+
+describe('withMissingFinishReasonCompat', () => {
+	test('marks openai-completions models as not requiring finish_reason', () => {
+		const [patched] = withMissingFinishReasonCompat([flash]);
+		expect(patched?.compat).toMatchObject({
+			...flash.compat,
+			supportsFinishReason: false,
+		});
+	});
+
+	test('leaves non-completions models unchanged', () => {
+		const anthropic: Model<Api> = {
+			...flash,
+			id: 'minimax-m3',
+			api: 'anthropic-messages',
+			compat: undefined,
+		};
+		expect(withMissingFinishReasonCompat([anthropic])).toEqual([anthropic]);
 	});
 });

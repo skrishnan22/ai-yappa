@@ -32,7 +32,6 @@ import {
 } from '../sandboxes/hydrate.ts';
 import { githubTools } from './github-tools.ts';
 import { openCodeGoModelSpecifier } from './opencode-go-catalog.ts';
-import { installOpenCodeGoSessionHeader } from './opencode-session.ts';
 
 observe((event, context) => {
 	const cardEvent = cardEventFromObservation(event);
@@ -49,7 +48,6 @@ const initialDataSchema = v.object({
 });
 
 export function Coworker(props: { id: string }) {
-	installOpenCodeGoSessionHeader();
 	useModel(openCodeGoModelSpecifier);
 
 	const data = useInitialData<v.InferOutput<typeof initialDataSchema> | undefined>();
