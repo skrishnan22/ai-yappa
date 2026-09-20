@@ -18,7 +18,7 @@
 	},
 	"dependencies": {
 		"@daytona/sdk": "^0.207.0",
-		"@earendil-works/pi-ai": "^0.83.0",
+		"@earendil-works/pi-ai": "0.86.0",
 		"@flue/runtime": "^2.0.3",
 		"@flue/slack": "^2.0.3",
 		"@slack/web-api": "^8.1.1",
@@ -38,5 +38,9 @@
 		"vite": "^8.0.14",
 		"vitest": "^4.1.11",
 		"wrangler": "^4.113.0"
+	},
+	"overrides": {
+		"@earendil-works/pi-ai": "0.86.0",
+		"@earendil-works/pi-agent-core": "0.86.0"
 	}
 }

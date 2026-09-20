@@ -1,5 +1,6 @@
 import type { Api, Model } from '@earendil-works/pi-ai';
 import { opencodeGoProvider } from '@earendil-works/pi-ai/providers/opencode-go';
+import { setProvider } from '@flue/runtime';
 
 export const MODELS_DEV_CATALOG_URL = 'https://models.dev/api.json';
 export const OPENCODE_GO_PREFERRED_ID = 'deepseek-v4.1-flash';
@@ -53,6 +54,21 @@ function withPreferredId(models: readonly Model<Api>[]): readonly Model<Api>[] {
 	return [{ ...template, id: OPENCODE_GO_PREFERRED_ID, name: OPENCODE_GO_PREFERRED_ID }, ...models];
 }
 
+// ponytail: OpenCode Go often closes SSE without finish_reason. pi-ai ≥0.86
+// honors compat.supportsFinishReason=false (earendil-works/pi#7062); drop when
+// upstream sets this on opencode-go models.
+export function withMissingFinishReasonCompat(
+	models: readonly Model<Api>[],
+): readonly Model<Api>[] {
+	return models.map((model) => {
+		if (model.api !== 'openai-completions') return model;
+		return {
+			...model,
+			compat: { ...model.compat, supportsFinishReason: false },
+		};
+	});
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -63,5 +79,13 @@ if (process.env.VITEST === 'true' || process.env.NODE_ENV === 'test') {
 } else {
 	resolved = await resolveOpenCodeGoModel();
 }
-export const openCodeGoModels = resolved.models;
+export const openCodeGoModels = withMissingFinishReasonCompat(resolved.models);
 export const openCodeGoModelSpecifier = `opencode-go/${resolved.modelId}`;
+
+const inner = opencodeGoProvider();
+// Flue resolves useModel() after the first render, but docs require setProvider
+// at module load so flue run / harness init never see the bundled snapshot.
+setProvider({
+	...inner,
+	getModels: () => openCodeGoModels,
+});

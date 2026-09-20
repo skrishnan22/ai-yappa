@@ -32,7 +32,6 @@ import {
 } from '../sandboxes/hydrate.ts';
 import { githubTools } from './github-tools.ts';
 import { coworkerModelSpecifier, coworkerThinkingLevel } from './model-route.ts';
-import { installOpenCodeGoSessionHeader } from './opencode-session.ts';
 
 observe((event, context) => {
 	const cardEvent = cardEventFromObservation(event);
@@ -49,7 +48,6 @@ const initialDataSchema = v.object({
 });
 
 export function Coworker(props: { id: string }) {
-	installOpenCodeGoSessionHeader();
 	useModel(coworkerModelSpecifier, { thinkingLevel: coworkerThinkingLevel });
 
 	const data = useInitialData<v.InferOutput<typeof initialDataSchema> | undefined>();
