@@ -40,7 +40,6 @@
 		"wrangler": "^4.113.0"
 	},
 	"overrides": {
-		"@earendil-works/pi-ai": "0.86.0",
-		"@earendil-works/pi-agent-core": "0.86.0"
+		"@earendil-works/pi-ai": "0.86.0"
 	}
 }
