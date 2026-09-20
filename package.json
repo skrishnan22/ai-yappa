@@ -29,6 +29,7 @@
 		"@cloudflare/vite-plugin": "^1.39.2",
 		"@flue/cli": "^2.0.3",
 		"@flue/vite": "^2.0.3",
+		"@oxlint/plugins": "1.82.0",
 		"@types/node": "^22.10.10",
 		"oxfmt": "^0.67.0",
 		"oxlint": "^1.82.0",

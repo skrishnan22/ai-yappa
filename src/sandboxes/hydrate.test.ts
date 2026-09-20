@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'vitest';
+import * as v from 'valibot';
+import { jsonValueSchema } from '../json.ts';
 import {
 	coworkerInstructions,
 	hydrateWorkspace,
@@ -12,6 +14,7 @@ import {
 
 async function sha256Hex(text: string): Promise<string> {
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+
 	return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
@@ -21,18 +24,23 @@ function memoryIo(seed?: {
 }): HydrateIo & { commands: string[] } {
 	const files = seed?.files ?? new Map<string, string>();
 	const commands: string[] = [];
+
 	const io: HydrateIo & { commands: string[] } = {
 		commands,
 		async exec(command, options) {
 			commands.push([options?.cwd, command].filter(Boolean).join(' '));
+
 			if (command === 'git rev-parse --abbrev-ref HEAD') {
 				return { exitCode: 0, stdout: seed?.head ?? '', stderr: '' };
 			}
+
 			return { exitCode: 0, stdout: '', stderr: '' };
 		},
 		async readFile(path) {
 			const content = files.get(path);
+
 			if (content === undefined) throw new Error(`missing ${path}`);
+
 			return content;
 		},
 		async writeFile(path, content) {
@@ -42,6 +50,7 @@ function memoryIo(seed?: {
 			return files.has(path);
 		},
 	};
+
 	return io;
 }
 
@@ -84,11 +93,18 @@ describe('hydrateWorkspace', () => {
 		);
 		expect(io.commands).toContain(`${WORKSPACE_REPO_DIR} git config user.name 'ai-yappa[bot]'`);
 
-		const marker = JSON.parse(await io.readFile(WORKSPACE_READY_PATH)) as {
-			version: number;
-			repo: string;
-			lockfile: string;
-		};
+		const parsed = JSON.parse(await io.readFile(WORKSPACE_READY_PATH));
+		expect(v.is(jsonValueSchema, parsed)).toBe(true);
+
+		const marker = v.parse(
+			v.object({
+				version: v.number(),
+				repo: v.string(),
+				lockfile: v.nullable(v.string()),
+			}),
+			parsed,
+		);
+
 		expect(marker.version).toBe(1);
 		expect(marker.repo).toBe('https://github.com/skrishnan22/codevil.git');
 		expect(marker.lockfile).toBe('pnpm-lock.yaml');
@@ -112,6 +128,7 @@ describe('hydrateWorkspace', () => {
 		const lock = 'lock: 1\n';
 		const repo = 'https://github.com/skrishnan22/codevil.git';
 		const conversationId = 'c1';
+
 		const files = new Map<string, string>([
 			[
 				WORKSPACE_READY_PATH,
@@ -125,6 +142,7 @@ describe('hydrateWorkspace', () => {
 			[`${WORKSPACE_REPO_DIR}/pnpm-lock.yaml`, lock],
 			[`${WORKSPACE_REPO_DIR}/.git`, ''],
 		]);
+
 		const io = memoryIo({ files, head: workingBranchName(conversationId) });
 
 		const result = await hydrateWorkspace(io, { repo, conversationId });
@@ -137,6 +155,7 @@ describe('hydrateWorkspace', () => {
 
 	test('rehydrates when the lockfile hash no longer matches the marker', async () => {
 		const repo = 'https://github.com/skrishnan22/codevil.git';
+
 		const files = new Map<string, string>([
 			[
 				WORKSPACE_READY_PATH,
@@ -150,6 +169,7 @@ describe('hydrateWorkspace', () => {
 			[`${WORKSPACE_REPO_DIR}/pnpm-lock.yaml`, 'new\n'],
 			[`${WORKSPACE_REPO_DIR}/.git`, ''],
 		]);
+
 		const io = memoryIo({ files, head: workingBranchName('c1') });
 
 		const result = await hydrateWorkspace(io, { repo, conversationId: 'c1' });
@@ -166,6 +186,7 @@ describe('hydrateWorkspace', () => {
 			],
 			[`${WORKSPACE_REPO_DIR}/pnpm-lock.yaml`, 'lock: 1\n'],
 		]);
+
 		const io = memoryIo({ files });
 
 		const result = await hydrateWorkspace(io, {

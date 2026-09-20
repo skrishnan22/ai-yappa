@@ -35,6 +35,7 @@ const agentSchema = v.object({
 });
 
 export type ServerEnv = v.InferOutput<typeof serverSchema>;
+
 export type AgentEnv = v.InferOutput<typeof agentSchema>;
 
 function missingKeys(
@@ -42,26 +43,43 @@ function missingKeys(
 ): string[] {
 	if (result.success) return [];
 	const keys = new Set<string>();
+
 	for (const issue of result.issues) {
 		const first = issue.path?.[0]?.key;
-		if (typeof first === 'string') keys.add(first);
+
+		if (v.is(v.string(), first)) keys.add(first);
 	}
+
 	return [...keys].toSorted();
 }
 
-export function loadServerEnv(source: unknown = process.env): ServerEnv {
+export type EnvSource = {
+	SLACK_SIGNING_SECRET?: string;
+	SLACK_BOT_TOKEN?: string;
+	DAYTONA_API_KEY?: string;
+	OPENCODE_API_KEY?: string;
+	TUNNEL_HOSTNAME?: string;
+	GIT_AUTHOR_NAME?: string;
+	GIT_AUTHOR_EMAIL?: string;
+};
+
+export function loadServerEnv(source: EnvSource = process.env): ServerEnv {
 	const result = v.safeParse(serverSchema, source);
+
 	if (!result.success) {
 		throw new Error(`[boot] missing secrets: ${missingKeys(result).join(', ') || 'invalid env'}`);
 	}
+
 	return result.output;
 }
 
-export function loadAgentEnv(source: unknown = process.env): AgentEnv {
+export function loadAgentEnv(source: EnvSource = process.env): AgentEnv {
 	const result = v.safeParse(agentSchema, source);
+
 	if (!result.success) {
 		throw new Error(`[boot] missing secrets: ${missingKeys(result).join(', ') || 'invalid env'}`);
 	}
+
 	return result.output;
 }
 
@@ -70,9 +88,12 @@ export function gitAuthorFromEnv(
 ): { name: string; email: string } | undefined {
 	const name = env.GIT_AUTHOR_NAME?.trim();
 	const email = env.GIT_AUTHOR_EMAIL?.trim();
+
 	if (name && email) return { name, email };
+
 	if (name || email) {
 		throw new Error('[boot] GIT_AUTHOR_NAME and GIT_AUTHOR_EMAIL must both be set, or neither');
 	}
+
 	return undefined;
 }

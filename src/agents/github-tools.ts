@@ -1,6 +1,7 @@
 import { defineTool } from '@flue/runtime';
 import * as v from 'valibot';
-import { checkpointWorkingBranch, workingBranchName } from '../proxy/checkpoint.ts';
+import { parsedOutput, type JsonValue } from '../json.ts';
+import { checkpointWorkingBranch, workingBranchName, type ExecEnv } from '../proxy/checkpoint.ts';
 import { createGitHubPort, githubHandlers } from '../proxy/github.ts';
 import {
 	executeProxy,
@@ -19,28 +20,18 @@ export type OwnerProxyCtx = OperationContext & {
 export async function performReadIssue(
 	ctx: OwnerProxyCtx,
 	input: { number: number },
-): Promise<{
-	number: number;
-	title: string;
-	state: string;
-	htmlUrl: string;
-	body: string | null;
-}> {
+): Promise<PublicIssue> {
 	return publicIssue(await executeOperation(ctx, 'readIssue', { number: input.number }));
 }
 
-export async function performReadRepo(ctx: OwnerProxyCtx): Promise<{
-	fullName: string;
-	defaultBranch: string;
-	htmlUrl: string;
-}> {
+export async function performReadRepo(ctx: OwnerProxyCtx): Promise<PublicRepo> {
 	return publicRepo(await executeOperation(ctx, 'readRepoMetadata', {}));
 }
 
 export async function performCreateWorkingBranch(
 	ctx: OwnerProxyCtx,
 	input: { fromSha: string },
-): Promise<{ ref: string; sha: string }> {
+): Promise<PublicRef> {
 	return publicRef(
 		await executeOperation(ctx, 'createBranch', {
 			name: workingBranchName(ctx.conversationId),
@@ -52,13 +43,14 @@ export async function performCreateWorkingBranch(
 export async function performOpenPullRequest(
 	ctx: OwnerProxyCtx,
 	input: { title: string; body: string; base: string },
-): Promise<{ number: number; htmlUrl: string; head: string; base: string }> {
+): Promise<PublicPull> {
 	const data = await executeOperation(ctx, 'createPullRequest', {
 		head: workingBranchName(ctx.conversationId),
 		base: input.base,
 		title: input.title,
 		body: input.body,
 	});
+
 	return publicPull(data);
 }
 
@@ -68,7 +60,7 @@ export async function performCheckpoint(
 	io: {
 		exec: (
 			command: string,
-			options: { env: Record<string, string> },
+			options: { env: ExecEnv },
 		) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
 		revoke: (token: string) => Promise<void>;
 	},
@@ -151,7 +143,9 @@ async function runGithubTool<T>(
 	run: (ready: Extract<ReturnType<typeof liveOwner>, { ok: true }>) => Promise<T>,
 ): Promise<{ output: T | { error: string } }> {
 	const ready = liveOwner(args);
+
 	if (!ready.ok) return { output: { error: ready.error } };
+
 	try {
 		return { output: await run(ready) };
 	} catch (error) {
@@ -159,19 +153,15 @@ async function runGithubTool<T>(
 	}
 }
 
-function executeOperation(
-	ctx: OwnerProxyCtx,
-	op: ProxyOp,
-	params: Record<string, unknown>,
-): Promise<unknown> {
+function executeOperation(ctx: OwnerProxyCtx, op: ProxyOp, params: JsonValue): Promise<JsonValue> {
 	return executeAndUnwrap(ctx, op, params);
 }
 
 async function executeAndUnwrap(
 	ctx: OwnerProxyCtx,
 	op: ProxyOp,
-	params: unknown,
-): Promise<unknown> {
+	params: JsonValue,
+): Promise<JsonValue> {
 	const result = await executeProxy({
 		context: operationContext(ctx),
 		op,
@@ -180,7 +170,9 @@ async function executeAndUnwrap(
 		handlers: ctx.handlers,
 		audit: ctx.audit,
 	});
+
 	if (!result.ok) throw new Error(result.error.message);
+
 	return result.data;
 }
 
@@ -193,66 +185,88 @@ function operationContext(ctx: OwnerProxyCtx): OperationContext {
 	};
 }
 
-function publicIssue(data: unknown): {
+type PublicIssue = {
 	number: number;
 	title: string;
 	state: string;
 	htmlUrl: string;
 	body: string | null;
-} {
-	if (
-		!isRecord(data) ||
-		typeof data.number !== 'number' ||
-		typeof data.title !== 'string' ||
-		typeof data.state !== 'string' ||
-		typeof data.htmlUrl !== 'string'
-	) {
-		throw new Error('readIssue returned an unexpected payload');
-	}
-	return {
-		number: data.number,
-		title: data.title,
-		state: data.state,
-		htmlUrl: data.htmlUrl,
-		body: typeof data.body === 'string' ? data.body : null,
-	};
-}
+};
 
-function publicRepo(data: unknown): { fullName: string; defaultBranch: string; htmlUrl: string } {
-	if (
-		!isRecord(data) ||
-		typeof data.fullName !== 'string' ||
-		typeof data.defaultBranch !== 'string' ||
-		typeof data.htmlUrl !== 'string'
-	) {
-		throw new Error('readRepoMetadata returned an unexpected payload');
-	}
-	return { fullName: data.fullName, defaultBranch: data.defaultBranch, htmlUrl: data.htmlUrl };
-}
+type PublicRepo = {
+	fullName: string;
+	defaultBranch: string;
+	htmlUrl: string;
+};
 
-function publicRef(data: unknown): { ref: string; sha: string } {
-	if (!isRecord(data) || typeof data.ref !== 'string' || typeof data.sha !== 'string') {
-		throw new Error('createBranch returned an unexpected payload');
-	}
-	return { ref: data.ref, sha: data.sha };
-}
+type PublicRef = {
+	ref: string;
+	sha: string;
+};
 
-function publicPull(data: unknown): {
+type PublicPull = {
 	number: number;
 	htmlUrl: string;
 	head: string;
 	base: string;
-} {
-	if (
-		!isRecord(data) ||
-		typeof data.number !== 'number' ||
-		typeof data.htmlUrl !== 'string' ||
-		typeof data.head !== 'string' ||
-		typeof data.base !== 'string'
-	) {
-		throw new Error('createPullRequest returned an unexpected payload');
-	}
-	return { number: data.number, htmlUrl: data.htmlUrl, head: data.head, base: data.base };
+};
+
+function publicIssue(data: JsonValue): PublicIssue {
+	const parsed = parsedOutput(
+		v.object({
+			number: v.number(),
+			title: v.string(),
+			state: v.string(),
+			htmlUrl: v.string(),
+			body: v.optional(v.nullable(v.string())),
+		}),
+		data,
+		'readIssue returned an unexpected payload',
+	);
+
+	return {
+		number: parsed.number,
+		title: parsed.title,
+		state: parsed.state,
+		htmlUrl: parsed.htmlUrl,
+		body: parsed.body ?? null,
+	};
+}
+
+function publicRepo(data: JsonValue): PublicRepo {
+	return parsedOutput(
+		v.object({
+			fullName: v.string(),
+			defaultBranch: v.string(),
+			htmlUrl: v.string(),
+		}),
+		data,
+		'readRepoMetadata returned an unexpected payload',
+	);
+}
+
+function publicRef(data: JsonValue): PublicRef {
+	return parsedOutput(
+		v.object({
+			ref: v.string(),
+			sha: v.string(),
+		}),
+		data,
+		'createBranch returned an unexpected payload',
+	);
+}
+
+function publicPull(data: JsonValue): PublicPull {
+	return parsedOutput(
+		v.object({
+			number: v.number(),
+			htmlUrl: v.string(),
+			head: v.string(),
+			base: v.string(),
+		}),
+		data,
+		'createPullRequest returned an unexpected payload',
+	);
 }
 
 type GitHubRuntime = {
@@ -271,7 +285,9 @@ export function liveOwner(args: {
 	| { ok: false; error: string } {
 	try {
 		const github = githubRuntime();
+
 		if (!github.ok) return github;
+
 		return {
 			ok: true,
 			port: github.port,
@@ -295,9 +311,11 @@ export function liveOwner(args: {
 
 function githubRuntime(): ({ ok: true } & GitHubRuntime) | { ok: false; error: string } {
 	if (cachedGithub !== undefined) return { ok: true, ...cachedGithub };
+
 	try {
 		const port = createGitHubPort();
 		cachedGithub = { port, handlers: githubHandlers(port) };
+
 		return { ok: true, ...cachedGithub };
 	} catch (error) {
 		return {
@@ -305,8 +323,4 @@ function githubRuntime(): ({ ok: true } & GitHubRuntime) | { ok: false; error: s
 			error: error instanceof Error ? error.message : 'GITHUB_* secrets are not configured',
 		};
 	}
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

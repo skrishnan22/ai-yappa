@@ -1,4 +1,5 @@
 'use agent';
+
 import { Daytona } from '@daytona/sdk';
 import {
 	observe,
@@ -12,6 +13,7 @@ import {
 	type FlueObservation,
 } from '@flue/runtime';
 import * as v from 'valibot';
+import { jsonValueSchema } from '../json.ts';
 import {
 	bindRunCard,
 	enqueueCardEvent,
@@ -35,7 +37,9 @@ import { coworkerModelSpecifier, coworkerThinkingLevel } from './model-route.ts'
 
 observe((event, context) => {
 	const cardEvent = cardEventFromObservation(event);
+
 	if (!cardEvent) return Promise.resolve();
+
 	return enqueueCardEvent({ ...cardEvent, instanceId: context.id });
 });
 
@@ -51,6 +55,7 @@ export function Coworker(props: { id: string }) {
 	useModel(coworkerModelSpecifier, { thinkingLevel: coworkerThinkingLevel });
 
 	const data = useInitialData<v.InferOutput<typeof initialDataSchema> | undefined>();
+
 	if (!data) {
 		throw new Error('This agent is created by the Slack channel dispatch.');
 	}
@@ -85,6 +90,7 @@ export function Coworker(props: { id: string }) {
 	});
 	// ponytail: conversation-scoped audit array until the D1 cross-conversation store in M4
 	const [, setProxyAudit] = usePersistentState<AuditRecord[]>('proxy-audit', []);
+
 	for (const tool of githubTools({
 		conversationId: props.id,
 		repo: data.repo,
@@ -100,9 +106,11 @@ export function Coworker(props: { id: string }) {
 	// Resolve MCP catalog at render (not module init). Secrets stay out of
 	// loadAgentEnv so optional integrations are not boot requirements.
 	const mcp = resolveIntegrationCatalog(INTEGRATION_CATALOG, process.env);
+
 	for (const warning of mcp.warnings) {
 		console.warn(warning);
 	}
+
 	for (const connection of mcp.connections) {
 		useMcpConnection({
 			name: connection.name,
@@ -122,17 +130,20 @@ export function Coworker(props: { id: string }) {
 				type: 'hydration',
 				phase: 'start',
 			});
+
 			const result = await hydrateWorkspace(hydrateIoFromDaytona(sandbox), {
 				repo: data.repo,
 				conversationId: options.id,
 				git: gitAuthorFromEnv(agentEnv),
 			});
+
 			await publishCardEvent({
 				instanceId: props.id,
 				type: 'hydration',
 				phase: 'done',
 				skipped: result.skipped,
 			});
+
 			return daytona(sandbox, { cwd: WORKSPACE_REPO_DIR }).createSandbox(options);
 		},
 	});
@@ -141,6 +152,7 @@ export function Coworker(props: { id: string }) {
 }
 
 Coworker.initialData = initialDataSchema;
+
 Coworker.agentName = 'coworker';
 
 export function hasSuccessfulSlackReply(
@@ -157,14 +169,18 @@ function cardEventFromObservation(event: FlueObservation): CardEvent | undefined
 			return { type: 'submission_running', submissionId: event.submissionId };
 		case 'tool_start':
 			return { type: 'tool_start', toolName: event.toolName, submissionId: event.submissionId };
-		case 'tool':
+		case 'tool': {
+			const rawResult = event.effectiveResult ?? event.result;
+
 			return {
 				type: 'tool',
 				toolName: event.toolName,
 				submissionId: event.submissionId,
 				isError: event.isError,
-				result: event.effectiveResult ?? event.result,
+				result: v.is(jsonValueSchema, rawResult) ? rawResult : undefined,
 			};
+		}
+
 		case 'submission_settled':
 			return {
 				type: 'submission_settled',

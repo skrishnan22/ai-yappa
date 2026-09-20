@@ -1,5 +1,6 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, test } from 'vitest';
+import type { JsonValue } from '../json.ts';
 import type { ProxyHandler } from '../proxy/ops.ts';
 import type { ProxyOp } from '../proxy/policy.ts';
 import {
@@ -46,11 +47,13 @@ function ctx(handlers: Record<ProxyOp, ProxyHandler>): OwnerProxyCtx {
 
 describe('trusted GitHub operations', () => {
 	test('passes the canonical context repo while operation params contain no repo', async () => {
-		const seen: Array<{ op: ProxyOp; repo: string; params: unknown }> = [];
+		const seen: Array<{ op: ProxyOp; repo: string; params: JsonValue }> = [];
+
 		const owner = ctx(
 			baseHandlers({
 				readIssue: async ({ context, params }) => {
 					seen.push({ op: 'readIssue', repo: context.repo, params });
+
 					return {
 						number: 3,
 						title: 'Bug',
@@ -61,10 +64,12 @@ describe('trusted GitHub operations', () => {
 				},
 				createBranch: async ({ context, params }) => {
 					seen.push({ op: 'createBranch', repo: context.repo, params });
+
 					return { ref: 'refs/heads/agent/c1', sha: 'abc' };
 				},
 				createPullRequest: async ({ context, params }) => {
 					seen.push({ op: 'createPullRequest', repo: context.repo, params });
+
 					return {
 						number: 9,
 						htmlUrl: 'https://github.com/skrishnan22/codevil/pull/9',
@@ -122,12 +127,13 @@ describe('trusted GitHub operations', () => {
 	});
 
 	test('keeps the working branch deterministic from conversation id', async () => {
-		let params: unknown;
+		let params: JsonValue | undefined;
 		await performCreateWorkingBranch(
 			ctx(
 				baseHandlers({
 					createBranch: async (input) => {
 						params = input.params;
+
 						return { ref: 'refs/heads/agent/c1', sha: 'abc' };
 					},
 				}),
@@ -146,7 +152,14 @@ describe('githubTools schemas', () => {
 			repo: 'skrishnan22/codevil',
 			audit: { append: () => {} },
 		});
-		const keysByName = Object.fromEntries(tools.map((tool) => [tool.name, inputKeys(tool)]));
+
+		const keysByName = Object.fromEntries(
+			tools.map((tool) => {
+				const entries = tool.input?.entries;
+
+				return [tool.name, entries === undefined ? [] : Object.keys(entries).toSorted()];
+			}),
+		);
 
 		expect(keysByName).toEqual({
 			read_github_issue: ['number'],
@@ -155,6 +168,7 @@ describe('githubTools schemas', () => {
 			open_pull_request: ['base', 'body', 'title'],
 			checkpoint_working_branch: ['expectedSha'],
 		});
+
 		for (const keys of Object.values(keysByName)) {
 			expect(keys).not.toEqual(
 				expect.arrayContaining(['repo', 'head', 'token', 'permissions', 'url', 'headers']),
@@ -197,6 +211,7 @@ describe('performCheckpoint', () => {
 	test('does not expose a push token written by a failing process', async () => {
 		const secret = 'ghs_secret';
 		let message = '';
+
 		try {
 			await performCheckpoint(
 				ctx(
@@ -232,12 +247,14 @@ describe('liveOwner', () => {
 		delete process.env.GITHUB_APP_ID;
 		delete process.env.GITHUB_APP_PRIVATE_KEY;
 		delete process.env.GITHUB_APP_INSTALLATION_ID;
+
 		try {
 			const ready = liveOwner({
 				conversationId: 'c1',
 				repo: 'skrishnan22/codevil',
 				audit: { append: () => {} },
 			});
+
 			expect(ready).toEqual({
 				ok: false,
 				error:
@@ -255,12 +272,14 @@ describe('liveOwner', () => {
 			.privateKey.export({ type: 'pkcs1', format: 'pem' })
 			.toString();
 		process.env.GITHUB_APP_INSTALLATION_ID = '2';
+
 		try {
 			const audit = { append: () => {} };
 			const first = liveOwner({ conversationId: 'c1', repo: 'skrishnan22/codevil', audit });
 			const second = liveOwner({ conversationId: 'c1', repo: 'skrishnan22/codevil', audit });
 			expect(first.ok).toBe(true);
 			expect(second.ok).toBe(true);
+
 			if (!first.ok || !second.ok) return;
 			expect(first.port).toBe(second.port);
 			expect(first.ctx.handlers).toBe(second.ctx.handlers);
@@ -272,12 +291,13 @@ describe('liveOwner', () => {
 	});
 });
 
-function inputKeys(tool: unknown): string[] {
-	if (!isRecord(tool) || !isRecord(tool.input) || !isRecord(tool.input.entries)) return [];
-	return Object.keys(tool.input.entries).toSorted();
-}
+type GithubEnvSnapshot = {
+	GITHUB_APP_ID: string | undefined;
+	GITHUB_APP_PRIVATE_KEY: string | undefined;
+	GITHUB_APP_INSTALLATION_ID: string | undefined;
+};
 
-function saveEnv(): Record<string, string | undefined> {
+function saveEnv(): GithubEnvSnapshot {
 	return {
 		GITHUB_APP_ID: process.env.GITHUB_APP_ID,
 		GITHUB_APP_PRIVATE_KEY: process.env.GITHUB_APP_PRIVATE_KEY,
@@ -285,13 +305,9 @@ function saveEnv(): Record<string, string | undefined> {
 	};
 }
 
-function restoreEnv(previous: Record<string, string | undefined>): void {
+function restoreEnv(previous: GithubEnvSnapshot): void {
 	for (const [key, value] of Object.entries(previous)) {
 		if (value === undefined) delete process.env[key];
 		else process.env[key] = value;
 	}
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

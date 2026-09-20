@@ -19,6 +19,7 @@ function handlers(args?: {
 	const refuse: ProxyHandler = async () => {
 		throw new Error('handler not stubbed');
 	};
+
 	return {
 		readIssue: refuse,
 		readRepoMetadata: refuse,
@@ -44,9 +45,11 @@ function execAt(
 ): CheckpointExec {
 	return async (command, options) => {
 		args?.seen?.push({ command, env: options.env });
+
 		if (command === 'git rev-parse HEAD') {
 			return { stdout: `${expectedSha}\n`, stderr: '', exitCode: 0 };
 		}
+
 		return {
 			stdout: args?.push?.stdout ?? '',
 			stderr: args?.push?.stderr ?? '',
@@ -111,6 +114,7 @@ describe('checkpointWorkingBranch', () => {
 
 	test('pushes to the explicit canonical repo and deterministic branch with hooks disabled', async () => {
 		const seen: Array<{ command: string; env: Record<string, string> }> = [];
+
 		const result = await checkpointWorkingBranch({
 			...checkpointArgs({ exec: execAt('abc123', { seen }) }),
 		});
@@ -147,6 +151,7 @@ describe('checkpointWorkingBranch', () => {
 		const revoked: string[] = [];
 		const secret = 'ghs_secret';
 		let message = '';
+
 		try {
 			await checkpointWorkingBranch({
 				...checkpointArgs({
@@ -212,6 +217,7 @@ describe('checkpointWorkingBranch', () => {
 	test('surfaces a static revoke failure without exposing the token', async () => {
 		const secret = 'ghs_secret';
 		let message = '';
+
 		try {
 			await checkpointWorkingBranch({
 				...checkpointArgs({

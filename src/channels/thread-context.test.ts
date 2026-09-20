@@ -26,6 +26,7 @@ describe('formatThreadContext', () => {
 			],
 			6,
 		);
+
 		expect(formatted.length).toBe(6);
 		expect(formatted.endsWith('bbbb')).toBe(true);
 	});
@@ -43,6 +44,7 @@ describe('loadThreadContext', () => {
 			},
 			{ channelId: 'C1', threadTs: '1.2' },
 		);
+
 		expect(context).toBeUndefined();
 	});
 
@@ -52,34 +54,40 @@ describe('loadThreadContext', () => {
 				conversations: {
 					async replies(args) {
 						expect(args).toEqual({ channel: 'C1', ts: '1.2', limit: 100 });
+
 						return { messages: [{ user: 'U1', text: 'please fix the login' }] };
 					},
 				},
 			},
 			{ channelId: 'C1', threadTs: '1.2' },
 		);
+
 		expect(context).toBe('<@U1>: please fix the login');
 	});
 
 	test('follows next_cursor so recent replies are included', async () => {
 		const cursors: Array<string | undefined> = [];
+
 		const context = await loadThreadContext(
 			{
 				conversations: {
 					async replies(args) {
 						cursors.push(args.cursor);
+
 						if (args.cursor === undefined) {
 							return {
 								messages: [{ user: 'U1', text: 'old request' }],
 								response_metadata: { next_cursor: 'page-2' },
 							};
 						}
+
 						return { messages: [{ user: 'U2', text: 'recent follow-up' }] };
 					},
 				},
 			},
 			{ channelId: 'C1', threadTs: '1.2' },
 		);
+
 		expect(cursors).toEqual([undefined, 'page-2']);
 		expect(context).toBe('<@U1>: old request\n<@U2>: recent follow-up');
 	});
@@ -91,6 +99,7 @@ describe('loadThreadContext', () => {
 				conversations: {
 					async replies() {
 						pages++;
+
 						return {
 							messages: [{ user: 'U1', text: `m${pages}` }],
 							response_metadata: { next_cursor: 'more' },

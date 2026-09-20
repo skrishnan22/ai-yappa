@@ -41,9 +41,11 @@ describe('INTEGRATION_CATALOG', () => {
 describe('resolveIntegrationCatalog', () => {
 	test('resolves a present secret to static name, URL, optional policy, and Bearer auth', () => {
 		const token = 'cf-token-value-for-test';
+
 		const result = resolveIntegrationCatalog([cloudflare], {
 			CLOUDFLARE_MCP_API_TOKEN: token,
 		});
+
 		expect(result.warnings).toEqual([]);
 		expect(result.connections).toEqual([
 			{
@@ -61,16 +63,19 @@ describe('resolveIntegrationCatalog', () => {
 			url: 'https://mcp.notion.com/mcp',
 			authEnv: 'NOTION_TOKEN',
 		};
+
 		const result = resolveIntegrationCatalog([entry], { NOTION_TOKEN: 'n-secret' });
 		expect(result.connections[0]?.optional).toBe(true);
 	});
 
 	test('missing optional secret omits only that connection and emits a credential-free warning', () => {
 		const token = 'super-secret-should-not-leak';
+
 		const result = resolveIntegrationCatalog([cloudflare, requiredLinear], {
 			LINEAR_API_KEY: 'lin-ok',
 			// CLOUDFLARE_MCP_API_TOKEN intentionally absent
 		});
+
 		expect(result.connections).toEqual([
 			{
 				name: 'linear',
@@ -96,12 +101,15 @@ describe('resolveIntegrationCatalog', () => {
 		).toThrow(/required MCP "linear" missing secret LINEAR_API_KEY/);
 
 		let thrown: unknown;
+
 		try {
 			resolveIntegrationCatalog([requiredLinear], { LINEAR_API_KEY: undefined });
 		} catch (error) {
 			thrown = error;
 		}
+
 		expect(thrown).toBeInstanceOf(Error);
+
 		if (!(thrown instanceof Error)) throw new Error('expected Error');
 		expect(thrown.message).toContain('LINEAR_API_KEY');
 		expect(thrown.message).not.toContain(secret);
@@ -109,20 +117,25 @@ describe('resolveIntegrationCatalog', () => {
 
 	test('rejects empty or invalid catalog fields without exposing secrets', () => {
 		const secret = 'leak-me-please';
+
 		const cases: CatalogEntry[] = [
 			{ name: '', url: 'https://mcp.example.com/mcp', authEnv: 'T' },
 			{ name: 'x', url: '', authEnv: 'T' },
 			{ name: 'x', url: 'not-a-url', authEnv: 'T' },
 			{ name: 'x', url: 'https://mcp.example.com/mcp', authEnv: '' },
 		];
+
 		for (const entry of cases) {
 			let thrown: unknown;
+
 			try {
 				resolveIntegrationCatalog([entry], { T: secret });
 			} catch (error) {
 				thrown = error;
 			}
+
 			expect(thrown).toBeInstanceOf(Error);
+
 			if (!(thrown instanceof Error)) throw new Error('expected Error');
 			expect(thrown.message).toMatch(/\[mcp-catalog\]/);
 			expect(thrown.message).not.toContain(secret);
@@ -133,6 +146,7 @@ describe('resolveIntegrationCatalog', () => {
 		const result = resolveIntegrationCatalog([cloudflare], {
 			CLOUDFLARE_MCP_API_TOKEN: '   ',
 		});
+
 		expect(result.connections).toEqual([]);
 		expect(result.warnings[0]).toContain('CLOUDFLARE_MCP_API_TOKEN');
 	});

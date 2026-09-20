@@ -54,6 +54,7 @@ describe('applyCardEvent', () => {
 			{ type: 'submission_running', submissionId: 'sub-1' },
 			8_000,
 		);
+
 		expect(applied?.state.messageTs).toBe('9.9');
 		expect(applied?.state.startedAt).toBe(1_000);
 	});
@@ -64,6 +65,7 @@ describe('applyCardEvent', () => {
 			{ type: 'submission_running', submissionId: 'sub-2' },
 			9_000,
 		);
+
 		expect(applied?.state).toEqual({
 			submissionId: 'sub-2',
 			messageTs: null,
@@ -76,11 +78,13 @@ describe('applyCardEvent', () => {
 	test('does not post a second card when hydration used a placeholder id', () => {
 		const hydrated = applyCardEvent(null, { type: 'hydration', phase: 'start' }, 1_000);
 		expect(hydrated?.state.submissionId).toBe('active');
+
 		const running = applyCardEvent(
 			hydrated!.state,
 			{ type: 'submission_running', submissionId: 'sub-1' },
 			2_000,
 		);
+
 		expect(running?.state.submissionId).toBe('sub-1');
 		expect(running?.state.status).toBe('working');
 		expect(running?.state.messageTs).toBeNull();
@@ -92,6 +96,7 @@ describe('applyCardEvent', () => {
 			{ type: 'submission_running', submissionId: 'sub-2' },
 			9_000,
 		);
+
 		expect(applied?.state.submissionId).toBe('sub-2');
 		expect(applied?.state.messageTs).toBeNull();
 	});
@@ -102,6 +107,7 @@ describe('applyCardEvent', () => {
 			{ type: 'submission_queued', submissionId: 'sub-1' },
 			2_000,
 		);
+
 		expect(applied?.state.status).toBe('working');
 		expect(applied?.state.step).toBe('Working');
 	});
@@ -117,6 +123,7 @@ describe('applyCardEvent', () => {
 			{ type: 'hydration', phase: 'done', skipped: true },
 			3_000,
 		);
+
 		expect(done?.state.status).toBe('working');
 		expect(done?.state.step).toBe('Workspace ready');
 	});
@@ -151,6 +158,7 @@ describe('applyCardEvent', () => {
 			},
 			2_000,
 		);
+
 		expect(withBranch?.state.branchUrl).toBe('https://github.com/org/repo/tree/agent/x');
 
 		const withPr = applyCardEvent(
@@ -162,6 +170,7 @@ describe('applyCardEvent', () => {
 			},
 			2_000,
 		);
+
 		expect(withPr?.state.prUrl).toBe('https://github.com/org/repo/pull/4');
 		expect(withPr?.state.branchUrl).toBe('https://github.com/org/repo/tree/agent/x');
 	});
@@ -172,6 +181,7 @@ describe('applyCardEvent', () => {
 			{ type: 'submission_settled', submissionId: 'sub-1', outcome: 'completed' },
 			4_000,
 		);
+
 		expect(applied?.state.status).toBe('completed');
 		expect(applied?.state.step).toBe('Pull request opened');
 		expect(applied?.notify).toBe('Done: https://github.com/org/repo/pull/4');
@@ -183,6 +193,7 @@ describe('applyCardEvent', () => {
 			{ type: 'submission_settled', submissionId: 'sub-1', outcome: 'completed' },
 			4_000,
 		);
+
 		expect(applied?.state.status).toBe('completed');
 		expect(applied?.notify).toBeUndefined();
 	});
@@ -193,6 +204,7 @@ describe('applyCardEvent', () => {
 			{ type: 'submission_settled', submissionId: 'sub-1', outcome: 'failed', error: 'boom' },
 			4_000,
 		);
+
 		expect(applied?.state.status).toBe('failed');
 		expect(applied?.notify).toBe('Failed: boom');
 	});
@@ -208,6 +220,7 @@ describe('renderRunCard', () => {
 			}),
 			65_000,
 		);
+
 		expect(rendered.text).toContain('Working');
 		expect(rendered.text).toContain('Opening pull request');
 		expect(JSON.stringify(rendered.blocks)).not.toContain('"type":"header"');
@@ -224,6 +237,7 @@ describe('renderRunCard', () => {
 			}),
 			1_000,
 		);
+
 		expect(rendered.text).toContain('opencode-go/deepseek-v4-flash · thinking medium');
 		expect(JSON.stringify(rendered.blocks)).toContain(
 			'opencode-go/deepseek-v4-flash · thinking medium',
@@ -253,14 +267,17 @@ describe('formatElapsed', () => {
 describe('publishCardEvent', () => {
 	test('stamps model route from bindRunCard onto the posted card', async () => {
 		const posts: Array<{ text: string; blocks: unknown }> = [];
+
 		const port: SlackCardPort = {
 			async post(args) {
 				posts.push({ text: args.text, blocks: args.blocks });
+
 				return { ts: 'card.ts' };
 			},
 			async update() {},
 			async notify() {},
 		};
+
 		const persisted: RunCardState[] = [];
 		bindRunCard({
 			instanceId: 'conversation-1',
@@ -282,9 +299,11 @@ describe('publishCardEvent', () => {
 	test('does not route a new conversation event through the previously bound thread', async () => {
 		const firstThreadPosts: unknown[] = [];
 		const secondThreadPosts: unknown[] = [];
+
 		const firstThreadPort: SlackCardPort = {
 			async post(args) {
 				firstThreadPosts.push(args);
+
 				return { ts: 'first-card.ts' };
 			},
 			async update() {},
@@ -315,6 +334,7 @@ describe('publishCardEvent', () => {
 			port: {
 				async post(args) {
 					secondThreadPosts.push(args);
+
 					return { ts: 'second-card.ts' };
 				},
 				async update() {},
@@ -335,9 +355,11 @@ describe('publishCardEvent', () => {
 		const updates: unknown[] = [];
 		const notifies: unknown[] = [];
 		const persisted: RunCardState[] = [];
+
 		const port: SlackCardPort = {
 			async post(args) {
 				posts.push(args);
+
 				return { ts: 'card.ts' };
 			},
 			async update(args) {
@@ -387,10 +409,12 @@ describe('publishCardEvent', () => {
 		const posts: Array<{ ts: string }> = [];
 		const updates: Array<{ ts: string }> = [];
 		const persisted: RunCardState[] = [];
+
 		const port: SlackCardPort = {
 			async post() {
 				const ts = `card-${posts.length + 1}`;
 				posts.push({ ts });
+
 				return { ts };
 			},
 			async update(args) {
@@ -440,6 +464,7 @@ describe('publishCardEvent', () => {
 	test('persists settlement when the terminal ping fails, then retries it', async () => {
 		const persisted: RunCardState[] = [];
 		let notifies = 0;
+
 		const port: SlackCardPort = {
 			async post() {
 				return { ts: 'card.ts' };
@@ -447,6 +472,7 @@ describe('publishCardEvent', () => {
 			async update() {},
 			async notify() {
 				notifies++;
+
 				if (notifies === 1) throw new Error('slack down');
 			},
 		};
@@ -490,6 +516,7 @@ describe('publishCardEvent', () => {
 
 	test('persists the settled card even if every terminal ping attempt fails', async () => {
 		const persisted: RunCardState[] = [];
+
 		const port: SlackCardPort = {
 			async post() {
 				return { ts: 'card.ts' };

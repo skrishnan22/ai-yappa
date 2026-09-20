@@ -8,6 +8,7 @@ afterEach(() => {
 describe('emitSemanticEvent', () => {
 	test('emits a flat admission record without accepting message content', () => {
 		const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+
 		const event = {
 			event_name: 'slack_admission',
 			outcome: 'dispatched',
