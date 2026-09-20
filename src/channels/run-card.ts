@@ -11,6 +11,10 @@ export type RunCardState = {
 	branchUrl?: string;
 	prUrl?: string;
 	notifyPosted?: boolean;
+	/** Deployment model specifier (`provider/model`), stamped from bindRunCard. */
+	model?: string;
+	/** Reasoning effort from useModel options, stamped from bindRunCard. */
+	thinkingLevel?: string;
 };
 
 export type CardEvent =
@@ -69,6 +73,8 @@ type CardHandle = {
 	persist: (state: RunCardState) => void;
 	port?: SlackCardPort;
 	chain: Promise<void>;
+	model?: string;
+	thinkingLevel?: string;
 };
 
 const handles = new Map<string, CardHandle>();
@@ -81,6 +87,8 @@ export function bindRunCard(args: {
 	state: RunCardState | null;
 	persist: (state: RunCardState) => void;
 	port?: SlackCardPort;
+	model?: string;
+	thinkingLevel?: string;
 }): void {
 	let handle = handles.get(args.instanceId);
 	if (handle === undefined) {
@@ -93,6 +101,8 @@ export function bindRunCard(args: {
 	handle.token = args.token;
 	handle.persist = args.persist;
 	handle.port = args.port;
+	handle.model = args.model;
+	handle.thinkingLevel = args.thinkingLevel;
 	if (handle.state === null && args.state !== null) {
 		handle.state = args.state;
 		return;
@@ -127,18 +137,19 @@ export async function publishCardEvent(event: RoutedCardEvent, now = Date.now())
 	if (handle === undefined) return;
 	const applied = applyCardEvent(handle.state, event, now);
 	if (applied === undefined) return;
-	if (!cardChanged(handle.state, applied.state) && applied.notify === undefined) return;
+	const nextState = withModelRoute(applied.state, handle);
+	if (!cardChanged(handle.state, nextState) && applied.notify === undefined) return;
 
-	handle.state = applied.state;
+	handle.state = nextState;
 
 	try {
 		const port = handle.port ?? (handle.token ? slackCardPort(handle.token) : undefined);
 		if (port !== undefined) {
-			const rendered = renderRunCard(applied.state, now);
-			if (applied.state.messageTs) {
+			const rendered = renderRunCard(nextState, now);
+			if (nextState.messageTs) {
 				await port.update({
 					channel: handle.channelId,
-					ts: applied.state.messageTs,
+					ts: nextState.messageTs,
 					text: rendered.text,
 					blocks: rendered.blocks,
 				});
@@ -149,7 +160,7 @@ export async function publishCardEvent(event: RoutedCardEvent, now = Date.now())
 					text: rendered.text,
 					blocks: rendered.blocks,
 				});
-				handle.state = { ...applied.state, messageTs: posted.ts };
+				handle.state = { ...nextState, messageTs: posted.ts };
 			}
 			if (applied.notify !== undefined && handle.state.notifyPosted !== true) {
 				await port.notify({
@@ -252,7 +263,10 @@ export function renderRunCard(
 ): { text: string; blocks: SlackBlock[] } {
 	const statusLabel = statusText(state.status);
 	const elapsed = formatElapsed(now - state.startedAt);
-	const text = `${statusLabel} · ${state.step} · ${elapsed}`;
+	const route = formatModelRoute(state);
+	const text = route
+		? `${statusLabel} · ${state.step} · ${elapsed} · ${route}`
+		: `${statusLabel} · ${state.step} · ${elapsed}`;
 	const links: string[] = [];
 	if (state.branchUrl) links.push(`<${state.branchUrl}|branch>`);
 	if (state.prUrl) links.push(`<${state.prUrl}|pull request>`);
@@ -265,13 +279,33 @@ export function renderRunCard(
 			},
 		},
 	];
-	if (links.length > 0) {
+	const contextBits: string[] = [];
+	if (route) contextBits.push(escapeMrkdwn(route));
+	if (links.length > 0) contextBits.push(links.join('  ·  '));
+	if (contextBits.length > 0) {
 		blocks.push({
 			type: 'context',
-			elements: [{ type: 'mrkdwn', text: links.join('  ·  ') }],
+			elements: [{ type: 'mrkdwn', text: contextBits.join('  ·  ') }],
 		});
 	}
 	return { text, blocks };
+}
+
+function withModelRoute(state: RunCardState, handle: CardHandle): RunCardState {
+	if (handle.model === undefined && handle.thinkingLevel === undefined) return state;
+	return {
+		...state,
+		model: handle.model ?? state.model,
+		thinkingLevel: handle.thinkingLevel ?? state.thinkingLevel,
+	};
+}
+
+export function formatModelRoute(
+	state: Pick<RunCardState, 'model' | 'thinkingLevel'>,
+): string | undefined {
+	if (state.model === undefined) return undefined;
+	if (state.thinkingLevel === undefined) return state.model;
+	return `${state.model} · thinking ${state.thinkingLevel}`;
 }
 
 export function formatElapsed(ms: number): string {
@@ -379,7 +413,9 @@ function cardChanged(prev: RunCardState | null, next: RunCardState): boolean {
 		prev.status !== next.status ||
 		prev.step !== next.step ||
 		prev.branchUrl !== next.branchUrl ||
-		prev.prUrl !== next.prUrl
+		prev.prUrl !== next.prUrl ||
+		prev.model !== next.model ||
+		prev.thinkingLevel !== next.thinkingLevel
 	);
 }
 

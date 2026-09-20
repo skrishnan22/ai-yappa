@@ -6,6 +6,7 @@ import {
 	enqueueCardEvent,
 	formatElapsed,
 	publishCardEvent,
+	formatModelRoute,
 	renderRunCard,
 	type CardEvent,
 	type RoutedCardEvent,
@@ -213,6 +214,31 @@ describe('renderRunCard', () => {
 		expect(JSON.stringify(rendered.blocks)).toContain('1m 5s');
 		expect(JSON.stringify(rendered.blocks)).toContain('pull request');
 	});
+
+	test('shows model and thinking level in the context block', () => {
+		const rendered = renderRunCard(
+			working({
+				startedAt: 0,
+				model: 'opencode-go/deepseek-v4-flash',
+				thinkingLevel: 'medium',
+			}),
+			1_000,
+		);
+		expect(rendered.text).toContain('opencode-go/deepseek-v4-flash · thinking medium');
+		expect(JSON.stringify(rendered.blocks)).toContain(
+			'opencode-go/deepseek-v4-flash · thinking medium',
+		);
+	});
+});
+
+describe('formatModelRoute', () => {
+	test('formats model alone or with thinking level', () => {
+		expect(formatModelRoute({ model: 'opencode-go/x' })).toBe('opencode-go/x');
+		expect(formatModelRoute({ model: 'opencode-go/x', thinkingLevel: 'high' })).toBe(
+			'opencode-go/x · thinking high',
+		);
+		expect(formatModelRoute({})).toBeUndefined();
+	});
 });
 
 describe('formatElapsed', () => {
@@ -225,6 +251,34 @@ describe('formatElapsed', () => {
 });
 
 describe('publishCardEvent', () => {
+	test('stamps model route from bindRunCard onto the posted card', async () => {
+		const posts: Array<{ text: string; blocks: unknown }> = [];
+		const port: SlackCardPort = {
+			async post(args) {
+				posts.push({ text: args.text, blocks: args.blocks });
+				return { ts: 'card.ts' };
+			},
+			async update() {},
+			async notify() {},
+		};
+		const persisted: RunCardState[] = [];
+		bindRunCard({
+			instanceId: 'conversation-1',
+			channelId: 'C1',
+			threadTs: '1.2',
+			state: null,
+			model: 'opencode-go/deepseek-v4-flash',
+			thinkingLevel: 'medium',
+			persist(state) {
+				persisted.push(state);
+			},
+			port,
+		});
+		await publishCardEvent(routed({ type: 'submission_running', submissionId: 'sub-1' }), 1_000);
+		expect(posts[0]?.text).toContain('opencode-go/deepseek-v4-flash · thinking medium');
+		expect(persisted.at(-1)?.model).toBe('opencode-go/deepseek-v4-flash');
+		expect(persisted.at(-1)?.thinkingLevel).toBe('medium');
+	});
 	test('does not route a new conversation event through the previously bound thread', async () => {
 		const firstThreadPosts: unknown[] = [];
 		const secondThreadPosts: unknown[] = [];
