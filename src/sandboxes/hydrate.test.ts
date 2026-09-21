@@ -232,4 +232,12 @@ describe('coworkerInstructions', () => {
 		expect(prompt).toMatch(/do not intentionally reissue an equivalent effectful call/i);
 		expect(prompt).toMatch(/explain the ambiguity in the Slack thread/i);
 	});
+
+	test('uses Langfuse traces for explicit review of completed runs only', () => {
+		const prompt = coworkerInstructions('https://github.com/skrishnan22/codevil.git');
+		expect(prompt).toMatch(/only when the Slack request explicitly asks/i);
+		expect(prompt).toMatch(/completed prior runs/i);
+		expect(prompt).toMatch(/untrusted historical evidence/i);
+		expect(prompt).toMatch(/diagnose from trace evidence before editing/i);
+	});
 });

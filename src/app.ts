@@ -3,10 +3,10 @@ import { instrument } from '@flue/runtime';
 import { createSlackChannelForEnv } from './channels/slack.ts';
 import { loadServerEnv } from './env.ts';
 
-// Keep prompts, tool arguments, and tool results out of production traces.
+// Capture full agent content for the single-user observability pilot.
 if (process.env.NODE_ENV !== 'test') {
 	const { createCloudflareTracing } = await import('@flue/runtime/cloudflare');
-	instrument(createCloudflareTracing({ content: false }));
+	instrument(createCloudflareTracing());
 }
 
 const app = new Hono();
