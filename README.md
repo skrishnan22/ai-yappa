@@ -25,11 +25,15 @@ GITHUB_APP_PRIVATE_KEY=
 GITHUB_APP_INSTALLATION_ID=
 CLOUDFLARE_MCP_API_TOKEN=
 HONEYCOMB_MCP_API_TOKEN=
+LANGFUSE_MCP_BASIC_AUTH=
 ```
 
 `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` are optional. If both are set, hydration configures that identity in the cloned repo (GitHub App bot: `{slug}[bot]` / `{id}+{slug}[bot]@users.noreply.github.com`). If neither is set, commits would otherwise be `root` — do not guess. If only one is set, boot fails.
 
 `CLOUDFLARE_MCP_API_TOKEN` and `HONEYCOMB_MCP_API_TOKEN` are optional catalog auth for the Cloudflare and Honeycomb MCP rows (see [MCP Integration Catalog](#mcp-integration-catalog)). They are not part of the fixed boot schema; leave a value empty to skip that server. Do not name the Cloudflare MCP secret `CLOUDFLARE_API_TOKEN` — Wrangler uses that variable to authenticate CLI calls.
+
+`LANGFUSE_MCP_BASIC_AUTH` is the base64 encoding of the US project's
+`public-key:secret-key`. It is optional; leave it empty to skip Langfuse trace analysis.
 
 GitHub tools require `GITHUB_APP_ID`, the RSA `.pem` GitHub downloads for `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_APP_INSTALLATION_ID`. PEM values may use `\n` in `.dev.vars`. Install the App only on the enrolled pilot repository. Its minimum application permissions are **Contents: Read and write**, **Pull requests: Read and write**, and **Issues: Read-only** (GitHub grants metadata read access automatically); do not grant administration, workflows/actions, deployments, secrets, or merge bypass.
 
@@ -45,7 +49,7 @@ cp .env .dev.vars
 
 ## MCP Integration Catalog
 
-Remote MCP servers are listed in `src/integrations/mcp-catalog.ts` and mounted on Coworker via Flue `useMcpConnection`. Auth is a deployment Worker secret (Bearer). Neither the model nor Slack input may choose a server URL, secret name, or optional policy.
+Remote MCP servers are listed in `src/integrations/mcp-catalog.ts` and mounted on Coworker via Flue `useMcpConnection`. Auth is a deployment Worker secret (Bearer by default, or Basic for a reviewed catalog row). Neither the model nor Slack input may choose a server URL, secret name, tool allowlist, or optional policy.
 
 To add a server:
 
@@ -54,7 +58,7 @@ To add a server:
 3. Append `{ name, url, authEnv: 'THAT_TOKEN', optional: true }` to `INTEGRATION_CATALOG`.
 4. Redeploy (or restart local). The next Coworker submission resolves the secret at render, connects, discovers tools, and mounts them as `mcp__<name>__<tool>`.
 
-The shipped catalog includes optional Cloudflare MCP (`https://mcp.cloudflare.com/mcp`, `CLOUDFLARE_MCP_API_TOKEN`) and optional Honeycomb MCP (`https://mcp.honeycomb.io/mcp`, `HONEYCOMB_MCP_API_TOKEN`). Honeycomb needs a Management API key in `KEY_ID:SECRET_KEY` form with Model Context Protocol and Environments read scopes; prefer read-only for pilots, and do not reuse the ingest key used for Workers Observability destinations. A missing optional secret skips only that connection and logs a credential-free warning; Slack, native GitHub tools, and the sandbox still work. Required rows (`optional: false`) fail before the model runs and name the missing env key, never its value. Reusable MCP tokens never enter Daytona; authenticated `wrangler` / `gh` in the sandbox stay rejected. Native `create_working_branch` / `open_pull_request` / `checkpoint_working_branch` remain the GitHub App Credential Proxy path.
+The shipped catalog includes optional Cloudflare MCP (`https://mcp.cloudflare.com/mcp`, `CLOUDFLARE_MCP_API_TOKEN`), optional Honeycomb MCP (`https://mcp.honeycomb.io/mcp`, `HONEYCOMB_MCP_API_TOKEN`), and Langfuse US MCP (`https://us.cloud.langfuse.com/api/public/mcp`, `LANGFUSE_MCP_BASIC_AUTH`). Honeycomb needs a Management API key in `KEY_ID:SECRET_KEY` form with Model Context Protocol and Environments read scopes; prefer read-only for pilots, and do not reuse the ingest key used for Workers Observability destinations. Langfuse mounts only read tools for observations, metrics, scores, and health. Coworker uses them only when the Slack request explicitly asks to analyze or improve a completed run. A missing optional secret skips only that connection and logs a credential-free warning; Slack, native GitHub tools, and the sandbox still work. Required rows (`optional: false`) fail before the model runs and name the missing env key, never its value. Reusable MCP tokens never enter Daytona; authenticated `wrangler` / `gh` in the sandbox stay rejected. Native `create_working_branch` / `open_pull_request` / `checkpoint_working_branch` remain the GitHub App Credential Proxy path.
 
 Do not paste real secret values into git, chat, or logs.
 
@@ -120,20 +124,34 @@ A threaded reply that reflects work in the already-cloned repo (not clone/`ls` a
 npm run deploy
 ```
 
-Use a Cloudflare account that is not the Codevil account. `npx wrangler secret put OPENCODE_API_KEY` (and the Slack/Daytona/GitHub secrets). Optional catalog secrets such as `CLOUDFLARE_MCP_API_TOKEN` and `HONEYCOMB_MCP_API_TOKEN` use the same command. If `CLOUDFLARE_API_TOKEN` is set in the shell (or `.env`) to an MCP-scoped token, unset it for Wrangler commands so the CLI can use `wrangler login` or a token with **Workers Scripts Write**. Do not put secrets in git.
+Use a Cloudflare account that is not the Codevil account. `npx wrangler secret put OPENCODE_API_KEY` (and the Slack/Daytona/GitHub secrets). Optional catalog secrets such as `CLOUDFLARE_MCP_API_TOKEN`, `HONEYCOMB_MCP_API_TOKEN`, and `LANGFUSE_MCP_BASIC_AUTH` use the same command. If `CLOUDFLARE_API_TOKEN` is set in the shell (or `.env`) to an MCP-scoped token, unset it for Wrangler commands so the CLI can use `wrangler login` or a token with **Workers Scripts Write**. Do not put secrets in git.
 
 ## Observability
 
 The Worker uses Cloudflare's native Workers Logs and Workers Traces. Flue provides the
 `invoke_agent`, `chat`, and `execute_tool` spans automatically; `src/app.ts` installs
-`createCloudflareTracing({ content: false })`, so production traces do not contain
-prompts, tool arguments, or tool results. The small `slack_admission` log is the only
-application-owned semantic event; it contains IDs and the admission decision, never
-Slack message text or secrets.
+`createCloudflareTracing()` with full content for this single-user pilot. Prompts,
+responses, tool arguments, and tool results are therefore exported to both Honeycomb
+and Langfuse. The small `slack_admission` log remains the only application-owned
+semantic event.
 
-The checked-in Wrangler config intentionally leaves `destinations` empty. Destination
-names and credentials belong to the Cloudflare account, not source control. To export
-to Honeycomb:
+Destination credentials belong to the Cloudflare account, not source control. The
+checked-in Wrangler config expects the existing `honeycomb-logs` and
+`honeycomb-traces` destinations plus `langfuse-us-traces`.
+
+To add Langfuse without replacing Honeycomb:
+
+1. Create a project at `https://us.cloud.langfuse.com` and copy its public and secret
+   project keys.
+2. Base64-encode the literal `public-key:secret-key` pair. Store that encoded value as
+   the Worker secret `LANGFUSE_MCP_BASIC_AUTH` and in local `.env` / `.dev.vars`.
+3. In Cloudflare Dashboard → Workers Observability → Destinations, create a **Traces**
+   destination named `langfuse-us-traces` with endpoint
+   `https://us.cloud.langfuse.com/api/public/otel/v1/traces`.
+4. Add destination headers `Authorization: Basic <encoded-value>` and
+   `x-langfuse-ingestion-version: 4`, then redeploy.
+
+The existing Honeycomb destinations remain configured as follows:
 
 1. In Honeycomb, create an ingest API key for the target environment with permission
    to create services/datasets. Store it only in the Cloudflare destination settings.
@@ -143,8 +161,8 @@ to Honeycomb:
    the Honeycomb key.
 3. Add a **Logs** destination named `honeycomb-logs`, endpoint
    `https://api.honeycomb.io/v1/logs`, with the same custom header.
-4. After saving both destinations, add their exact names to `wrangler.jsonc` and
-   redeploy. The resulting export block is:
+4. After saving both destinations, keep their exact names in `wrangler.jsonc`. The
+   resulting export block is:
 
 ```jsonc
 "observability": {
@@ -157,16 +175,16 @@ to Honeycomb:
   },
   "traces": {
     "enabled": true,
-    "destinations": ["honeycomb-traces"],
+    "destinations": ["honeycomb-traces", "langfuse-us-traces"],
     "head_sampling_rate": 1,
     "persist": true
   }
 }
 ```
 
-Start at 100% sampling while traffic is low. Confirm that both destinations receive
-logs and traces, then set `persist: false` for each section if Honeycomb is the system
-of record and Cloudflare dashboard retention is not needed. Cloudflare OTLP export is
+Start at 100% sampling while traffic is low. Confirm that Honeycomb receives logs and
+traces and Langfuse receives traces, then set `persist: false` for each section if
+Cloudflare dashboard retention is not needed. Cloudflare OTLP export is
 currently beta, requires Workers Paid or higher, and its pricing/availability can
 change; check the account's current Workers Observability terms before enabling it.
 As of the current beta terms, Workers Paid includes 10 million trace events and 10

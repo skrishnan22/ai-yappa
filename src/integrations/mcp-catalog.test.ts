@@ -12,6 +12,13 @@ const cloudflare: CatalogEntry = {
 	optional: true,
 };
 
+const honeycomb: CatalogEntry = {
+	name: 'honeycomb',
+	url: 'https://mcp.honeycomb.io/mcp',
+	authEnv: 'HONEYCOMB_MCP_API_TOKEN',
+	optional: true,
+};
+
 const requiredLinear: CatalogEntry = {
 	name: 'linear',
 	url: 'https://mcp.linear.app/mcp',
@@ -19,22 +26,29 @@ const requiredLinear: CatalogEntry = {
 	optional: false,
 };
 
+const langfuse: CatalogEntry = {
+	name: 'langfuse',
+	url: 'https://us.cloud.langfuse.com/api/public/mcp',
+	authEnv: 'LANGFUSE_MCP_BASIC_AUTH',
+	authScheme: 'basic',
+	tools: [
+		'getHealth',
+		'listObservations',
+		'getObservation',
+		'getObservationFieldSchema',
+		'getObservationFilterSchema',
+		'getObservationFilterValues',
+		'queryMetrics',
+		'getMetricsSchema',
+		'listScores',
+		'getScore',
+	],
+	optional: true,
+};
+
 describe('INTEGRATION_CATALOG', () => {
-	test('ships reviewed optional Cloudflare and Honeycomb rows', () => {
-		expect(INTEGRATION_CATALOG).toEqual([
-			{
-				name: 'cloudflare',
-				url: 'https://mcp.cloudflare.com/mcp',
-				authEnv: 'CLOUDFLARE_MCP_API_TOKEN',
-				optional: true,
-			},
-			{
-				name: 'honeycomb',
-				url: 'https://mcp.honeycomb.io/mcp',
-				authEnv: 'HONEYCOMB_MCP_API_TOKEN',
-				optional: true,
-			},
-		]);
+	test('ships reviewed optional Cloudflare, Honeycomb, and read-only Langfuse rows', () => {
+		expect(INTEGRATION_CATALOG).toEqual([cloudflare, honeycomb, langfuse]);
 	});
 });
 
@@ -52,7 +66,35 @@ describe('resolveIntegrationCatalog', () => {
 				name: 'cloudflare',
 				url: 'https://mcp.cloudflare.com/mcp',
 				optional: true,
-				auth: token,
+				authorization: { kind: 'bearer', value: token },
+			},
+		]);
+	});
+
+	test('resolves Langfuse Basic auth and preserves its read-only tool allowlist', () => {
+		const result = resolveIntegrationCatalog([langfuse], {
+			LANGFUSE_MCP_BASIC_AUTH: 'encoded-project-credentials',
+		});
+
+		expect(result.warnings).toEqual([]);
+		expect(result.connections).toEqual([
+			{
+				name: 'langfuse',
+				url: 'https://us.cloud.langfuse.com/api/public/mcp',
+				optional: true,
+				authorization: { kind: 'basic', value: 'encoded-project-credentials' },
+				tools: [
+					'getHealth',
+					'listObservations',
+					'getObservation',
+					'getObservationFieldSchema',
+					'getObservationFilterSchema',
+					'getObservationFilterValues',
+					'queryMetrics',
+					'getMetricsSchema',
+					'listScores',
+					'getScore',
+				],
 			},
 		]);
 	});
@@ -81,7 +123,7 @@ describe('resolveIntegrationCatalog', () => {
 				name: 'linear',
 				url: 'https://mcp.linear.app/mcp',
 				optional: false,
-				auth: 'lin-ok',
+				authorization: { kind: 'bearer', value: 'lin-ok' },
 			},
 		]);
 		expect(result.warnings).toEqual([

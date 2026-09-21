@@ -115,11 +115,11 @@ A trusted in-process integration boundary that authorizes named operations from 
 _Avoid_: Open proxy, credential vending service, universal API gateway, Integration Catalog
 
 **Integration Catalog**:
-The deploy-time list of remote MCP servers a Slack Agent Deployment mounts on the Coworker. Each entry names a server URL and the deployment secret used as bearer auth.
+The deploy-time list of remote MCP servers a Slack Agent Deployment mounts on the Coworker. Each entry names a server URL, deployment secret, authentication scheme, and optional fixed tool allowlist.
 _Avoid_: Tool marketplace, plugin registry, Credential Proxy
 
 **MCP Connection**:
-A Flue-declared remote MCP server whose discovered tools the model may call. Authentication is a deployment-scoped bearer token held in Worker secrets, not a Sandbox env or per-user OAuth grant.
+A Flue-declared remote MCP server whose discovered or explicitly allowlisted tools the model may call. Authentication is deployment-scoped material held in Worker secrets, not a Sandbox env or per-user OAuth grant.
 _Avoid_: Sandbox CLI, Credential Proxy operation, personal integration
 
 **Sandbox Lease**:

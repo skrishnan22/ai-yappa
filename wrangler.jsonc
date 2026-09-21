@@ -15,7 +15,7 @@
 		},
 		"traces": {
 			"enabled": true,
-			"destinations": ["honeycomb-traces"],
+			"destinations": ["honeycomb-traces", "langfuse-us-traces"],
 			"head_sampling_rate": 1,
 			"persist": true,
 		},

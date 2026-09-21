@@ -29,6 +29,8 @@ const catalogEntrySchema = v.object({
 	name: nonEmpty,
 	url: httpUrl,
 	authEnv: nonEmpty,
+	authScheme: v.optional(v.picklist(['bearer', 'basic']), 'bearer'),
+	tools: v.optional(v.array(nonEmpty)),
 	/** Defaults to true when omitted. */
 	optional: v.optional(v.boolean(), true),
 });
@@ -51,14 +53,33 @@ export const INTEGRATION_CATALOG: readonly CatalogEntry[] = [
 		authEnv: 'HONEYCOMB_MCP_API_TOKEN',
 		optional: true,
 	},
+	{
+		name: 'langfuse',
+		url: 'https://us.cloud.langfuse.com/api/public/mcp',
+		authEnv: 'LANGFUSE_MCP_BASIC_AUTH',
+		authScheme: 'basic',
+		tools: [
+			'getHealth',
+			'listObservations',
+			'getObservation',
+			'getObservationFieldSchema',
+			'getObservationFilterSchema',
+			'getObservationFilterValues',
+			'queryMetrics',
+			'getMetricsSchema',
+			'listScores',
+			'getScore',
+		],
+		optional: true,
+	},
 ];
 
 export type ResolvedMcpDefinition = {
 	name: string;
 	url: string;
 	optional: boolean;
-	/** Bearer token value for Flue `auth` (sent as Authorization: Bearer …). */
-	auth: string;
+	tools?: string[];
+	authorization: { kind: 'bearer'; value: string } | { kind: 'basic'; value: string };
 };
 
 export type ResolveCatalogResult = {
@@ -122,12 +143,16 @@ export function resolveIntegrationCatalog(
 			throw new Error(`[mcp-catalog] required MCP "${entry.name}" missing secret ${entry.authEnv}`);
 		}
 
-		connections.push({
+		const connection: ResolvedMcpDefinition = {
 			name: entry.name,
 			url: entry.url,
 			optional: entry.optional,
-			auth: secret,
-		});
+			authorization: { kind: entry.authScheme, value: secret },
+		};
+
+		if (entry.tools) connection.tools = entry.tools;
+
+		connections.push(connection);
 	}
 
 	return { connections, warnings };

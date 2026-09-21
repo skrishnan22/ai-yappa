@@ -112,10 +112,16 @@ export function Coworker(props: { id: string }) {
 	}
 
 	for (const connection of mcp.connections) {
+		const credentials =
+			connection.authorization.kind === 'bearer'
+				? { auth: connection.authorization.value }
+				: { headers: { Authorization: `Basic ${connection.authorization.value}` } };
+
 		useMcpConnection({
 			name: connection.name,
 			url: connection.url,
-			auth: connection.auth,
+			...credentials,
+			tools: connection.tools,
 			optional: connection.optional,
 		});
 	}

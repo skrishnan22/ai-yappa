@@ -2,6 +2,10 @@
 
 Status: accepted
 
+Amendment (2026-09-20): catalog rows may select Basic authentication and a fixed tool
+allowlist. The Langfuse row uses both so Coworker can inspect completed traces while
+Langfuse's write tools remain unmounted. Existing Bearer/open-mount rows are unchanged.
+
 Ease of adding integrations outweighs per-tool proxy gating for remote MCP servers. The Coworker mounts a deploy-time **Integration Catalog** of MCP URLs via Flue `useMcpConnection`, authenticates with **deployment Worker secrets** (one shared deployment identity), and exposes every discovered tool to the model. For MCP calls, the server's tool surface and the provider-enforced credential scopes are the action boundary; the harness adds no per-operation authorization layer. The GitHub App **Credential Proxy** remains the existing trusted native path for branch/PR/checkpoint operations; open MCP does not replace it.
 
 ## Context
