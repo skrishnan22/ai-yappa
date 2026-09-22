@@ -4,6 +4,7 @@ export {
 	defaultBackoffMs,
 	retryAfterMsFor,
 	readRetryAfterMs,
+	formatProviderError,
 } from './client.ts';
 
 export { createExaProvider } from './exa.ts';

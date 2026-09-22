@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
 	defaultBackoffMs,
+	formatProviderError,
 	parseRetryAfterMs,
 	postProviderJson,
 	readRetryAfterMs,
@@ -39,9 +40,29 @@ describe('readRetryAfterMs', () => {
 });
 
 describe('defaultBackoffMs', () => {
-	test('uses shorter Exa rate-limit cool-off than Parallel', () => {
+	test('uses Exa/Parallel rate-limit defaults and long auth cool-off', () => {
 		expect(defaultBackoffMs('exa', 'rate_limit')).toBe(2_000);
 		expect(defaultBackoffMs('parallel', 'rate_limit')).toBe(60_000);
+		expect(defaultBackoffMs('exa', 'auth')).toBe(60 * 60 * 1000);
+	});
+});
+
+describe('formatProviderError', () => {
+	test('includes Exa tag and requestId from the error body', () => {
+		const message = formatProviderError(
+			'exa',
+			402,
+			JSON.stringify({
+				requestId: 'req_123',
+				error: 'out of credits',
+				tag: 'NO_MORE_CREDITS',
+			}),
+		);
+
+		expect(message).toContain('exa HTTP 402');
+		expect(message).toContain('tag=NO_MORE_CREDITS');
+		expect(message).toContain('requestId=req_123');
+		expect(message).toContain('out of credits');
 	});
 });
 
@@ -82,6 +103,65 @@ describe('postProviderJson', () => {
 					.mockResolvedValue(new Response('not-json', { status: 200 })),
 			}),
 		).rejects.toMatchObject({ reason: 'upstream', provider: 'parallel' });
+	});
+
+	test('fails over on 401 and 402 with Exa tags in the message', async () => {
+		await expect(
+			postProviderJson({
+				provider: 'exa',
+				url: 'https://api.exa.ai/search',
+				apiKey: 'k',
+				body: { query: 'x' },
+				fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(
+					new Response(JSON.stringify({ tag: 'INVALID_API_KEY', error: 'bad key' }), {
+						status: 401,
+						headers: { 'content-type': 'application/json' },
+					}),
+				),
+			}),
+		).rejects.toMatchObject({
+			reason: 'auth',
+			message: expect.stringContaining('tag=INVALID_API_KEY'),
+		});
+
+		await expect(
+			postProviderJson({
+				provider: 'exa',
+				url: 'https://api.exa.ai/search',
+				apiKey: 'k',
+				body: { query: 'x' },
+				fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(
+					new Response(JSON.stringify({ tag: 'NO_MORE_CREDITS', error: 'top up' }), {
+						status: 402,
+						headers: { 'content-type': 'application/json' },
+					}),
+				),
+			}),
+		).rejects.toMatchObject({
+			reason: 'credits',
+			message: expect.stringContaining('tag=NO_MORE_CREDITS'),
+		});
+	});
+
+	test('does not failover on 400 validation errors', async () => {
+		await expect(
+			postProviderJson({
+				provider: 'exa',
+				url: 'https://api.exa.ai/search',
+				apiKey: 'k',
+				body: { query: 'x' },
+				fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(
+					new Response(
+						JSON.stringify({
+							tag: 'INVALID_REQUEST_BODY',
+							error: 'bad body',
+							requestId: 'abc',
+						}),
+						{ status: 400, headers: { 'content-type': 'application/json' } },
+					),
+				),
+			}),
+		).rejects.toThrow(/INVALID_REQUEST_BODY/);
 	});
 
 	test('honors Retry-After when present', async () => {

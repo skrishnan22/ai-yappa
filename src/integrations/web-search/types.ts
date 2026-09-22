@@ -23,7 +23,7 @@ export type FetchResult = {
 	fetchResults: JsonValue;
 };
 
-export type CooldownReason = 'rate_limit' | 'credits' | 'upstream';
+export type CooldownReason = 'rate_limit' | 'credits' | 'upstream' | 'auth';
 
 /** Failover-worthy provider failure; router may try the next provider. */
 export class ProviderUnavailableError extends Error {

@@ -3,10 +3,18 @@ import { jsonValueSchema, type JsonObject, type JsonValue } from '../../json.ts'
 import { ProviderUnavailableError, type CooldownReason, type ProviderId } from './types.ts';
 
 /**
- * POST JSON to a search provider.
- * - 2xx + valid JSON → body
- * - 402 / 429 / 5xx / transport / invalid JSON → ProviderUnavailableError (router may failover)
- * - other 4xx → plain Error (no failover)
+ * Provider POST helper.
+ *
+ * Failover (ProviderUnavailableError → try next provider), aligned with
+ * https://exa.ai/docs/admin/error-codes (branch on HTTP status first):
+ * - 401 auth → failover (bad/missing key for this provider)
+ * - 402 credits / budget → failover
+ * - 429 rate limit → failover (honor Retry-After when present)
+ * - 5xx including 500/503/504 → failover
+ * - transport / non-JSON 2xx → failover
+ *
+ * No failover (surface to the model): 400 validation, 403 forbidden/policy,
+ * 404, 409, 422, etc.
  */
 export async function postProviderJson(args: {
 	provider: ProviderId;
@@ -54,6 +62,7 @@ export async function postProviderJson(args: {
 		return body;
 	}
 
+	const detail = formatProviderError(args.provider, response.status, text);
 	const reason = failoverReason(response.status);
 
 	if (reason) {
@@ -61,16 +70,20 @@ export async function postProviderJson(args: {
 			provider: args.provider,
 			reason,
 			retryAfterMs: retryAfterMsFor(args.provider, reason, response),
-			message: `${args.provider} unavailable (${reason}, HTTP ${response.status})`,
+			message: detail,
 		});
 	}
 
-	throw new Error(
-		`${args.provider} request failed: HTTP ${response.status}${text ? ` ${text.slice(0, 200)}` : ''}`,
-	);
+	throw new Error(detail);
 }
 
+/**
+ * Exa docs: branch on status first; tags are open-ended detail.
+ * @see https://exa.ai/docs/admin/error-codes
+ */
 function failoverReason(status: number): CooldownReason | undefined {
+	if (status === 401) return 'auth';
+
 	if (status === 402) return 'credits';
 
 	if (status === 429) return 'rate_limit';
@@ -80,9 +93,58 @@ function failoverReason(status: number): CooldownReason | undefined {
 	return undefined;
 }
 
+const providerErrorSchema = v.object({
+	requestId: v.optional(v.string()),
+	tag: v.optional(v.string()),
+	error: v.optional(
+		v.union([
+			v.string(),
+			v.object({
+				message: v.optional(v.string()),
+				ref_id: v.optional(v.string()),
+			}),
+		]),
+	),
+	message: v.optional(v.string()),
+	type: v.optional(v.string()),
+});
+
+/** Build a compact message: status + Exa tag/requestId (or Parallel message) when present. */
+export function formatProviderError(provider: ProviderId, status: number, text: string): string {
+	const parts = [`${provider} HTTP ${status}`];
+	const body = parseJsonBody(text);
+	const parsed = body === undefined ? undefined : v.safeParse(providerErrorSchema, body);
+
+	if (parsed?.success) {
+		const { tag, requestId, error, message } = parsed.output;
+
+		if (tag) parts.push(`tag=${tag}`);
+
+		if (requestId) parts.push(`requestId=${requestId}`);
+
+		let errorText: string | undefined;
+
+		if (v.is(v.string(), error)) {
+			errorText = error;
+		} else if (
+			v.is(v.object({ message: v.optional(v.string()), ref_id: v.optional(v.string()) }), error)
+		) {
+			errorText = error.message ?? error.ref_id;
+		}
+
+		if (errorText) parts.push(errorText);
+		else if (message) parts.push(message);
+	} else if (text.trim()) {
+		parts.push(text.trim().slice(0, 200));
+	}
+
+	return parts.join(' | ');
+}
+
 /**
  * Prefer a retry-delay header when present; otherwise provider defaults.
- * `Headers.get` is already case-insensitive; we also probe common aliases.
+ * Exa 429: wait for Retry-After when present, else backoff.
+ * `Headers.get` is case-insensitive; we also probe common aliases.
  */
 export function retryAfterMsFor(
 	provider: ProviderId,
@@ -146,25 +208,20 @@ export function readRetryAfterMs(headers: Headers, now = Date.now()): number | u
 
 /** Provider-specific defaults when `Retry-After` is absent. */
 export function defaultBackoffMs(provider: ProviderId, reason: CooldownReason): number {
-	switch (provider) {
-		case 'exa': {
-			if (reason === 'rate_limit') return 2_000;
-
-			if (reason === 'credits') return 24 * 60 * 60 * 1000;
-
+	switch (reason) {
+		case 'auth':
+			// Don't hammer a bad key; try the other provider for a while.
+			return 60 * 60 * 1000;
+		case 'credits':
+			return 24 * 60 * 60 * 1000;
+		case 'rate_limit':
+			// Exa ~10 QPS → short cool-off; Parallel Search is per-minute → longer.
+			return provider === 'exa' ? 2_000 : 60_000;
+		case 'upstream':
+			// Exa 503 SERVICE_OVERLOADED: retry with backoff (independent of request rate).
 			return 5_000;
-		}
-
-		case 'parallel': {
-			if (reason === 'rate_limit') return 60_000;
-
-			if (reason === 'credits') return 24 * 60 * 60 * 1000;
-
-			return 5_000;
-		}
-
 		default: {
-			const _exhaustive: never = provider;
+			const _exhaustive: never = reason;
 
 			return _exhaustive;
 		}

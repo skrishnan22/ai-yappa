@@ -142,14 +142,14 @@ export function createWebSearchRouter(args: {
 
 				return { ok: true, value };
 			} catch (error) {
-				// Rate limit / credits / 5xx / transport → cool down and try next.
+				// Auth / credits / rate limit / 5xx / transport → cool down and try next.
 				if (error instanceof ProviderUnavailableError) {
 					markUnavailable(error, now());
 					failures.push(`${provider.id}: ${error.message}`);
 					continue;
 				}
 
-				// Bad request / auth / unexpected → stop; surface to the model.
+				// Validation / forbidden / unexpected → stop; surface to the model.
 				return {
 					ok: false,
 					error: error instanceof Error ? error.message : `${op} failed`,
