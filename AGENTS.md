@@ -24,7 +24,7 @@ Implementation source of truth: `SLACK_AGENT_SPEC.md`. Milestone scope: `SLACK_A
 - `npm run check:types` — typecheck.
 - `npm test` — Vitest (`src/**/*.test.ts`).
 - `npm run lint` / `npm run fmt:check` — Oxlint and Oxfmt (also CI).
-- `npm run gitleaks` — secret scan of git history. Pre-commit runs staged lint/format plus `gitleaks:staged`.
+- `npm run gitleaks` — local secret scan of git history (downloads a pinned CLI). Pre-commit runs staged lint/format plus `gitleaks:staged`. CI uses `ghcr.io/gitleaks/gitleaks:v8.30.1`.
 - `npx flue docs search <query>` — search the Flue docs from the terminal (then `flue docs read <path>`).
 - `npx flue add` — list blueprints for adding channels, sandboxes, and databases.
 

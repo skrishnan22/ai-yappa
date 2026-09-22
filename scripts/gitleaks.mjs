@@ -1,4 +1,6 @@
-// Downloads a pinned gitleaks CLI (checksum-verified) and forwards argv.
+// Local-only bootstrap: download a pinned gitleaks CLI (checksum-verified)
+// and forward argv. CI uses ghcr.io/gitleaks/gitleaks:v8.30.1 instead so
+// pull-request scans do not depend on this script.
 // Usage: `node scripts/gitleaks.mjs git --redact --no-banner`
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
