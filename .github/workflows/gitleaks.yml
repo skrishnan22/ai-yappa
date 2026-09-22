@@ -6,8 +6,8 @@ on:
 permissions: {}
 
 # Official MIT CLI image. Do not use gitleaks-action (that wrapper needs a
-# license on org repos). Local pre-commit still uses scripts/gitleaks.mjs so
-# commits do not require a Docker daemon.
+# license on org repos). Local hooks call `gitleaks` on PATH
+# (`brew install gitleaks`).
 jobs:
   gitleaks:
     runs-on: ubuntu-latest

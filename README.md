@@ -6,7 +6,7 @@ Built as a Flue app on the Cloudflare target. Execution is Daytona container San
 
 ## Setup
 
-Requires Node.js 22.22.1 or later (`lint-staged` 17).
+Requires Node.js 22.22.1 or later (`lint-staged` 17) and [gitleaks](https://github.com/gitleaks/gitleaks#installing) 8 on PATH (`brew install gitleaks`).
 
 ```sh
 npm install
