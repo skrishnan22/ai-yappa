@@ -240,4 +240,11 @@ describe('coworkerInstructions', () => {
 		expect(prompt).toMatch(/untrusted historical evidence/i);
 		expect(prompt).toMatch(/diagnose from trace evidence before editing/i);
 	});
+
+	test('mentions web_search and web_fetch as untrusted live evidence', () => {
+		const prompt = coworkerInstructions('https://github.com/skrishnan22/codevil.git');
+		expect(prompt).toMatch(/web_search/);
+		expect(prompt).toMatch(/web_fetch/);
+		expect(prompt).toMatch(/untrusted evidence/);
+	});
 });
