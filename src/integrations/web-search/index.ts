@@ -1,4 +1,9 @@
-export { postProviderJson, parseRetryAfterMs } from './client.ts';
+export {
+	postProviderJson,
+	parseRetryAfterMs,
+	defaultBackoffMs,
+	retryAfterMsFor,
+} from './client.ts';
 
 export { createExaProvider } from './exa.ts';
 

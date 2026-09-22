@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { parseRetryAfterMs } from './client.ts';
+import { defaultBackoffMs, parseRetryAfterMs, postProviderJson } from './client.ts';
 import { createWebSearchRouter, resolveWebSearchProviders } from './router.ts';
 import {
 	ProviderUnavailableError,
@@ -20,6 +20,70 @@ describe('parseRetryAfterMs', () => {
 		expect(parseRetryAfterMs('120')).toBe(120_000);
 		const now = Date.parse('2026-09-22T12:00:00.000Z');
 		expect(parseRetryAfterMs('Tue, 22 Sep 2026 12:00:30 GMT', now)).toBe(30_000);
+	});
+});
+
+describe('defaultBackoffMs', () => {
+	test('uses shorter Exa rate-limit cool-off than Parallel', () => {
+		expect(defaultBackoffMs('exa', 'rate_limit')).toBe(2_000);
+		expect(defaultBackoffMs('parallel', 'rate_limit')).toBe(60_000);
+	});
+});
+
+describe('postProviderJson', () => {
+	test('fails over on 5xx, transport errors, and non-JSON 2xx', async () => {
+		await expect(
+			postProviderJson({
+				provider: 'exa',
+				url: 'https://api.exa.ai/search',
+				apiKey: 'k',
+				body: { query: 'x' },
+				fetchImpl: vi
+					.fn<typeof fetch>()
+					.mockResolvedValue(
+						new Response('oops', { status: 502, headers: { 'content-type': 'text/plain' } }),
+					),
+			}),
+		).rejects.toMatchObject({ reason: 'upstream', provider: 'exa' });
+
+		await expect(
+			postProviderJson({
+				provider: 'exa',
+				url: 'https://api.exa.ai/search',
+				apiKey: 'k',
+				body: { query: 'x' },
+				fetchImpl: vi.fn<typeof fetch>().mockRejectedValue(new Error('ECONNRESET')),
+			}),
+		).rejects.toMatchObject({ reason: 'upstream' });
+
+		await expect(
+			postProviderJson({
+				provider: 'parallel',
+				url: 'https://api.parallel.ai/v1/search',
+				apiKey: 'k',
+				body: { query: 'x' },
+				fetchImpl: vi
+					.fn<typeof fetch>()
+					.mockResolvedValue(new Response('not-json', { status: 200 })),
+			}),
+		).rejects.toMatchObject({ reason: 'upstream', provider: 'parallel' });
+	});
+
+	test('honors Retry-After when present', async () => {
+		await expect(
+			postProviderJson({
+				provider: 'exa',
+				url: 'https://api.exa.ai/search',
+				apiKey: 'k',
+				body: { query: 'x' },
+				fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(
+					new Response('{}', {
+						status: 429,
+						headers: { 'retry-after': '12', 'content-type': 'application/json' },
+					}),
+				),
+			}),
+		).rejects.toMatchObject({ reason: 'rate_limit', retryAfterMs: 12_000 });
 	});
 });
 

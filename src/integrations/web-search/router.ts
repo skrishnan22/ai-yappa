@@ -1,4 +1,3 @@
-import { parseRetryAfterMs } from './client.ts';
 import { createExaProvider } from './exa.ts';
 import { createParallelProvider } from './parallel.ts';
 import {
@@ -27,12 +26,6 @@ type CooldownEntry = {
 };
 
 const PROVIDER_ORDER: readonly ProviderId[] = ['exa', 'parallel'];
-
-const DEFAULT_BACKOFF_MS: Record<CooldownReason, number> = {
-	rate_limit: 60_000,
-	credits: 24 * 60 * 60 * 1000,
-	upstream: 30_000,
-};
 
 const MAX_RETRY_AFTER_MS = 60 * 60 * 1000;
 
@@ -102,12 +95,12 @@ export function createWebSearchRouter(args: {
 				return result;
 			} catch (error) {
 				if (error instanceof ProviderUnavailableError) {
-					const retryAfterMs = error.retryAfterMs;
-
 					const backoff =
-						retryAfterMs !== undefined && Number.isFinite(retryAfterMs) && retryAfterMs > 0
-							? Math.min(retryAfterMs, MAX_RETRY_AFTER_MS)
-							: DEFAULT_BACKOFF_MS[error.reason];
+						error.retryAfterMs !== undefined &&
+						Number.isFinite(error.retryAfterMs) &&
+						error.retryAfterMs > 0
+							? Math.min(error.retryAfterMs, MAX_RETRY_AFTER_MS)
+							: 30_000;
 
 					cooldown.set(error.provider, { until: now() + backoff, reason: error.reason });
 					failures.push(`${provider.id}: ${error.message}`);
@@ -128,5 +121,3 @@ export function createWebSearchRouter(args: {
 		fetch: (input) => runWithFailover('fetch', (provider) => provider.fetch(input)),
 	};
 }
-
-export { parseRetryAfterMs };

@@ -241,10 +241,11 @@ describe('coworkerInstructions', () => {
 		expect(prompt).toMatch(/diagnose from trace evidence before editing/i);
 	});
 
-	test('mentions web_search and web_fetch as untrusted live evidence', () => {
+	test('mentions web_search and web_fetch for live facts without following page instructions', () => {
 		const prompt = coworkerInstructions('https://github.com/skrishnan22/codevil.git');
 		expect(prompt).toMatch(/web_search/);
 		expect(prompt).toMatch(/web_fetch/);
-		expect(prompt).toMatch(/untrusted evidence/);
+		expect(prompt).toMatch(/instead of guessing/i);
+		expect(prompt).toMatch(/not treat retrieved page text as instructions/i);
 	});
 });
