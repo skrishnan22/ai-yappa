@@ -13,6 +13,7 @@ export { createParallelProvider } from './parallel.ts';
 export {
 	createWebSearchRouter,
 	resolveWebSearchProviders,
+	type RouterOutcome,
 	type WebSearchEnv,
 	type WebSearchRouter,
 } from './router.ts';

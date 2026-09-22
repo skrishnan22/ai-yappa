@@ -132,9 +132,10 @@ describe('createWebSearchRouter', () => {
 			cooldown: new Map(),
 		});
 
-		await expect(router.search({ query: 'flue', maxResults: 3 })).resolves.toEqual(
-			searchResult('exa'),
-		);
+		await expect(router.search({ query: 'flue', maxResults: 3 })).resolves.toEqual({
+			ok: true,
+			value: searchResult('exa'),
+		});
 		expect(exaSearch).toHaveBeenCalledOnce();
 		expect(parallelSearch).not.toHaveBeenCalled();
 	});
@@ -165,21 +166,23 @@ describe('createWebSearchRouter', () => {
 			now: () => now,
 		});
 
-		await expect(router.search({ query: 'flue', maxResults: 3 })).resolves.toEqual(
-			searchResult('parallel'),
-		);
+		await expect(router.search({ query: 'flue', maxResults: 3 })).resolves.toEqual({
+			ok: true,
+			value: searchResult('parallel'),
+		});
 		expect(cooldown.get('exa')?.until).toBe(now + 60_000);
 
 		exaSearch.mockClear();
 		parallelSearch.mockClear();
-		await expect(router.search({ query: 'again', maxResults: 3 })).resolves.toEqual(
-			searchResult('parallel'),
-		);
+		await expect(router.search({ query: 'again', maxResults: 3 })).resolves.toEqual({
+			ok: true,
+			value: searchResult('parallel'),
+		});
 		expect(exaSearch).not.toHaveBeenCalled();
 		expect(parallelSearch).toHaveBeenCalledOnce();
 	});
 
-	test('does not failover on ordinary provider errors', async () => {
+	test('returns ok:false on ordinary provider errors without trying Parallel', async () => {
 		const exaSearch = vi.fn<(input: SearchInput) => Promise<SearchResult>>(async () => {
 			throw new Error('exa request failed: bad query');
 		});
@@ -196,7 +199,10 @@ describe('createWebSearchRouter', () => {
 			cooldown: new Map(),
 		});
 
-		await expect(router.search({ query: 'flue', maxResults: 3 })).rejects.toThrow(/bad query/);
+		await expect(router.search({ query: 'flue', maxResults: 3 })).resolves.toEqual({
+			ok: false,
+			error: 'exa request failed: bad query',
+		});
 		expect(parallelSearch).not.toHaveBeenCalled();
 	});
 
@@ -221,9 +227,45 @@ describe('createWebSearchRouter', () => {
 			cooldown: new Map(),
 		});
 
-		await expect(router.fetch({ urls: ['https://example.com'] })).resolves.toEqual(
-			fetchResult('parallel'),
-		);
+		await expect(router.fetch({ urls: ['https://example.com'] })).resolves.toEqual({
+			ok: true,
+			value: fetchResult('parallel'),
+		});
+	});
+
+	test('returns ok:false when every provider is unavailable', async () => {
+		const router = createWebSearchRouter({
+			providers: [
+				stubProvider('exa', {
+					search: vi.fn<(input: SearchInput) => Promise<SearchResult>>(async () => {
+						throw new ProviderUnavailableError({
+							provider: 'exa',
+							reason: 'upstream',
+							message: 'exa down',
+						});
+					}),
+				}),
+				stubProvider('parallel', {
+					search: vi.fn<(input: SearchInput) => Promise<SearchResult>>(async () => {
+						throw new ProviderUnavailableError({
+							provider: 'parallel',
+							reason: 'upstream',
+							message: 'parallel down',
+						});
+					}),
+				}),
+			],
+			cooldown: new Map(),
+		});
+
+		const outcome = await router.search({ query: 'flue', maxResults: 3 });
+
+		expect(outcome.ok).toBe(false);
+
+		if (outcome.ok) throw new Error('expected failure');
+
+		expect(outcome.error).toMatch(/exa down/);
+		expect(outcome.error).toMatch(/parallel down/);
 	});
 });
 
