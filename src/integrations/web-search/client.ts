@@ -81,19 +81,67 @@ function failoverReason(status: number): CooldownReason | undefined {
 }
 
 /**
- * Prefer standard `Retry-After` when present (RFC 9110).
- * Exa and Parallel do not document sending it; fall back to provider defaults.
+ * Prefer a retry-delay header when present; otherwise provider defaults.
+ * `Headers.get` is already case-insensitive; we also probe common aliases.
  */
 export function retryAfterMsFor(
 	provider: ProviderId,
 	reason: CooldownReason,
 	response: Response,
+	now = Date.now(),
 ): number {
-	const fromHeader = parseRetryAfterMs(response.headers.get('retry-after'));
+	const fromHeader = readRetryAfterMs(response.headers, now);
 
 	if (fromHeader !== undefined) return fromHeader;
 
 	return defaultBackoffMs(provider, reason);
+}
+
+/** Delay-style headers (seconds or HTTP-date), then ms-style, then any *retry-after* name. */
+const RETRY_AFTER_SECOND_HEADERS = ['retry-after', 'x-retry-after'] as const;
+
+const RETRY_AFTER_MS_HEADERS = ['retry-after-ms', 'x-retry-after-ms'] as const;
+
+export function readRetryAfterMs(headers: Headers, now = Date.now()): number | undefined {
+	for (const name of RETRY_AFTER_SECOND_HEADERS) {
+		const parsed = parseRetryAfterMs(headers.get(name), now);
+
+		if (parsed !== undefined) return parsed;
+	}
+
+	for (const name of RETRY_AFTER_MS_HEADERS) {
+		const raw = headers.get(name);
+
+		if (!raw) continue;
+
+		const ms = Number(raw.trim());
+
+		if (Number.isFinite(ms) && ms >= 0) return ms;
+	}
+
+	const knownSeconds = new Set<string>(RETRY_AFTER_SECOND_HEADERS);
+	const knownMs = new Set<string>(RETRY_AFTER_MS_HEADERS);
+
+	// Catch odd prefixes (e.g. `acme-retry-after`); Headers iteration yields lowercase names.
+	for (const [name, value] of headers) {
+		if (!name.includes('retry-after')) continue;
+
+		if (knownSeconds.has(name) || knownMs.has(name)) continue;
+
+		if (name.endsWith('retry-after-ms') || name.endsWith('retry-after_ms')) {
+			const ms = Number(value.trim());
+
+			if (Number.isFinite(ms) && ms >= 0) return ms;
+
+			continue;
+		}
+
+		const parsed = parseRetryAfterMs(value, now);
+
+		if (parsed !== undefined) return parsed;
+	}
+
+	return undefined;
 }
 
 /** Provider-specific defaults when `Retry-After` is absent. */

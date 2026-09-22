@@ -3,6 +3,7 @@ export {
 	parseRetryAfterMs,
 	defaultBackoffMs,
 	retryAfterMsFor,
+	readRetryAfterMs,
 } from './client.ts';
 
 export { createExaProvider } from './exa.ts';

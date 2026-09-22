@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { defaultBackoffMs, parseRetryAfterMs, postProviderJson } from './client.ts';
+import {
+	defaultBackoffMs,
+	parseRetryAfterMs,
+	postProviderJson,
+	readRetryAfterMs,
+} from './client.ts';
 import { createWebSearchRouter, resolveWebSearchProviders } from './router.ts';
 import {
 	ProviderUnavailableError,
@@ -20,6 +25,16 @@ describe('parseRetryAfterMs', () => {
 		expect(parseRetryAfterMs('120')).toBe(120_000);
 		const now = Date.parse('2026-09-22T12:00:00.000Z');
 		expect(parseRetryAfterMs('Tue, 22 Sep 2026 12:00:30 GMT', now)).toBe(30_000);
+	});
+});
+
+describe('readRetryAfterMs', () => {
+	test('accepts Retry-After, x-retry-after, and ms aliases case-insensitively', () => {
+		expect(readRetryAfterMs(new Headers({ 'Retry-After': '5' }))).toBe(5_000);
+		expect(readRetryAfterMs(new Headers({ 'X-Retry-After': '8' }))).toBe(8_000);
+		expect(readRetryAfterMs(new Headers({ 'x-retry-after-ms': '1500' }))).toBe(1_500);
+		expect(readRetryAfterMs(new Headers({ 'Acme-Retry-After': '3' }))).toBe(3_000);
+		expect(readRetryAfterMs(new Headers({ 'content-type': 'application/json' }))).toBeUndefined();
 	});
 });
 
@@ -79,7 +94,7 @@ describe('postProviderJson', () => {
 				fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(
 					new Response('{}', {
 						status: 429,
-						headers: { 'retry-after': '12', 'content-type': 'application/json' },
+						headers: { 'x-retry-after': '12', 'content-type': 'application/json' },
 					}),
 				),
 			}),
