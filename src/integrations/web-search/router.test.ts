@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { ProviderCooldown, parseRetryAfterMs, resolveBackoffMs } from './cooldown.ts';
-import { classifyHttpFailure } from './http.ts';
+import { parseRetryAfterMs } from './client.ts';
 import { createWebSearchRouter, resolveWebSearchProviders } from './router.ts';
 import {
 	ProviderUnavailableError,
 	type FetchInput,
 	type FetchResult,
+	type ProviderId,
 	type SearchInput,
 	type SearchResult,
 	type WebSearchProvider,
@@ -16,68 +16,10 @@ afterEach(() => {
 });
 
 describe('parseRetryAfterMs', () => {
-	test('parses delta-seconds', () => {
+	test('parses delta-seconds and HTTP-date', () => {
 		expect(parseRetryAfterMs('120')).toBe(120_000);
-	});
-
-	test('parses HTTP-date relative to now', () => {
 		const now = Date.parse('2026-09-22T12:00:00.000Z');
 		expect(parseRetryAfterMs('Tue, 22 Sep 2026 12:00:30 GMT', now)).toBe(30_000);
-	});
-});
-
-describe('resolveBackoffMs', () => {
-	test('caps Retry-After and falls back by reason', () => {
-		expect(resolveBackoffMs('rate_limit', 2 * 60 * 60 * 1000)).toBe(60 * 60 * 1000);
-		expect(resolveBackoffMs('credits')).toBe(24 * 60 * 60 * 1000);
-		expect(resolveBackoffMs('upstream')).toBe(30_000);
-	});
-});
-
-describe('ProviderCooldown', () => {
-	test('marks and expires entries', () => {
-		const cooldown = new ProviderCooldown();
-		const now = 1_000_000;
-		cooldown.mark('exa', 'rate_limit', { now, retryAfterMs: 5_000 });
-		expect(cooldown.isCooling('exa', now + 1_000)).toBe(true);
-		expect(cooldown.isCooling('exa', now + 6_000)).toBe(false);
-	});
-});
-
-describe('classifyHttpFailure', () => {
-	test('maps 402/429/503 and credit tags to failover errors', () => {
-		expect(
-			classifyHttpFailure({
-				provider: 'exa',
-				status: 402,
-				payload: { tag: 'NO_MORE_CREDITS', error: 'out' },
-			}),
-		).toMatchObject({ reason: 'credits', provider: 'exa' });
-
-		expect(
-			classifyHttpFailure({
-				provider: 'parallel',
-				status: 429,
-				payload: { error: 'slow down' },
-				retryAfterMs: 10_000,
-			}),
-		).toMatchObject({ reason: 'rate_limit', retryAfterMs: 10_000 });
-
-		expect(
-			classifyHttpFailure({
-				provider: 'exa',
-				status: 503,
-				payload: { tag: 'SERVICE_OVERLOADED' },
-			}),
-		).toMatchObject({ reason: 'upstream' });
-
-		expect(
-			classifyHttpFailure({
-				provider: 'exa',
-				status: 400,
-				payload: { error: 'bad query' },
-			}),
-		).toBeUndefined();
 	});
 });
 
@@ -103,13 +45,12 @@ describe('createWebSearchRouter', () => {
 			searchResult('parallel'),
 		);
 
-		const exa = stubProvider('exa', { search: exaSearch });
-
-		const parallel = stubProvider('parallel', { search: parallelSearch });
-
 		const router = createWebSearchRouter({
-			providers: [exa, parallel],
-			cooldown: new ProviderCooldown(),
+			providers: [
+				stubProvider('exa', { search: exaSearch }),
+				stubProvider('parallel', { search: parallelSearch }),
+			],
+			cooldown: new Map(),
 		});
 
 		await expect(router.search({ query: 'flue', maxResults: 3 })).resolves.toEqual(
@@ -120,8 +61,7 @@ describe('createWebSearchRouter', () => {
 	});
 
 	test('fails over to Parallel on Exa unavailability and cools Exa', async () => {
-		const cooldown = new ProviderCooldown();
-
+		const cooldown = new Map<ProviderId, { until: number; reason: 'credits' }>();
 		const now = 5_000_000;
 
 		const exaSearch = vi.fn<(input: SearchInput) => Promise<SearchResult>>(async () => {
@@ -137,12 +77,11 @@ describe('createWebSearchRouter', () => {
 			searchResult('parallel'),
 		);
 
-		const exa = stubProvider('exa', { search: exaSearch });
-
-		const parallel = stubProvider('parallel', { search: parallelSearch });
-
 		const router = createWebSearchRouter({
-			providers: [exa, parallel],
+			providers: [
+				stubProvider('exa', { search: exaSearch }),
+				stubProvider('parallel', { search: parallelSearch }),
+			],
 			cooldown,
 			now: () => now,
 		});
@@ -150,7 +89,7 @@ describe('createWebSearchRouter', () => {
 		await expect(router.search({ query: 'flue', maxResults: 3 })).resolves.toEqual(
 			searchResult('parallel'),
 		);
-		expect(cooldown.isCooling('exa', now + 1_000)).toBe(true);
+		expect(cooldown.get('exa')?.until).toBe(now + 60_000);
 
 		exaSearch.mockClear();
 		parallelSearch.mockClear();
@@ -175,7 +114,7 @@ describe('createWebSearchRouter', () => {
 				stubProvider('exa', { search: exaSearch }),
 				stubProvider('parallel', { search: parallelSearch }),
 			],
-			cooldown: new ProviderCooldown(),
+			cooldown: new Map(),
 		});
 
 		await expect(router.search({ query: 'flue', maxResults: 3 })).rejects.toThrow(/bad query/);
@@ -200,7 +139,7 @@ describe('createWebSearchRouter', () => {
 				stubProvider('exa', { fetch: exaFetch }),
 				stubProvider('parallel', { fetch: parallelFetch }),
 			],
-			cooldown: new ProviderCooldown(),
+			cooldown: new Map(),
 		});
 
 		await expect(router.fetch({ urls: ['https://example.com'] })).resolves.toEqual(
@@ -212,14 +151,14 @@ describe('createWebSearchRouter', () => {
 function searchResult(provider: 'exa' | 'parallel'): SearchResult {
 	return {
 		provider,
-		results: [{ url: 'https://example.com', title: 'Example', content: 'snippet' }],
+		searchResults: { results: [{ url: 'https://example.com' }] },
 	};
 }
 
 function fetchResult(provider: 'exa' | 'parallel'): FetchResult {
 	return {
 		provider,
-		pages: [{ url: 'https://example.com', title: 'Example', content: 'body' }],
+		fetchResults: { results: [{ url: 'https://example.com' }] },
 	};
 }
 

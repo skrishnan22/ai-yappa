@@ -1,9 +1,9 @@
-import type { ProviderCooldown } from './cooldown.ts';
-import { sharedProviderCooldown } from './cooldown.ts';
+import { parseRetryAfterMs } from './client.ts';
 import { createExaProvider } from './exa.ts';
 import { createParallelProvider } from './parallel.ts';
 import {
 	ProviderUnavailableError,
+	type CooldownReason,
 	type FetchInput,
 	type FetchResult,
 	type ProviderId,
@@ -21,7 +21,23 @@ export type WebSearchRouter = {
 	fetch: (input: FetchInput) => Promise<FetchResult>;
 };
 
+type CooldownEntry = {
+	until: number;
+	reason: CooldownReason;
+};
+
 const PROVIDER_ORDER: readonly ProviderId[] = ['exa', 'parallel'];
+
+const DEFAULT_BACKOFF_MS: Record<CooldownReason, number> = {
+	rate_limit: 60_000,
+	credits: 24 * 60 * 60 * 1000,
+	upstream: 30_000,
+};
+
+const MAX_RETRY_AFTER_MS = 60 * 60 * 1000;
+
+/** In-memory cooldown until deployment-wide KV. Shared across calls in this isolate. */
+const cooldownUntil = new Map<ProviderId, CooldownEntry>();
 
 export function resolveWebSearchProviders(
 	env: WebSearchEnv,
@@ -42,11 +58,12 @@ export function resolveWebSearchProviders(
 
 export function createWebSearchRouter(args: {
 	providers: readonly WebSearchProvider[];
-	cooldown?: ProviderCooldown;
 	now?: () => number;
+	/** Test hook: replace the process-local cooldown map. */
+	cooldown?: Map<ProviderId, CooldownEntry>;
 }): WebSearchRouter {
-	const cooldown = args.cooldown ?? sharedProviderCooldown;
 	const now = args.now ?? Date.now;
+	const cooldown = args.cooldown ?? cooldownUntil;
 	const byId = new Map(args.providers.map((provider) => [provider.id, provider]));
 
 	async function runWithFailover<T>(
@@ -67,26 +84,32 @@ export function createWebSearchRouter(args: {
 
 		for (const provider of candidates) {
 			const at = now();
+			const entry = cooldown.get(provider.id);
 
-			if (cooldown.isCooling(provider.id, at)) {
-				const entry = cooldown.get(provider.id, at);
+			if (entry && entry.until > at) {
 				failures.push(
-					`${provider.id}: cooling until ${entry ? new Date(entry.until).toISOString() : 'unknown'} (${entry?.reason ?? 'unknown'})`,
+					`${provider.id}: cooling until ${new Date(entry.until).toISOString()} (${entry.reason})`,
 				);
 				continue;
 			}
 
+			if (entry) cooldown.delete(provider.id);
+
 			try {
 				const result = await call(provider);
-				cooldown.clear(provider.id);
+				cooldown.delete(provider.id);
 
 				return result;
 			} catch (error) {
 				if (error instanceof ProviderUnavailableError) {
-					cooldown.mark(error.provider, error.reason, {
-						now: now(),
-						retryAfterMs: error.retryAfterMs,
-					});
+					const retryAfterMs = error.retryAfterMs;
+
+					const backoff =
+						retryAfterMs !== undefined && Number.isFinite(retryAfterMs) && retryAfterMs > 0
+							? Math.min(retryAfterMs, MAX_RETRY_AFTER_MS)
+							: DEFAULT_BACKOFF_MS[error.reason];
+
+					cooldown.set(error.provider, { until: now() + backoff, reason: error.reason });
 					failures.push(`${provider.id}: ${error.message}`);
 					continue;
 				}
@@ -105,3 +128,5 @@ export function createWebSearchRouter(args: {
 		fetch: (input) => runWithFailover('fetch', (provider) => provider.fetch(input)),
 	};
 }
+
+export { parseRetryAfterMs };

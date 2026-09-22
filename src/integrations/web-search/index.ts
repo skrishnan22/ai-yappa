@@ -1,4 +1,4 @@
-export { ProviderCooldown, sharedProviderCooldown } from './cooldown.ts';
+export { postProviderJson, parseRetryAfterMs } from './client.ts';
 
 export { createExaProvider } from './exa.ts';
 
@@ -14,12 +14,9 @@ export {
 export {
 	DEFAULT_MAX_FETCH_URLS,
 	DEFAULT_MAX_RESULTS,
-	MAX_CONTENT_CHARS,
 	ProviderUnavailableError,
-	type FetchPage,
 	type FetchResult,
 	type ProviderId,
-	type SearchHit,
 	type SearchResult,
 	type WebSearchProvider,
 } from './types.ts';
