@@ -1,0 +1,20 @@
+name: Gitleaks
+
+on:
+  pull_request:
+
+permissions: {}
+
+# MIT gitleaks CLI, not gitleaks-action (that wrapper needs a paid org license).
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/gitleaks.mjs git --redact --no-banner --verbose --log-opts="$BASE..$HEAD"

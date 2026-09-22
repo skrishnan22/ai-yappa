@@ -22,6 +22,9 @@ Implementation source of truth: `SLACK_AGENT_SPEC.md`. Milestone scope: `SLACK_A
 - `npm run dev` — start the dev server. Slack Events URL is `/channels/slack/events`.
 - `npm run deploy` — build and deploy the Worker.
 - `npm run check:types` — typecheck.
+- `npm test` — Vitest (`src/**/*.test.ts`).
+- `npm run lint` / `npm run fmt:check` — Oxlint and Oxfmt (also CI).
+- `npm run gitleaks` — secret scan of git history. Pre-commit runs staged lint/format plus `gitleaks:staged`.
 - `npx flue docs search <query>` — search the Flue docs from the terminal (then `flue docs read <path>`).
 - `npx flue add` — list blueprints for adding channels, sandboxes, and databases.
 
