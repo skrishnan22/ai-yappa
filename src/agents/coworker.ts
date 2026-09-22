@@ -12,14 +12,14 @@ import {
 	type FlueObservation,
 } from '@flue/runtime';
 import * as v from 'valibot';
+import type { CardEvent, LegacyRunCardState } from '../channels/run-card.ts';
 import {
-	bindRunCard,
-	enqueueCardEvent,
-	publishCardEvent,
-	type CardEvent,
-	type RunCardState,
-} from '../channels/run-card.ts';
+	bindDurableRunCards,
+	enqueueDurableCardEvent,
+	withHydrationCardProgress,
+} from '../channels/run-card-delivery.ts';
 import { replyInThread } from '../channels/slack-reply.ts';
+import { useSlackThreadContext } from '../channels/thread-context-hook.ts';
 import { gitAuthorFromEnv, loadAgentEnv } from '../env.ts';
 import { INTEGRATION_CATALOG, resolveIntegrationCatalog } from '../integrations/mcp-catalog.ts';
 import type { AuditRecord } from '../proxy/ops.ts';
@@ -34,10 +34,19 @@ import { githubTools } from './github-tools.ts';
 import { openCodeGoModelSpecifier } from './opencode-go-catalog.ts';
 import { installOpenCodeGoSessionHeader } from './opencode-session.ts';
 
+const isCloudflareWorker =
+	typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers';
+
+let cloudflareExtension;
+if (isCloudflareWorker) {
+	cloudflareExtension = (await import('./coworker-cloudflare.ts')).cloudflare;
+}
+export { cloudflareExtension as cloudflare };
+
 observe((event, context) => {
 	const cardEvent = cardEventFromObservation(event);
 	if (!cardEvent) return Promise.resolve();
-	return enqueueCardEvent({ ...cardEvent, instanceId: context.id });
+	return enqueueDurableCardEvent({ ...cardEvent, instanceId: context.id });
 });
 
 const initialDataSchema = v.object({
@@ -60,6 +69,7 @@ export function Coworker(props: { id: string }) {
 	// Fail fast with the full missing-secret list (Slack optional here — the
 	// reply tool degrades to `posted: false` without a token).
 	const agentEnv = loadAgentEnv();
+	useSlackThreadContext(data, agentEnv.SLACK_BOT_TOKEN);
 
 	useTool(replyInThread(data, agentEnv.SLACK_BOT_TOKEN));
 	// Assistant text never reaches Slack. If the model would stop without a
@@ -72,16 +82,13 @@ export function Coworker(props: { id: string }) {
 			body: 'You ended without calling reply_in_slack_thread — nothing reached the user. Call it now with your answer.',
 		});
 	});
-	const [runCard, setRunCard] = usePersistentState<RunCardState | null>('run-card', null);
-	bindRunCard({
+	const [legacyRunCard] = usePersistentState<LegacyRunCardState | null>('run-card', null);
+	bindDurableRunCards({
 		instanceId: props.id,
 		channelId: data.channelId,
 		threadTs: data.threadTs,
 		token: agentEnv.SLACK_BOT_TOKEN,
-		state: runCard,
-		persist: (state) => {
-			setRunCard(state);
-		},
+		legacyState: legacyRunCard,
 	});
 	// ponytail: conversation-scoped audit array until the D1 cross-conversation store in M4
 	const [, setProxyAudit] = usePersistentState<AuditRecord[]>('proxy-audit', []);
@@ -117,22 +124,13 @@ export function Coworker(props: { id: string }) {
 			const apiKey = agentEnv.DAYTONA_API_KEY;
 			const client = new Daytona({ apiKey });
 			const sandbox = await createContainerSandbox(client, { conversationId: options.id });
-			await publishCardEvent({
-				instanceId: props.id,
-				type: 'hydration',
-				phase: 'start',
-			});
-			const result = await hydrateWorkspace(hydrateIoFromDaytona(sandbox), {
-				repo: data.repo,
-				conversationId: options.id,
-				git: gitAuthorFromEnv(agentEnv),
-			});
-			await publishCardEvent({
-				instanceId: props.id,
-				type: 'hydration',
-				phase: 'done',
-				skipped: result.skipped,
-			});
+			await withHydrationCardProgress(props.id, () =>
+				hydrateWorkspace(hydrateIoFromDaytona(sandbox), {
+					repo: data.repo,
+					conversationId: options.id,
+					git: gitAuthorFromEnv(agentEnv),
+				}),
+			);
 			return daytona(sandbox, { cwd: WORKSPACE_REPO_DIR }).createSandbox(options);
 		},
 	});

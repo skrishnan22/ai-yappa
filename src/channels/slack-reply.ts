@@ -2,7 +2,7 @@ import { defineTool } from '@flue/runtime';
 import { WebClient } from '@slack/web-api';
 import * as v from 'valibot';
 
-function slackFetch(url: string | URL, init?: RequestInit): Promise<Response> {
+export function slackFetch(url: string | URL, init?: RequestInit): Promise<Response> {
 	return fetch(url, init?.redirect === 'error' ? { ...init, redirect: 'manual' } : init);
 }
 

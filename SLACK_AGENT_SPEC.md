@@ -75,7 +75,7 @@ Submissions have a type (D12):
 
 ### 4.1 Slack ingress (Cloudflare Worker)
 
-- Verifies Slack signatures; drops replays (timestamp window + event id dedup).
+- Verifies Slack signatures, applies policy, and durably dispatches accepted events with the Slack event id as the idempotency key before acknowledging. Thread-history enrichment runs in the conversation owner after admission, so its Slack API latency cannot hold an accepted event's ingress acknowledgement open. Policy-refusal messages are still posted before their acknowledgement.
 - `app_mention` in a channel → create conversation + thread; message in an existing tracked thread → route to that conversation. No slash command (slash commands don't live in threads, which breaks thread-as-identity).
 - **Repo resolution**: channel → default repo mapping, configured when the agent is added to a channel; an explicit `repo:` argument in the invocation overrides it. Invocation without a resolvable repo gets an immediate in-thread setup prompt.
 - **Invoker allowlist**: only allowlisted Slack users can start submissions; others get a polite refusal. Configured per workspace.
@@ -298,7 +298,7 @@ Owner code hydrates on Coworker sandbox create: toolchain snapshot `slack-agent-
 
 ### M3 layout (2026-09-10)
 
-Live run card is an owner-side projection of Flue runtime events (`submission_*`, hydration, tools), not a model tool. One compact Block Kit message per submission (no header block), identity in `usePersistentState('run-card')`, edited in place; a thread ping only when a PR exists or the submission failed. Slack's native agent timeline (`chat.startStream` `task_update` + `agents.sessions.setStatus`) needs the Agents product and `assistant:write` — deferred. Thread Context is fetched at dispatch (`conversations.replies`) and attached as signal `attributes.threadContext` (string, last 8 KiB); drop-untracked still does not wake. Steering-vs-queue stays the stub (mid-work messages are steering). `commandId`/fencing, seed images, and `cfRead`/`awsRead` stay deferred.
+Live run card is an owner-side projection of Flue runtime events (`submission_*`, hydration, tools), not a model tool. Each real Flue submission owns one compact Block Kit message (no header block), edited in place; a thread ping is sent only when a PR exists or the submission failed. Desired and confirmed-delivered revisions live in application-owned SQLite tables inside the existing Coworker Durable Object. The same owner serializes card sends, resumes pending work on startup and scheduled retries, and reconciles an ambiguous new-message outcome through Slack metadata and complete paginated thread history without blindly posting a duplicate. The old `usePersistentState('run-card')` shape is read only at the migration boundary. Card transport failure cannot fail sandbox hydration; it remains pending with a bounded diagnostic and retry delay. Slack's native agent timeline (`chat.startStream` `task_update` + `agents.sessions.setStatus`) needs the Agents product and `assistant:write` — deferred. Thread Context is fetched after durable admission in `useAgentStart` (`conversations.replies`) and appended as a model-visible `slack.thread_context` signal (last 8 KiB); duplicate admission does not run enrichment again, and drop-untracked still does not wake. Steering-vs-queue stays the stub (mid-work messages are steering). `commandId`/fencing, seed images, and `cfRead`/`awsRead` stay deferred.
 
 ### Integration Catalog / open MCP (2026-09-14)
 

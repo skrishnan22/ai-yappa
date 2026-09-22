@@ -1,8 +1,8 @@
-import { getSlackClient } from './slack-reply.ts';
+import type { WebClient } from '@slack/web-api';
 
 export type CardStatus = 'queued' | 'hydrating' | 'working' | 'completed' | 'failed' | 'aborted';
 
-export type RunCardState = {
+export type LegacyRunCardState = {
 	submissionId: string;
 	messageTs: string | null;
 	status: CardStatus;
@@ -26,10 +26,8 @@ export type CardEvent =
 			error?: string;
 	  };
 
-export type RoutedCardEvent = CardEvent & { readonly instanceId: string };
-
 export type CardApply = {
-	state: RunCardState;
+	state: RunCardDesired;
 	notify?: string;
 };
 
@@ -48,125 +46,385 @@ const STEP_BY_TOOL: Record<string, string> = {
 	glob: 'Searching the workspace',
 };
 
-type SlackBlock = Record<string, unknown>;
+type BlocksOf<T> = T extends { blocks?: Array<infer Block> } ? Block : never;
+type SlackBlock = BlocksOf<Parameters<WebClient['chat']['postMessage']>[0]>;
+const DELIVERY_RETRY_DELAY_MS = 30_000;
 
-export type SlackCardPort = {
-	post(args: {
+export type RunCardDestination = {
+	channelId: string;
+	threadTs: string;
+};
+
+export type RunCardDesired = {
+	submissionId: string;
+	status: CardStatus;
+	step: string;
+	startedAt: number;
+	branchUrl?: string;
+	prUrl?: string;
+};
+
+export type RunCardDeliveryRecord = {
+	submissionId: string;
+	desired: RunCardDesired;
+	desiredRevision: number;
+	deliveredRevision: number;
+	messageTs: string | null;
+	cardPostState: 'pending' | 'unknown' | 'posted';
+	notificationText?: string;
+	notificationTs: string | null;
+	notificationPostState: 'none' | 'pending' | 'unknown' | 'posted';
+	nextAttemptAt: number;
+};
+
+export type RunCardRepository = {
+	destination(): RunCardDestination | undefined;
+	setDestination(destination: RunCardDestination): void;
+	legacyMigrationComplete(): boolean;
+	markLegacyMigrationComplete(): void;
+	activeSubmissionId(): string | undefined;
+	setActiveSubmissionId(submissionId: string): void;
+	get(submissionId: string): RunCardDeliveryRecord | undefined;
+	put(record: RunCardDeliveryRecord): void;
+	pending(): RunCardDeliveryRecord[];
+};
+
+export type RunCardPostResult =
+	| { kind: 'posted'; ts: string }
+	| { kind: 'rejected'; retryAt?: number; code?: string }
+	| { kind: 'unknown'; code?: string };
+
+export type RunCardDeliveryPort = {
+	postCard(args: {
 		channel: string;
 		threadTs: string;
 		text: string;
 		blocks: SlackBlock[];
-	}): Promise<{ ts: string | null }>;
-	update(args: { channel: string; ts: string; text: string; blocks: SlackBlock[] }): Promise<void>;
-	notify(args: { channel: string; threadTs: string; text: string }): Promise<void>;
+		submissionId: string;
+	}): Promise<RunCardPostResult>;
+	updateCard(args: {
+		channel: string;
+		ts: string;
+		text: string;
+		blocks: SlackBlock[];
+		submissionId: string;
+	}): Promise<void>;
+	postNotification(args: {
+		channel: string;
+		threadTs: string;
+		text: string;
+		submissionId: string;
+	}): Promise<RunCardPostResult>;
+	findPostedMessage(args: {
+		channel: string;
+		threadTs: string;
+		submissionId: string;
+		kind: 'card' | 'notification';
+	}): Promise<
+		{ kind: 'found'; ts: string } | { kind: 'not_found' } | { kind: 'incomplete'; retryAt?: number }
+	>;
 };
 
-type CardHandle = {
-	channelId: string;
-	threadTs: string;
-	token?: string;
-	state: RunCardState | null;
-	persist: (state: RunCardState) => void;
-	port?: SlackCardPort;
-	chain: Promise<void>;
-};
-
-const handles = new Map<string, CardHandle>();
-
-export function bindRunCard(args: {
-	instanceId: string;
-	channelId: string;
-	threadTs: string;
-	token?: string;
-	state: RunCardState | null;
-	persist: (state: RunCardState) => void;
-	port?: SlackCardPort;
-}): void {
-	let handle = handles.get(args.instanceId);
-	if (handle === undefined) {
-		handle = { ...args, chain: Promise.resolve() };
-		handles.set(args.instanceId, handle);
-		return;
-	}
-	handle.channelId = args.channelId;
-	handle.threadTs = args.threadTs;
-	handle.token = args.token;
-	handle.persist = args.persist;
-	handle.port = args.port;
-	if (handle.state === null && args.state !== null) {
-		handle.state = args.state;
-		return;
-	}
-	if (
-		handle.state !== null &&
-		args.state !== null &&
-		handle.state.submissionId === args.state.submissionId &&
-		handle.state.messageTs === null &&
-		args.state.messageTs
-	) {
-		handle.state = { ...handle.state, messageTs: args.state.messageTs };
-	}
+export function createMemoryRunCardRepository(
+	destination?: RunCardDestination,
+): RunCardRepository & { get(submissionId: string): RunCardDeliveryRecord | undefined } {
+	const records = new Map<string, RunCardDeliveryRecord>();
+	let currentDestination = destination;
+	let activeSubmission: string | undefined;
+	let legacyMigrated = false;
+	return {
+		destination: () => currentDestination,
+		setDestination: (next) => {
+			currentDestination = next;
+		},
+		legacyMigrationComplete: () => legacyMigrated,
+		markLegacyMigrationComplete: () => {
+			legacyMigrated = true;
+		},
+		activeSubmissionId: () => activeSubmission,
+		setActiveSubmissionId: (submissionId) => {
+			activeSubmission = submissionId;
+		},
+		get: (submissionId) => records.get(submissionId),
+		put: (record) => {
+			records.set(record.submissionId, structuredClone(record));
+		},
+		pending: () =>
+			[...records.values()]
+				.filter(needsDelivery)
+				.toSorted((left, right) => left.desired.startedAt - right.desired.startedAt)
+				.map((record) => structuredClone(record)),
+	};
 }
 
-export function __resetRunCardForTests(): void {
-	handles.clear();
+export function recordCardEvent(
+	repository: RunCardRepository,
+	event: CardEvent,
+	now = Date.now(),
+): RunCardDeliveryRecord | undefined {
+	const submissionId = eventSubmissionId(repository, event);
+	if (submissionId === undefined) return undefined;
+	if (event.type === 'submission_running') repository.setActiveSubmissionId(submissionId);
+
+	const previous = repository.get(submissionId);
+	const applied = applyCardEvent(previous?.desired ?? null, event, now);
+	if (applied === undefined) return previous;
+	const desired = applied.state;
+	const changed = previous === undefined || desiredChanged(previous.desired, desired);
+	const notificationText = applied.notify ?? previous?.notificationText;
+	const notificationChanged =
+		notificationText !== undefined && notificationText !== previous?.notificationText;
+	const record: RunCardDeliveryRecord = {
+		submissionId,
+		desired,
+		desiredRevision: (previous?.desiredRevision ?? 0) + (changed ? 1 : 0),
+		deliveredRevision: previous?.deliveredRevision ?? 0,
+		messageTs: previous?.messageTs ?? null,
+		cardPostState: previous?.cardPostState ?? 'pending',
+		notificationText,
+		notificationTs: previous?.notificationTs ?? null,
+		notificationPostState: notificationChanged
+			? 'pending'
+			: (previous?.notificationPostState ?? 'none'),
+		nextAttemptAt: previous?.nextAttemptAt ?? 0,
+	};
+	if (record.desiredRevision === 0) return previous;
+	repository.put(record);
+	return record;
 }
 
-export function enqueueCardEvent(event: RoutedCardEvent, now = Date.now()): Promise<void> {
-	const handle = handles.get(event.instanceId);
-	if (handle === undefined) return Promise.resolve();
-	handle.chain = handle.chain.then(
-		() => publishCardEvent(event, now).catch(() => publishCardEvent(event, now)),
-		() => publishCardEvent(event, now),
-	);
-	return handle.chain;
-}
-
-export async function publishCardEvent(event: RoutedCardEvent, now = Date.now()): Promise<void> {
-	const handle = handles.get(event.instanceId);
-	if (handle === undefined) return;
-	const applied = applyCardEvent(handle.state, event, now);
-	if (applied === undefined) return;
-	if (!cardChanged(handle.state, applied.state) && applied.notify === undefined) return;
-
-	handle.state = applied.state;
-
-	try {
-		const port = handle.port ?? (handle.token ? slackCardPort(handle.token) : undefined);
-		if (port !== undefined) {
-			const rendered = renderRunCard(applied.state, now);
-			if (applied.state.messageTs) {
-				await port.update({
-					channel: handle.channelId,
-					ts: applied.state.messageTs,
-					text: rendered.text,
-					blocks: rendered.blocks,
-				});
-			} else {
-				const posted = await port.post({
-					channel: handle.channelId,
-					threadTs: handle.threadTs,
-					text: rendered.text,
-					blocks: rendered.blocks,
-				});
-				handle.state = { ...applied.state, messageTs: posted.ts };
-			}
-			if (applied.notify !== undefined && handle.state.notifyPosted !== true) {
-				await port.notify({
-					channel: handle.channelId,
-					threadTs: handle.threadTs,
-					text: applied.notify,
-				});
-				handle.state = { ...handle.state, notifyPosted: true };
-			}
+export async function deliverPendingRunCards(
+	repository: RunCardRepository,
+	port: RunCardDeliveryPort,
+	now = Date.now(),
+): Promise<void> {
+	const destination = repository.destination();
+	if (destination === undefined) return;
+	for (const candidate of repository.pending()) {
+		try {
+			await deliverCard(repository, port, destination, candidate, now);
+		} catch {
+			// One unavailable card must not starve later submissions in this outbox.
 		}
-	} finally {
-		handle.persist(handle.state);
 	}
+}
+
+async function deliverCard(
+	repository: RunCardRepository,
+	port: RunCardDeliveryPort,
+	destination: RunCardDestination,
+	candidate: RunCardDeliveryRecord,
+	now: number,
+): Promise<void> {
+	let record = repository.get(candidate.submissionId);
+	if (record === undefined) return;
+	if (record.nextAttemptAt > now) return;
+
+	if (record.messageTs === null) {
+		if (record.cardPostState === 'unknown') {
+			const found = await port.findPostedMessage({
+				channel: destination.channelId,
+				threadTs: destination.threadTs,
+				submissionId: record.submissionId,
+				kind: 'card',
+			});
+			if (found.kind !== 'found') {
+				const latest = repository.get(record.submissionId);
+				if (latest !== undefined) {
+					repository.put({
+						...latest,
+						nextAttemptAt:
+							found.kind === 'incomplete'
+								? (found.retryAt ?? now + DELIVERY_RETRY_DELAY_MS)
+								: now + DELIVERY_RETRY_DELAY_MS,
+					});
+				}
+				return;
+			}
+			const latest = repository.get(record.submissionId);
+			if (latest === undefined) return;
+			record = {
+				...latest,
+				messageTs: found.ts,
+				cardPostState: 'posted',
+				nextAttemptAt: 0,
+			};
+			repository.put(record);
+		} else {
+			const postedRevision = record.desiredRevision;
+			repository.put({ ...record, cardPostState: 'unknown' });
+			const rendered = renderRunCard(record.desired, now);
+			const posted = await port.postCard({
+				channel: destination.channelId,
+				threadTs: destination.threadTs,
+				text: rendered.text,
+				blocks: rendered.blocks,
+				submissionId: record.submissionId,
+			});
+			if (posted.kind === 'unknown') {
+				const latest = repository.get(record.submissionId);
+				if (latest !== undefined) {
+					repository.put({ ...latest, nextAttemptAt: now + DELIVERY_RETRY_DELAY_MS });
+				}
+				return;
+			}
+			if (posted.kind === 'rejected') {
+				const latest = repository.get(record.submissionId);
+				if (latest !== undefined) {
+					repository.put({
+						...latest,
+						cardPostState: 'pending',
+						nextAttemptAt: posted.retryAt ?? now + DELIVERY_RETRY_DELAY_MS,
+					});
+				}
+				return;
+			}
+			const latest = repository.get(record.submissionId);
+			if (latest === undefined) return;
+			record = {
+				...latest,
+				messageTs: posted.ts,
+				cardPostState: 'posted',
+				deliveredRevision: Math.max(latest.deliveredRevision, postedRevision),
+				nextAttemptAt: 0,
+			};
+			repository.put(record);
+		}
+	}
+
+	record = repository.get(candidate.submissionId);
+	if (record === undefined || record.messageTs === null) return;
+	if (record.deliveredRevision < record.desiredRevision) {
+		const revision = record.desiredRevision;
+		const rendered = renderRunCard(record.desired, now);
+		try {
+			await port.updateCard({
+				channel: destination.channelId,
+				ts: record.messageTs,
+				text: rendered.text,
+				blocks: rendered.blocks,
+				submissionId: record.submissionId,
+			});
+		} catch (error) {
+			const retryAt = deliveryRetryAt(error);
+			const latest = repository.get(record.submissionId);
+			if (latest !== undefined) {
+				repository.put({
+					...latest,
+					nextAttemptAt: retryAt ?? now + DELIVERY_RETRY_DELAY_MS,
+				});
+			}
+			return;
+		}
+		const latest = repository.get(record.submissionId);
+		if (latest !== undefined) {
+			repository.put({ ...latest, deliveredRevision: revision, nextAttemptAt: 0 });
+		}
+	}
+
+	record = repository.get(candidate.submissionId);
+	if (
+		record?.notificationText === undefined ||
+		record.notificationPostState === 'none' ||
+		record.notificationPostState === 'posted'
+	) {
+		return;
+	}
+	if (record.notificationPostState === 'unknown') {
+		const found = await port.findPostedMessage({
+			channel: destination.channelId,
+			threadTs: destination.threadTs,
+			submissionId: record.submissionId,
+			kind: 'notification',
+		});
+		if (found.kind !== 'found') {
+			const latest = repository.get(record.submissionId);
+			if (latest !== undefined) {
+				repository.put({
+					...latest,
+					nextAttemptAt:
+						found.kind === 'incomplete'
+							? (found.retryAt ?? now + DELIVERY_RETRY_DELAY_MS)
+							: now + DELIVERY_RETRY_DELAY_MS,
+				});
+			}
+			return;
+		}
+		const latest = repository.get(record.submissionId);
+		if (latest === undefined) return;
+		repository.put({
+			...latest,
+			notificationTs: found.ts,
+			notificationPostState: 'posted',
+			nextAttemptAt: 0,
+		});
+		return;
+	}
+
+	repository.put({ ...record, notificationPostState: 'unknown' });
+	const posted = await port.postNotification({
+		channel: destination.channelId,
+		threadTs: destination.threadTs,
+		text: record.notificationText,
+		submissionId: record.submissionId,
+	});
+	if (posted.kind === 'posted') {
+		const latest = repository.get(record.submissionId);
+		if (latest === undefined) return;
+		repository.put({
+			...latest,
+			notificationTs: posted.ts,
+			notificationPostState: 'posted',
+			nextAttemptAt: 0,
+		});
+	} else if (posted.kind === 'rejected') {
+		const latest = repository.get(record.submissionId);
+		if (latest !== undefined) {
+			repository.put({
+				...latest,
+				notificationPostState: 'pending',
+				nextAttemptAt: posted.retryAt ?? now + DELIVERY_RETRY_DELAY_MS,
+			});
+		}
+	} else {
+		const latest = repository.get(record.submissionId);
+		if (latest !== undefined) {
+			repository.put({ ...latest, nextAttemptAt: now + DELIVERY_RETRY_DELAY_MS });
+		}
+	}
+}
+
+function deliveryRetryAt(error: unknown): number | undefined {
+	if (typeof error !== 'object' || error === null || !('retryAt' in error)) return undefined;
+	return typeof error.retryAt === 'number' ? error.retryAt : undefined;
+}
+
+function eventSubmissionId(repository: RunCardRepository, event: CardEvent): string | undefined {
+	if ('submissionId' in event && event.submissionId !== undefined) return event.submissionId;
+	if (event.type === 'hydration') return repository.activeSubmissionId();
+	return undefined;
+}
+
+function desiredChanged(previous: RunCardDesired, next: RunCardDesired): boolean {
+	return (
+		previous.status !== next.status ||
+		previous.step !== next.step ||
+		previous.branchUrl !== next.branchUrl ||
+		previous.prUrl !== next.prUrl
+	);
+}
+
+function needsDelivery(record: RunCardDeliveryRecord): boolean {
+	return (
+		record.messageTs === null ||
+		record.deliveredRevision < record.desiredRevision ||
+		record.notificationPostState === 'pending' ||
+		record.notificationPostState === 'unknown'
+	);
 }
 
 export function applyCardEvent(
-	state: RunCardState | null,
+	state: RunCardDesired | null,
 	event: CardEvent,
 	now: number,
 ): CardApply | undefined {
@@ -183,22 +441,14 @@ export function applyCardEvent(
 						? 'Workspace ready'
 						: 'Workspace hydrated';
 			const status: CardStatus = event.phase === 'start' ? 'hydrating' : 'working';
-			if (state === null) {
-				return {
-					state: {
-						submissionId: 'active',
-						messageTs: null,
-						status,
-						step,
-						startedAt: now,
-					},
-				};
-			}
+			if (state === null) return undefined;
 			if (isTerminal(state.status)) return undefined;
 			return { state: { ...state, status, step } };
 		}
 		case 'tool_start': {
-			if (state === null || isTerminal(state.status)) return undefined;
+			if (state === null || isTerminal(state.status) || event.submissionId !== state.submissionId) {
+				return undefined;
+			}
 			return {
 				state: {
 					...state,
@@ -208,7 +458,9 @@ export function applyCardEvent(
 			};
 		}
 		case 'tool': {
-			if (state === null || isTerminal(state.status)) return undefined;
+			if (state === null || isTerminal(state.status) || event.submissionId !== state.submissionId) {
+				return undefined;
+			}
 			const links = linksFromTool(event.toolName, event.result);
 			if (links.branchUrl === undefined && links.prUrl === undefined) return undefined;
 			return {
@@ -220,18 +472,16 @@ export function applyCardEvent(
 			};
 		}
 		case 'submission_settled': {
-			const same =
-				state !== null &&
-				(state.submissionId === event.submissionId || state.submissionId === 'active');
-			const base = same
-				? state
-				: {
-						submissionId: event.submissionId,
-						messageTs: null,
-						status: 'working' as const,
-						step: 'Working',
-						startedAt: now,
-					};
+			if (state !== null && state.submissionId !== event.submissionId) return undefined;
+			const base =
+				state !== null
+					? state
+					: {
+							submissionId: event.submissionId,
+							status: 'working' as const,
+							step: 'Working',
+							startedAt: now,
+						};
 			const next = settle(
 				{ ...base, submissionId: event.submissionId },
 				event.outcome,
@@ -247,7 +497,7 @@ export function applyCardEvent(
 }
 
 export function renderRunCard(
-	state: RunCardState,
+	state: RunCardDesired,
 	now: number,
 ): { text: string; blocks: SlackBlock[] } {
 	const statusLabel = statusText(state.status);
@@ -283,7 +533,7 @@ export function formatElapsed(ms: number): string {
 }
 
 function beginOrRefresh(
-	state: RunCardState | null,
+	state: RunCardDesired | null,
 	submissionId: string,
 	status: CardStatus,
 	step: string,
@@ -295,15 +545,9 @@ function beginOrRefresh(
 		}
 		return { state: { ...state, status, step } };
 	}
-	if (state !== null && state.submissionId === 'active' && !isTerminal(state.status)) {
-		const nextStatus = statusRank(status) < statusRank(state.status) ? state.status : status;
-		const nextStep = statusRank(status) < statusRank(state.status) ? state.step : step;
-		return { state: { ...state, submissionId, status: nextStatus, step: nextStep } };
-	}
 	return {
 		state: {
 			submissionId,
-			messageTs: null,
 			status,
 			step,
 			startedAt: now,
@@ -331,10 +575,10 @@ function statusRank(status: CardStatus): number {
 }
 
 function settle(
-	state: RunCardState,
+	state: RunCardDesired,
 	outcome: 'completed' | 'failed' | 'aborted',
 	error: string | undefined,
-): { state: RunCardState; notify?: string } {
+): { state: RunCardDesired; notify?: string } {
 	if (outcome === 'completed') {
 		const step = state.prUrl ? 'Pull request opened' : 'Completed';
 		const notify = state.prUrl ? `Done: ${state.prUrl}` : undefined;
@@ -370,17 +614,6 @@ function findHtmlUrl(value: unknown): string | undefined {
 	if (value.details !== undefined) return findHtmlUrl(value.details);
 	if (value.result !== undefined) return findHtmlUrl(value.result);
 	return undefined;
-}
-
-function cardChanged(prev: RunCardState | null, next: RunCardState): boolean {
-	if (prev === null) return true;
-	return (
-		prev.submissionId !== next.submissionId ||
-		prev.status !== next.status ||
-		prev.step !== next.step ||
-		prev.branchUrl !== next.branchUrl ||
-		prev.prUrl !== next.prUrl
-	);
 }
 
 function isTerminal(status: CardStatus): boolean {
@@ -438,34 +671,4 @@ function truncate(value: string, max: number): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function slackCardPort(token: string): SlackCardPort {
-	const client = getSlackClient(token);
-	return {
-		async post({ channel, threadTs, text, blocks }) {
-			const result = await client.chat.postMessage({
-				channel,
-				thread_ts: threadTs,
-				text,
-				blocks: blocks as never,
-			});
-			return { ts: result.ts ?? null };
-		},
-		async update({ channel, ts, text, blocks }) {
-			await client.chat.update({
-				channel,
-				ts,
-				text,
-				blocks: blocks as never,
-			});
-		},
-		async notify({ channel, threadTs, text }) {
-			await client.chat.postMessage({
-				channel,
-				thread_ts: threadTs,
-				text,
-			});
-		},
-	};
 }

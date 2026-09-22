@@ -112,7 +112,7 @@ Setup writes the assigned host into `TUNNEL_HOSTNAME`. Then:
 
 Stop with `npm run tunnel:stop`. Free ngrok also shows a browser warning page. Slack's event POSTs skip that. If you open the URL in a browser, click through once.
 
-A threaded reply that reflects work in the already-cloned repo (not clone/`ls` as the job) is the hydration slice. M3 adds a live run card in the thread (one Slack message per submission, edited in place, plus a short ping when the submission settles) and attaches thread history on wake. Seed images with repo+deps baked in wait for M4.
+A threaded reply that reflects work in the already-cloned repo (not clone/`ls` as the job) is the hydration slice. M3 adds a live run card in the thread: one message per Flue submission, edited in place, plus a short ping when the submission settles. Card delivery is stored in the existing Coworker Durable Object and retried independently of sandbox hydration. If a new Slack post has an ambiguous outcome, the owner reconciles its submission metadata before sending anything again; an absent history match remains pending and is not automatically reposted. Thread history is loaded after durable admission and appended to model input when the owner wakes. Seed images with repo+deps baked in wait for M4.
 
 ## Deploy
 
