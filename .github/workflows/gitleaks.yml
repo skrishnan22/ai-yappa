@@ -1,0 +1,30 @@
+name: Gitleaks
+
+on:
+  pull_request:
+
+permissions: {}
+
+# Official MIT CLI image. Do not use gitleaks-action (that wrapper needs a
+# license on org repos). Local hooks call `gitleaks` on PATH
+# (`brew install gitleaks`).
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          docker run --rm \
+            -v "$PWD:/src" \
+            -w /src \
+            -e GIT_CONFIG_COUNT=1 \
+            -e GIT_CONFIG_KEY_0=safe.directory \
+            -e GIT_CONFIG_VALUE_0=/src \
+            ghcr.io/gitleaks/gitleaks:v8.30.1 \
+            git --redact --no-banner --verbose --log-opts="$BASE..$HEAD"

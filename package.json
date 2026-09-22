@@ -2,6 +2,9 @@
 	"name": "slack-agent",
 	"private": true,
 	"type": "module",
+	"engines": {
+		"node": ">=22.22.1"
+	},
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
@@ -11,6 +14,9 @@
 		"lint": "oxlint src",
 		"fmt": "oxfmt src .oxlintrc.json .oxfmtrc.json package.json wrangler.jsonc tsconfig.json",
 		"fmt:check": "oxfmt --check src .oxlintrc.json .oxfmtrc.json package.json wrangler.jsonc tsconfig.json",
+		"gitleaks": "gitleaks git --redact --no-banner --verbose",
+		"gitleaks:staged": "gitleaks git --pre-commit --staged --redact --no-banner --verbose",
+		"prepare": "husky",
 		"test": "vitest run",
 		"tunnel": "sh scripts/run-tunnel.sh",
 		"tunnel:setup": "sh scripts/setup-tunnel.sh",
@@ -31,6 +37,8 @@
 		"@flue/vite": "^2.0.3",
 		"@oxlint/plugins": "1.82.0",
 		"@types/node": "^22.10.10",
+		"husky": "^9.1.7",
+		"lint-staged": "^17.5.1",
 		"oxfmt": "^0.67.0",
 		"oxlint": "^1.82.0",
 		"oxlint-plugin-eslint": "^1.82.0",
@@ -42,5 +50,12 @@
 	},
 	"overrides": {
 		"@earendil-works/pi-ai": "0.86.0"
+	},
+	"lint-staged": {
+		"*.{ts,js,mjs,cjs}": [
+			"oxlint",
+			"oxfmt"
+		],
+		"*.{json,jsonc}": "oxfmt"
 	}
 }
