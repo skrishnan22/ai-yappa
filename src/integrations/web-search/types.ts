@@ -23,25 +23,14 @@ export type FetchResult = {
 	fetchResults: JsonValue;
 };
 
-export type CooldownReason = 'rate_limit' | 'credits' | 'upstream' | 'auth';
-
 /** Failover-worthy provider failure; router may try the next provider. */
 export class ProviderUnavailableError extends Error {
-	readonly provider: ProviderId;
-	readonly reason: CooldownReason;
-	readonly retryAfterMs: number | undefined;
-
-	constructor(args: {
-		provider: ProviderId;
-		reason: CooldownReason;
-		message: string;
-		retryAfterMs?: number;
-	}) {
-		super(args.message);
+	constructor(
+		message: string,
+		readonly cooldownMs: number,
+	) {
+		super(message);
 		this.name = 'ProviderUnavailableError';
-		this.provider = args.provider;
-		this.reason = args.reason;
-		this.retryAfterMs = args.retryAfterMs;
 	}
 }
 

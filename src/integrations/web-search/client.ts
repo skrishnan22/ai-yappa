@@ -1,22 +1,12 @@
 import * as v from 'valibot';
 import { jsonValueSchema, type JsonObject, type JsonValue } from '../../json.ts';
-import { ProviderUnavailableError, type CooldownReason, type ProviderId } from './types.ts';
+import { ProviderUnavailableError, type ProviderId } from './types.ts';
 
-/**
- * Provider POST helper.
- *
- * Failover (ProviderUnavailableError → try next provider), aligned with
- * https://exa.ai/docs/admin/error-codes (branch on HTTP status first):
- * - 401 auth → failover (bad/missing key for this provider)
- * - 402 credits / budget → failover
- * - 429 rate limit → failover (honor Retry-After when present)
- * - Parallel 408 timeout → failover
- * - 5xx including 500/503/504 → failover
- * - transport / non-JSON 2xx → failover
- *
- * No failover (surface to the model): 400 validation, 403 forbidden/policy,
- * 404, 409, 422, etc.
- */
+const LONG_COOLDOWN_MS = 60 * 60 * 1000;
+
+const TRANSIENT_COOLDOWN_MS = 5 * 60 * 1000;
+
+/** POST JSON and distinguish provider unavailability from terminal request errors. */
 export async function postProviderJson(args: {
 	provider: ProviderId;
 	url: string;
@@ -38,11 +28,10 @@ export async function postProviderJson(args: {
 			body: JSON.stringify(args.body),
 		});
 	} catch (error) {
-		throw new ProviderUnavailableError({
-			provider: args.provider,
-			reason: 'upstream',
-			message: `${args.provider} transport failed: ${error instanceof Error ? error.message : 'network error'}`,
-		});
+		throw new ProviderUnavailableError(
+			`${args.provider} transport failed: ${error instanceof Error ? error.message : 'network error'}`,
+			TRANSIENT_COOLDOWN_MS,
+		);
 	}
 
 	const text = await response.text();
@@ -51,92 +40,41 @@ export async function postProviderJson(args: {
 		const body = parseJsonBody(text);
 
 		if (body === undefined) {
-			throw new ProviderUnavailableError({
-				provider: args.provider,
-				reason: 'upstream',
-				message: `${args.provider} returned HTTP ${response.status} with non-JSON body`,
-			});
+			throw new ProviderUnavailableError(
+				`${args.provider} returned HTTP ${response.status} with non-JSON body`,
+				TRANSIENT_COOLDOWN_MS,
+			);
 		}
 
 		return body;
 	}
 
-	const detail = formatProviderError(args.provider, response.status, text);
-	const reason = failoverReason(args.provider, response.status);
+	const errorBody = text.trim().slice(0, 200);
+	const message = `${args.provider} HTTP ${response.status}${errorBody ? `: ${errorBody}` : ''}`;
+	const cooldownMs = responseCooldownMs(response);
 
-	if (reason) {
-		throw new ProviderUnavailableError({
-			provider: args.provider,
-			reason,
-			retryAfterMs: readRetryAfterMs(response.headers),
-			message: detail,
-		});
+	if (cooldownMs !== undefined) {
+		throw new ProviderUnavailableError(message, cooldownMs);
 	}
 
-	throw new Error(detail);
+	throw new Error(message);
 }
 
-/**
- * Exa docs: branch on status first; tags are open-ended detail.
- * @see https://exa.ai/docs/admin/error-codes
- */
-function failoverReason(provider: ProviderId, status: number): CooldownReason | undefined {
-	if (status === 401) return 'auth';
+function responseCooldownMs(response: Response): number | undefined {
+	const { status } = response;
 
-	if (status === 402) return 'credits';
+	const providerUnavailable =
+		status === 401 || status === 402 || status === 408 || status === 429 || status >= 500;
 
-	if (status === 429) return 'rate_limit';
+	if (!providerUnavailable) return undefined;
 
-	if (provider === 'parallel' && status === 408) return 'upstream';
-
-	if (status >= 500) return 'upstream';
-
-	return undefined;
+	return (
+		parseRetryAfterMs(response.headers.get('retry-after')) ??
+		(status === 401 || status === 402 ? LONG_COOLDOWN_MS : TRANSIENT_COOLDOWN_MS)
+	);
 }
 
-const nestedProviderErrorSchema = v.pipe(
-	v.object({
-		message: v.optional(v.string()),
-		ref_id: v.optional(v.string()),
-	}),
-	v.transform((error) => error.message ?? error.ref_id),
-);
-
-const providerErrorSchema = v.object({
-	requestId: v.optional(v.string()),
-	tag: v.optional(v.string()),
-	error: v.optional(v.union([v.string(), nestedProviderErrorSchema])),
-	message: v.optional(v.string()),
-});
-
-/** Build a compact message: status + Exa tag/requestId (or Parallel message) when present. */
-export function formatProviderError(provider: ProviderId, status: number, text: string): string {
-	const parts = [`${provider} HTTP ${status}`];
-	const body = parseJsonBody(text);
-	const parsed = body === undefined ? undefined : v.safeParse(providerErrorSchema, body);
-
-	if (parsed?.success) {
-		const { tag, requestId, error: errorText, message } = parsed.output;
-
-		if (tag) parts.push(`tag=${tag}`);
-
-		if (requestId) parts.push(`requestId=${requestId}`);
-
-		if (errorText) parts.push(errorText);
-		else if (message) parts.push(message);
-	} else if (text.trim()) {
-		parts.push(text.trim().slice(0, 200));
-	}
-
-	return parts.join(' | ');
-}
-
-/** Parse the standard HTTP Retry-After response header. */
-export function readRetryAfterMs(headers: Headers, now = Date.now()): number | undefined {
-	return parseRetryAfterMs(headers.get('retry-after'), now);
-}
-
-export function parseRetryAfterMs(header: string | null, now = Date.now()): number | undefined {
+function parseRetryAfterMs(header: string | null): number | undefined {
 	if (!header) return undefined;
 
 	const seconds = Number(header);
@@ -145,7 +83,7 @@ export function parseRetryAfterMs(header: string | null, now = Date.now()): numb
 
 	const dateMs = Date.parse(header);
 
-	if (Number.isFinite(dateMs)) return Math.max(0, dateMs - now);
+	if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now());
 
 	return undefined;
 }
