@@ -1,12 +1,11 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
-	defaultBackoffMs,
 	formatProviderError,
 	parseRetryAfterMs,
 	postProviderJson,
 	readRetryAfterMs,
 } from './client.ts';
-import { createWebSearchRouter, resolveWebSearchProviders } from './router.ts';
+import { createWebSearchRouter, defaultCooldownMs, resolveWebSearchProviders } from './router.ts';
 import {
 	ProviderUnavailableError,
 	type FetchInput,
@@ -30,20 +29,20 @@ describe('parseRetryAfterMs', () => {
 });
 
 describe('readRetryAfterMs', () => {
-	test('accepts Retry-After, x-retry-after, and ms aliases case-insensitively', () => {
+	test('accepts only the standard Retry-After header', () => {
 		expect(readRetryAfterMs(new Headers({ 'Retry-After': '5' }))).toBe(5_000);
-		expect(readRetryAfterMs(new Headers({ 'X-Retry-After': '8' }))).toBe(8_000);
-		expect(readRetryAfterMs(new Headers({ 'x-retry-after-ms': '1500' }))).toBe(1_500);
-		expect(readRetryAfterMs(new Headers({ 'Acme-Retry-After': '3' }))).toBe(3_000);
+		expect(readRetryAfterMs(new Headers({ 'X-Retry-After': '8' }))).toBeUndefined();
+		expect(readRetryAfterMs(new Headers({ 'x-retry-after-ms': '1500' }))).toBeUndefined();
+		expect(readRetryAfterMs(new Headers({ 'Acme-Retry-After': '3' }))).toBeUndefined();
 		expect(readRetryAfterMs(new Headers({ 'content-type': 'application/json' }))).toBeUndefined();
 	});
 });
 
-describe('defaultBackoffMs', () => {
+describe('defaultCooldownMs', () => {
 	test('uses Exa/Parallel rate-limit defaults and long auth cool-off', () => {
-		expect(defaultBackoffMs('exa', 'rate_limit')).toBe(2_000);
-		expect(defaultBackoffMs('parallel', 'rate_limit')).toBe(60_000);
-		expect(defaultBackoffMs('exa', 'auth')).toBe(60 * 60 * 1000);
+		expect(defaultCooldownMs('exa', 'rate_limit')).toBe(2_000);
+		expect(defaultCooldownMs('parallel', 'rate_limit')).toBe(60_000);
+		expect(defaultCooldownMs('exa', 'auth')).toBe(60 * 60 * 1000);
 	});
 });
 
@@ -103,6 +102,18 @@ describe('postProviderJson', () => {
 					.mockResolvedValue(new Response('not-json', { status: 200 })),
 			}),
 		).rejects.toMatchObject({ reason: 'upstream', provider: 'parallel' });
+	});
+
+	test('treats an empty 2xx body as an unavailable provider', async () => {
+		await expect(
+			postProviderJson({
+				provider: 'exa',
+				url: 'https://api.exa.ai/search',
+				apiKey: 'k',
+				body: { query: 'x' },
+				fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 })),
+			}),
+		).rejects.toMatchObject({ reason: 'upstream', provider: 'exa' });
 	});
 
 	test('fails over on 401 and 402 with Exa tags in the message', async () => {
@@ -174,11 +185,28 @@ describe('postProviderJson', () => {
 				fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(
 					new Response('{}', {
 						status: 429,
-						headers: { 'x-retry-after': '12', 'content-type': 'application/json' },
+						headers: { 'retry-after': '12', 'content-type': 'application/json' },
 					}),
 				),
 			}),
 		).rejects.toMatchObject({ reason: 'rate_limit', retryAfterMs: 12_000 });
+	});
+
+	test('marks Parallel 408 responses as failover-worthy', async () => {
+		await expect(
+			postProviderJson({
+				provider: 'parallel',
+				url: 'https://api.parallel.ai/v1/search',
+				apiKey: 'k',
+				body: { objective: 'x' },
+				fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(
+					new Response(JSON.stringify({ error: { message: 'timed out' } }), {
+						status: 408,
+						headers: { 'content-type': 'application/json' },
+					}),
+				),
+			}),
+		).rejects.toMatchObject({ reason: 'upstream', provider: 'parallel' });
 	});
 });
 
@@ -212,10 +240,9 @@ describe('createWebSearchRouter', () => {
 			cooldown: new Map(),
 		});
 
-		await expect(router.search({ query: 'flue', maxResults: 3 })).resolves.toEqual({
-			ok: true,
-			value: searchResult('exa'),
-		});
+		await expect(router.search({ query: 'flue', maxResults: 3 })).resolves.toEqual(
+			searchResult('exa'),
+		);
 		expect(exaSearch).toHaveBeenCalledOnce();
 		expect(parallelSearch).not.toHaveBeenCalled();
 	});
@@ -246,23 +273,21 @@ describe('createWebSearchRouter', () => {
 			now: () => now,
 		});
 
-		await expect(router.search({ query: 'flue', maxResults: 3 })).resolves.toEqual({
-			ok: true,
-			value: searchResult('parallel'),
-		});
+		await expect(router.search({ query: 'flue', maxResults: 3 })).resolves.toEqual(
+			searchResult('parallel'),
+		);
 		expect(cooldown.get('exa')?.until).toBe(now + 60_000);
 
 		exaSearch.mockClear();
 		parallelSearch.mockClear();
-		await expect(router.search({ query: 'again', maxResults: 3 })).resolves.toEqual({
-			ok: true,
-			value: searchResult('parallel'),
-		});
+		await expect(router.search({ query: 'again', maxResults: 3 })).resolves.toEqual(
+			searchResult('parallel'),
+		);
 		expect(exaSearch).not.toHaveBeenCalled();
 		expect(parallelSearch).toHaveBeenCalledOnce();
 	});
 
-	test('returns ok:false on ordinary provider errors without trying Parallel', async () => {
+	test('throws ordinary provider errors without trying Parallel', async () => {
 		const exaSearch = vi.fn<(input: SearchInput) => Promise<SearchResult>>(async () => {
 			throw new Error('exa request failed: bad query');
 		});
@@ -279,10 +304,9 @@ describe('createWebSearchRouter', () => {
 			cooldown: new Map(),
 		});
 
-		await expect(router.search({ query: 'flue', maxResults: 3 })).resolves.toEqual({
-			ok: false,
-			error: 'exa request failed: bad query',
-		});
+		await expect(router.search({ query: 'flue', maxResults: 3 })).rejects.toThrow(
+			'exa request failed: bad query',
+		);
 		expect(parallelSearch).not.toHaveBeenCalled();
 	});
 
@@ -307,13 +331,12 @@ describe('createWebSearchRouter', () => {
 			cooldown: new Map(),
 		});
 
-		await expect(router.fetch({ urls: ['https://example.com'] })).resolves.toEqual({
-			ok: true,
-			value: fetchResult('parallel'),
-		});
+		await expect(router.fetch({ urls: ['https://example.com'] })).resolves.toEqual(
+			fetchResult('parallel'),
+		);
 	});
 
-	test('returns ok:false when every provider is unavailable', async () => {
+	test('throws when every provider is unavailable', async () => {
 		const router = createWebSearchRouter({
 			providers: [
 				stubProvider('exa', {
@@ -338,14 +361,35 @@ describe('createWebSearchRouter', () => {
 			cooldown: new Map(),
 		});
 
-		const outcome = await router.search({ query: 'flue', maxResults: 3 });
+		await expect(router.search({ query: 'flue', maxResults: 3 })).rejects.toThrow(
+			/exa down.*parallel down/,
+		);
+	});
 
-		expect(outcome.ok).toBe(false);
+	test('uses the 24-hour credits default when the provider sends no delay', async () => {
+		const cooldown = new Map<ProviderId, { until: number; reason: 'credits' }>();
+		const now = 5_000_000;
 
-		if (outcome.ok) throw new Error('expected failure');
+		const router = createWebSearchRouter({
+			providers: [
+				stubProvider('exa', {
+					search: vi.fn<(input: SearchInput) => Promise<SearchResult>>(async () => {
+						throw new ProviderUnavailableError({
+							provider: 'exa',
+							reason: 'credits',
+							message: 'exa out of credits',
+						});
+					}),
+				}),
+				stubProvider('parallel', {}),
+			],
+			cooldown,
+			now: () => now,
+		});
 
-		expect(outcome.error).toMatch(/exa down/);
-		expect(outcome.error).toMatch(/parallel down/);
+		await router.search({ query: 'flue', maxResults: 3 });
+
+		expect(cooldown.get('exa')?.until).toBe(now + 24 * 60 * 60 * 1000);
 	});
 });
 

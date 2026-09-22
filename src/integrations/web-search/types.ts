@@ -54,3 +54,5 @@ export type WebSearchProvider = {
 export const DEFAULT_MAX_RESULTS = 5;
 
 export const DEFAULT_MAX_FETCH_URLS = 5;
+
+export const MAX_FETCH_CHARACTERS_PER_URL = 10_000;

@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
-import type { JsonObject } from '../../json.ts';
+import * as v from 'valibot';
+import { jsonObjectSchema, type JsonObject } from '../../json.ts';
 import { createExaProvider } from './exa.ts';
 import { createParallelProvider } from './parallel.ts';
 import { ProviderUnavailableError } from './types.ts';
@@ -28,6 +29,14 @@ describe('createExaProvider', () => {
 		await expect(provider.fetch({ urls: ['https://exa.ai/docs'] })).resolves.toEqual({
 			provider: 'exa',
 			fetchResults: fetchBody,
+		});
+
+		expect(requestBody(fetchImpl, 1)).toMatchObject({
+			contents: { highlights: true },
+		});
+		expect(requestBody(fetchImpl, 2)).toMatchObject({
+			urls: ['https://exa.ai/docs'],
+			text: { maxCharacters: 10_000 },
 		});
 	});
 
@@ -70,8 +79,24 @@ describe('createParallelProvider', () => {
 			provider: 'parallel',
 			fetchResults: fetchBody,
 		});
+
+		expect(requestBody(fetchImpl, 2)).toMatchObject({
+			urls: ['https://parallel.ai/docs'],
+			advanced_settings: { full_content: { max_chars_per_result: 10_000 } },
+		});
 	});
 });
+
+function requestBody(fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>, call: number): JsonObject {
+	const init = fetchImpl.mock.calls[call - 1]?.[1];
+	const body = v.safeParse(v.string(), init?.body);
+
+	if (!body.success) throw new Error(`request ${call} did not have a JSON body`);
+
+	const parsed: unknown = JSON.parse(body.output);
+
+	return v.parse(jsonObjectSchema, parsed);
+}
 
 function jsonResponse(status: number, body: JsonObject): Response {
 	return new Response(JSON.stringify(body), {

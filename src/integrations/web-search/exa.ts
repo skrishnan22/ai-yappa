@@ -1,11 +1,12 @@
 import type { JsonObject } from '../../json.ts';
 import { postProviderJson } from './client.ts';
-import type {
-	FetchInput,
-	FetchResult,
-	SearchInput,
-	SearchResult,
-	WebSearchProvider,
+import {
+	MAX_FETCH_CHARACTERS_PER_URL,
+	type FetchInput,
+	type FetchResult,
+	type SearchInput,
+	type SearchResult,
+	type WebSearchProvider,
 } from './types.ts';
 
 const SEARCH_URL = 'https://api.exa.ai/search';
@@ -25,7 +26,7 @@ export function createExaProvider(args: {
 				query: input.query,
 				numResults: input.maxResults,
 				type: 'auto',
-				contents: { text: true, highlights: true },
+				contents: { highlights: true },
 			};
 
 			return {
@@ -42,7 +43,7 @@ export function createExaProvider(args: {
 		async fetch(input: FetchInput): Promise<FetchResult> {
 			const body: JsonObject = {
 				urls: input.urls,
-				text: true,
+				text: { maxCharacters: MAX_FETCH_CHARACTERS_PER_URL },
 			};
 
 			return {

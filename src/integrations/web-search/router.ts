@@ -15,12 +15,9 @@ export type WebSearchEnv = {
 	readonly [key: string]: string | undefined;
 };
 
-/** Success or a message the tool can return to the model (no throw). */
-export type RouterOutcome<T> = { ok: true; value: T } | { ok: false; error: string };
-
 export type WebSearchRouter = {
-	search: (input: SearchInput) => Promise<RouterOutcome<SearchResult>>;
-	fetch: (input: FetchInput) => Promise<RouterOutcome<FetchResult>>;
+	search: (input: SearchInput) => Promise<SearchResult>;
+	fetch: (input: FetchInput) => Promise<FetchResult>;
 };
 
 type CooldownEntry = {
@@ -28,14 +25,9 @@ type CooldownEntry = {
 	reason: CooldownReason;
 };
 
-/** Prefer Exa, then Parallel. Only configured providers are tried. */
-const PROVIDER_ORDER: readonly ProviderId[] = ['exa', 'parallel'];
+const MAX_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
-const MAX_COOLDOWN_MS = 60 * 60 * 1000;
-
-const FALLBACK_COOLDOWN_MS = 30_000;
-
-/** Process-local: skip a provider until `until` (KV later). */
+/** Process-local cooldown shared by Coworker conversations in this isolate. */
 const sharedCooldown = new Map<ProviderId, CooldownEntry>();
 
 /** Build adapters for whichever API keys are present. */
@@ -59,9 +51,8 @@ export function resolveWebSearchProviders(
 }
 
 /**
- * Exa-first search/fetch with failover.
- * Operational failures become `{ ok: false, error }` so the tool can return them
- * to the model without throwing out of `defineTool`.
+ * Search/fetch providers in the supplied order, cooling unavailable providers.
+ * Terminal failures throw so Flue records a model-visible tool error.
  */
 export function createWebSearchRouter(args: {
 	providers: readonly WebSearchProvider[];
@@ -71,41 +62,28 @@ export function createWebSearchRouter(args: {
 }): WebSearchRouter {
 	const now = args.now ?? Date.now;
 	const cooldown = args.cooldown ?? sharedCooldown;
-	const byId = new Map(args.providers.map((p) => [p.id, p] as const));
 
-	function providersToTry(): WebSearchProvider[] {
-		const list: WebSearchProvider[] = [];
-
-		for (const id of PROVIDER_ORDER) {
-			const provider = byId.get(id);
-
-			if (provider) list.push(provider);
-		}
-
-		return list;
-	}
-
-	function isCooling(id: ProviderId, at: number): boolean {
+	function activeCooldown(id: ProviderId, at: number): CooldownEntry | undefined {
 		const entry = cooldown.get(id);
 
-		if (!entry) return false;
+		if (!entry) return undefined;
 
 		if (entry.until <= at) {
 			cooldown.delete(id);
 
-			return false;
+			return undefined;
 		}
 
-		return true;
+		return entry;
 	}
 
 	function markUnavailable(error: ProviderUnavailableError, at: number): void {
 		const requested = error.retryAfterMs;
 
 		const ms =
-			requested !== undefined && Number.isFinite(requested) && requested > 0
+			requested !== undefined && Number.isFinite(requested) && requested >= 0
 				? Math.min(requested, MAX_COOLDOWN_MS)
-				: FALLBACK_COOLDOWN_MS;
+				: defaultCooldownMs(error.provider, error.reason);
 
 		cooldown.set(error.provider, { until: at + ms, reason: error.reason });
 	}
@@ -113,25 +91,20 @@ export function createWebSearchRouter(args: {
 	async function runStacked<T>(
 		op: 'search' | 'fetch',
 		call: (provider: WebSearchProvider) => Promise<T>,
-	): Promise<RouterOutcome<T>> {
-		const stack = providersToTry();
-
-		if (stack.length === 0) {
-			return {
-				ok: false,
-				error: 'No web search providers configured (set EXA_API_KEY or PARALLEL_API_KEY)',
-			};
+	): Promise<T> {
+		if (args.providers.length === 0) {
+			throw new Error('No web search providers configured (set EXA_API_KEY or PARALLEL_API_KEY)');
 		}
 
 		const failures: string[] = [];
 
-		for (const provider of stack) {
+		for (const provider of args.providers) {
 			const at = now();
+			const entry = activeCooldown(provider.id, at);
 
-			if (isCooling(provider.id, at)) {
-				const entry = cooldown.get(provider.id);
+			if (entry) {
 				failures.push(
-					`${provider.id}: cooling until ${entry ? new Date(entry.until).toISOString() : '?'} (${entry?.reason ?? '?'})`,
+					`${provider.id}: cooling until ${new Date(entry.until).toISOString()} (${entry.reason})`,
 				);
 				continue;
 			}
@@ -140,7 +113,7 @@ export function createWebSearchRouter(args: {
 				const value = await call(provider);
 				cooldown.delete(provider.id);
 
-				return { ok: true, value };
+				return value;
 			} catch (error) {
 				// Auth / credits / rate limit / 5xx / transport → cool down and try next.
 				if (error instanceof ProviderUnavailableError) {
@@ -149,22 +122,37 @@ export function createWebSearchRouter(args: {
 					continue;
 				}
 
-				// Validation / forbidden / unexpected → stop; surface to the model.
-				return {
-					ok: false,
-					error: error instanceof Error ? error.message : `${op} failed`,
-				};
+				if (error instanceof Error) throw error;
+
+				throw new Error(`${op} failed`, { cause: error });
 			}
 		}
 
-		return {
-			ok: false,
-			error: `web_${op} failed for all providers: ${failures.join('; ') || 'none available'}`,
-		};
+		throw new Error(
+			`web_${op} failed for all providers: ${failures.join('; ') || 'none available'}`,
+		);
 	}
 
 	return {
 		search: (input) => runStacked('search', (provider) => provider.search(input)),
 		fetch: (input) => runStacked('fetch', (provider) => provider.fetch(input)),
 	};
+}
+
+export function defaultCooldownMs(provider: ProviderId, reason: CooldownReason): number {
+	switch (reason) {
+		case 'auth':
+			return 60 * 60 * 1000;
+		case 'credits':
+			return 24 * 60 * 60 * 1000;
+		case 'rate_limit':
+			return provider === 'exa' ? 2_000 : 60_000;
+		case 'upstream':
+			return 5_000;
+		default: {
+			const _exhaustive: never = reason;
+
+			return _exhaustive;
+		}
+	}
 }

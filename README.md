@@ -39,7 +39,7 @@ PARALLEL_API_KEY=
 `LANGFUSE_MCP_BASIC_AUTH` is the base64 encoding of the US project's
 `public-key:secret-key`. It is optional; leave it empty to skip Langfuse trace analysis.
 
-`EXA_API_KEY` and `PARALLEL_API_KEY` are optional. When at least one is set, Coworker mounts native `web_search` / `web_fetch` tools that call those providers' REST APIs (Exa first, then Parallel on HTTP 402/429/503). Tool output is `{ provider, searchResults|fetchResults }` with the provider's own JSON body. Missing both keys skips the tools. Keys stay Worker-side; they never enter Daytona.
+`EXA_API_KEY` and `PARALLEL_API_KEY` are optional. When at least one is set, Coworker mounts native `web_search` / `web_fetch` tools that call those providers' REST APIs (Exa first, then Parallel when Exa is unavailable). Tool output is `{ provider, searchResults|fetchResults }` with the provider's own JSON body. Missing both keys skips the tools. Keys stay Worker-side; they never enter Daytona.
 
 GitHub tools require `GITHUB_APP_ID`, the RSA `.pem` GitHub downloads for `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_APP_INSTALLATION_ID`. PEM values may use `\n` in `.dev.vars`. Install the App only on the enrolled pilot repository. Its minimum application permissions are **Contents: Read and write**, **Pull requests: Read and write**, and **Issues: Read-only** (GitHub grants metadata read access automatically); do not grant administration, workflows/actions, deployments, secrets, or merge bypass.
 

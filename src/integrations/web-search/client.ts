@@ -10,6 +10,7 @@ import { ProviderUnavailableError, type CooldownReason, type ProviderId } from '
  * - 401 auth → failover (bad/missing key for this provider)
  * - 402 credits / budget → failover
  * - 429 rate limit → failover (honor Retry-After when present)
+ * - Parallel 408 timeout → failover
  * - 5xx including 500/503/504 → failover
  * - transport / non-JSON 2xx → failover
  *
@@ -41,7 +42,6 @@ export async function postProviderJson(args: {
 			provider: args.provider,
 			reason: 'upstream',
 			message: `${args.provider} transport failed: ${error instanceof Error ? error.message : 'network error'}`,
-			retryAfterMs: defaultBackoffMs(args.provider, 'upstream'),
 		});
 	}
 
@@ -55,7 +55,6 @@ export async function postProviderJson(args: {
 				provider: args.provider,
 				reason: 'upstream',
 				message: `${args.provider} returned HTTP ${response.status} with non-JSON body`,
-				retryAfterMs: defaultBackoffMs(args.provider, 'upstream'),
 			});
 		}
 
@@ -63,13 +62,13 @@ export async function postProviderJson(args: {
 	}
 
 	const detail = formatProviderError(args.provider, response.status, text);
-	const reason = failoverReason(response.status);
+	const reason = failoverReason(args.provider, response.status);
 
 	if (reason) {
 		throw new ProviderUnavailableError({
 			provider: args.provider,
 			reason,
-			retryAfterMs: retryAfterMsFor(args.provider, reason, response),
+			retryAfterMs: readRetryAfterMs(response.headers),
 			message: detail,
 		});
 	}
@@ -81,32 +80,33 @@ export async function postProviderJson(args: {
  * Exa docs: branch on status first; tags are open-ended detail.
  * @see https://exa.ai/docs/admin/error-codes
  */
-function failoverReason(status: number): CooldownReason | undefined {
+function failoverReason(provider: ProviderId, status: number): CooldownReason | undefined {
 	if (status === 401) return 'auth';
 
 	if (status === 402) return 'credits';
 
 	if (status === 429) return 'rate_limit';
 
+	if (provider === 'parallel' && status === 408) return 'upstream';
+
 	if (status >= 500) return 'upstream';
 
 	return undefined;
 }
 
+const nestedProviderErrorSchema = v.pipe(
+	v.object({
+		message: v.optional(v.string()),
+		ref_id: v.optional(v.string()),
+	}),
+	v.transform((error) => error.message ?? error.ref_id),
+);
+
 const providerErrorSchema = v.object({
 	requestId: v.optional(v.string()),
 	tag: v.optional(v.string()),
-	error: v.optional(
-		v.union([
-			v.string(),
-			v.object({
-				message: v.optional(v.string()),
-				ref_id: v.optional(v.string()),
-			}),
-		]),
-	),
+	error: v.optional(v.union([v.string(), nestedProviderErrorSchema])),
 	message: v.optional(v.string()),
-	type: v.optional(v.string()),
 });
 
 /** Build a compact message: status + Exa tag/requestId (or Parallel message) when present. */
@@ -116,21 +116,11 @@ export function formatProviderError(provider: ProviderId, status: number, text: 
 	const parsed = body === undefined ? undefined : v.safeParse(providerErrorSchema, body);
 
 	if (parsed?.success) {
-		const { tag, requestId, error, message } = parsed.output;
+		const { tag, requestId, error: errorText, message } = parsed.output;
 
 		if (tag) parts.push(`tag=${tag}`);
 
 		if (requestId) parts.push(`requestId=${requestId}`);
-
-		let errorText: string | undefined;
-
-		if (v.is(v.string(), error)) {
-			errorText = error;
-		} else if (
-			v.is(v.object({ message: v.optional(v.string()), ref_id: v.optional(v.string()) }), error)
-		) {
-			errorText = error.message ?? error.ref_id;
-		}
 
 		if (errorText) parts.push(errorText);
 		else if (message) parts.push(message);
@@ -141,91 +131,9 @@ export function formatProviderError(provider: ProviderId, status: number, text: 
 	return parts.join(' | ');
 }
 
-/**
- * Prefer a retry-delay header when present; otherwise provider defaults.
- * Exa 429: wait for Retry-After when present, else backoff.
- * `Headers.get` is case-insensitive; we also probe common aliases.
- */
-export function retryAfterMsFor(
-	provider: ProviderId,
-	reason: CooldownReason,
-	response: Response,
-	now = Date.now(),
-): number {
-	const fromHeader = readRetryAfterMs(response.headers, now);
-
-	if (fromHeader !== undefined) return fromHeader;
-
-	return defaultBackoffMs(provider, reason);
-}
-
-/** Delay-style headers (seconds or HTTP-date), then ms-style, then any *retry-after* name. */
-const RETRY_AFTER_SECOND_HEADERS = ['retry-after', 'x-retry-after'] as const;
-
-const RETRY_AFTER_MS_HEADERS = ['retry-after-ms', 'x-retry-after-ms'] as const;
-
+/** Parse the standard HTTP Retry-After response header. */
 export function readRetryAfterMs(headers: Headers, now = Date.now()): number | undefined {
-	for (const name of RETRY_AFTER_SECOND_HEADERS) {
-		const parsed = parseRetryAfterMs(headers.get(name), now);
-
-		if (parsed !== undefined) return parsed;
-	}
-
-	for (const name of RETRY_AFTER_MS_HEADERS) {
-		const raw = headers.get(name);
-
-		if (!raw) continue;
-
-		const ms = Number(raw.trim());
-
-		if (Number.isFinite(ms) && ms >= 0) return ms;
-	}
-
-	const knownSeconds = new Set<string>(RETRY_AFTER_SECOND_HEADERS);
-	const knownMs = new Set<string>(RETRY_AFTER_MS_HEADERS);
-
-	// Catch odd prefixes (e.g. `acme-retry-after`); Headers iteration yields lowercase names.
-	for (const [name, value] of headers) {
-		if (!name.includes('retry-after')) continue;
-
-		if (knownSeconds.has(name) || knownMs.has(name)) continue;
-
-		if (name.endsWith('retry-after-ms') || name.endsWith('retry-after_ms')) {
-			const ms = Number(value.trim());
-
-			if (Number.isFinite(ms) && ms >= 0) return ms;
-
-			continue;
-		}
-
-		const parsed = parseRetryAfterMs(value, now);
-
-		if (parsed !== undefined) return parsed;
-	}
-
-	return undefined;
-}
-
-/** Provider-specific defaults when `Retry-After` is absent. */
-export function defaultBackoffMs(provider: ProviderId, reason: CooldownReason): number {
-	switch (reason) {
-		case 'auth':
-			// Don't hammer a bad key; try the other provider for a while.
-			return 60 * 60 * 1000;
-		case 'credits':
-			return 24 * 60 * 60 * 1000;
-		case 'rate_limit':
-			// Exa ~10 QPS → short cool-off; Parallel Search is per-minute → longer.
-			return provider === 'exa' ? 2_000 : 60_000;
-		case 'upstream':
-			// Exa 503 SERVICE_OVERLOADED: retry with backoff (independent of request rate).
-			return 5_000;
-		default: {
-			const _exhaustive: never = reason;
-
-			return _exhaustive;
-		}
-	}
+	return parseRetryAfterMs(headers.get('retry-after'), now);
 }
 
 export function parseRetryAfterMs(header: string | null, now = Date.now()): number | undefined {
@@ -244,7 +152,7 @@ export function parseRetryAfterMs(header: string | null, now = Date.now()): numb
 
 /** Valid JSON value, or undefined when the body is not JSON. */
 function parseJsonBody(text: string): JsonValue | undefined {
-	if (!text) return null;
+	if (!text) return undefined;
 
 	try {
 		const parsed: unknown = JSON.parse(text);
