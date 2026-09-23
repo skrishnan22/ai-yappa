@@ -1,3 +1,4 @@
+import * as v from 'valibot';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
 	__resetSlackClientForTests,
@@ -110,7 +111,7 @@ describe('slack WebClient factory', () => {
 				log: { info() {}, warn() {}, error() {} },
 			}),
 		).resolves.toEqual({
-			output: { posted: false, text: 'local **reply**', channel: null, ts: null },
+			output: { posted: false, text: 'local **reply**', blocks: null, channel: null, ts: null },
 		});
 	});
 
@@ -137,16 +138,91 @@ describe('slack WebClient factory', () => {
 				log: { info() {}, warn() {}, error() {} },
 			}),
 		).resolves.toEqual({
-			output: { posted: true, text, channel: null, ts: null },
+			output: { posted: true, text, blocks: null, channel: null, ts: null },
 		});
 		expect(posted).toEqual([
 			{
 				channel: 'C-test',
 				thread_ts: '2.3',
 				markdown_text: text,
+				unfurl_links: false,
+				unfurl_media: false,
 			},
 		]);
 		expect(posted[0]).not.toHaveProperty('text');
+	});
+
+	test('posts validated blocks with a top-level text fallback instead of markdown_text', async () => {
+		__setSlackClientFactoryForTests(fakeClient);
+		const tool = replyInThread({ channelId: 'C-test', threadTs: '2.3' }, 'xoxb-injected');
+
+		const data = v.parse(tool.input, {
+			text: 'p95 latency fell from 480 ms on Monday to 210 ms on Wednesday.',
+			blocks: [
+				{ type: 'markdown', text: 'Latency after the cache change:' },
+				{
+					type: 'data_visualization',
+					title: 'p95 latency (ms)',
+					chart: {
+						type: 'line',
+						series: [
+							{
+								name: 'p95',
+								data: [
+									{ label: 'Mon', value: 480 },
+									{ label: 'Tue', value: 320 },
+									{ label: 'Wed', value: 210 },
+								],
+							},
+						],
+						axis_config: { categories: ['Mon', 'Tue', 'Wed'], y_label: 'ms' },
+					},
+				},
+			],
+		});
+
+		await expect(
+			tool.run({ data, toolCallId: 'post-blocks', log: { info() {}, warn() {}, error() {} } }),
+		).resolves.toEqual({
+			output: { posted: true, text: data.text, blocks: null, channel: null, ts: null },
+		});
+		expect(posted).toEqual([
+			{
+				channel: 'C-test',
+				thread_ts: '2.3',
+				text: data.text,
+				blocks: data.blocks,
+				unfurl_links: false,
+				unfurl_media: false,
+			},
+		]);
+		expect(posted[0]).not.toHaveProperty('markdown_text');
+	});
+
+	test('returns validated blocks without posting when no Slack token was supplied', async () => {
+		const tool = replyInThread({ channelId: 'C-local', threadTs: '1.2' });
+		const blocks = [{ type: 'divider' as const }];
+
+		await expect(
+			tool.run({
+				data: { text: 'fallback', blocks },
+				toolCallId: 'local-blocks',
+				log: { info() {}, warn() {}, error() {} },
+			}),
+		).resolves.toEqual({
+			output: { posted: false, text: 'fallback', blocks, channel: null, ts: null },
+		});
+	});
+
+	test('rejects unsupported blocks at the tool input boundary', () => {
+		const tool = replyInThread({ channelId: 'C-local', threadTs: '1.2' });
+
+		const result = v.safeParse(tool.input, {
+			text: 'look',
+			blocks: [{ type: 'image', image_url: 'https://attacker.example/pixel.png', alt_text: 'x' }],
+		});
+
+		expect(result.success).toBe(false);
 	});
 
 	test('posts with the injected token and thread reference', async () => {
@@ -159,8 +235,16 @@ describe('slack WebClient factory', () => {
 				log: { info() {}, warn() {}, error() {} },
 			}),
 		).resolves.toEqual({
-			output: { posted: true, text: 'hello Slack', channel: null, ts: null },
+			output: { posted: true, text: 'hello Slack', blocks: null, channel: null, ts: null },
 		});
-		expect(posted).toEqual([{ channel: 'C-test', thread_ts: '2.3', markdown_text: 'hello Slack' }]);
+		expect(posted).toEqual([
+			{
+				channel: 'C-test',
+				thread_ts: '2.3',
+				markdown_text: 'hello Slack',
+				unfurl_links: false,
+				unfurl_media: false,
+			},
+		]);
 	});
 });
