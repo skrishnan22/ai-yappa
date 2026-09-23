@@ -20,7 +20,7 @@ import type { FileStat, Sandbox, SandboxDriver, SandboxFactory } from '@flue/run
 
 export const CONTAINER_SNAPSHOT_NAME = 'slack-agent-container-v2';
 
-export const CONTAINER_AUTO_STOP_MINUTES = 15;
+export const CONTAINER_AUTO_STOP_MINUTES = 3;
 
 export const CONTAINER_AUTO_ARCHIVE_MINUTES = 7 * 24 * 60;
 
@@ -56,10 +56,12 @@ export type DaytonaSandboxLike = {
 	id: string;
 	sandboxClass?: SandboxClass;
 	state?: SandboxState;
+	autoStopInterval?: number;
 	refreshData(): Promise<void>;
 	stop(timeout?: number, force?: boolean): Promise<void>;
 	start(timeout?: number): Promise<void>;
 	delete?(timeout?: number, wait?: boolean): Promise<void>;
+	setAutostopInterval?(interval: number): Promise<void>;
 	fs: {
 		downloadFile(remotePath: string): Promise<Buffer>;
 		uploadFile(file: Buffer, remotePath: string): Promise<void>;
@@ -389,14 +391,24 @@ async function findConversationSandbox(
 	return matches[0];
 }
 
+async function applyContainerIdlePolicy(sandbox: DaytonaSandboxLike): Promise<void> {
+	if (sandbox.autoStopInterval === CONTAINER_AUTO_STOP_MINUTES) return;
+	await sandbox.setAutostopInterval?.(CONTAINER_AUTO_STOP_MINUTES);
+}
+
 async function startConversationSandbox(sandbox: DaytonaSandboxLike): Promise<DaytonaSandboxLike> {
 	await sandbox.refreshData();
 	assertContainer(sandbox);
 
-	if (sandbox.state === SandboxState.STARTED) return sandbox;
+	if (sandbox.state === SandboxState.STARTED) {
+		await applyContainerIdlePolicy(sandbox);
+
+		return sandbox;
+	}
 
 	if (sandbox.state === SandboxState.STOPPED || sandbox.state === SandboxState.ARCHIVED) {
 		await sandbox.start(180);
+		await applyContainerIdlePolicy(sandbox);
 
 		return sandbox;
 	}

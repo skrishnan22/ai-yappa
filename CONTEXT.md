@@ -123,5 +123,5 @@ A Flue-declared remote MCP server whose discovered or explicitly allowlisted too
 _Avoid_: Sandbox CLI, Credential Proxy operation, personal integration
 
 **Sandbox Lease**:
-A temporary attachment of Sandbox compute to one Agent Conversation. It is reused during active work, kept running for at most fifteen idle minutes by default, then stopped while its filesystem is retained. Starting or replacing it does not change conversation identity; no process is expected to survive a stop.
+A temporary attachment of Sandbox compute to one Agent Conversation. It is reused during active work, kept running for at most three idle minutes by default, then stopped while its filesystem is retained. Starting or replacing it does not change conversation identity; no process is expected to survive a stop.
 _Avoid_: Sandbox ownership, permanent VM, session

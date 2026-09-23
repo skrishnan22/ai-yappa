@@ -40,7 +40,7 @@ M1 acceptance:
 
 1. Mentioning the agent in a mapped channel produces a threaded reply containing real output from inside the sandbox.
 2. A second message in the same thread reaches the **same** conversation (same Flue agent ID). Unmentioned replies in a thread the bot never joined are dropped (`getAgentInstance` is null).
-3. The Daytona sandbox class is `container`; creation sets a 15-minute auto-stop, disables auto-pause and auto-delete, and does not make the sandbox ephemeral. No test or production path calls `pause()`. Stop/start filesystem survival is asserted in `src/sandboxes/daytona.test.ts`.
+3. The Daytona sandbox class is `container`; creation sets a 3-minute auto-stop, disables auto-pause and auto-delete, and does not make the sandbox ephemeral. No test or production path calls `pause()`. Stop/start filesystem survival is asserted in `src/sandboxes/daytona.test.ts`.
 4. Deferred to M4: command results carry `commandId` and fencing token; kill the sandbox mid-command and record `Unknown Tool Outcome` rather than a failure.
 5. The channel→repo mapping and invoker allowlist exist as config (hardcoded config file is fine for M1).
 6. `README.md` documents local dev (`vite dev` + tunnel for Slack events), deployment, and the container lifecycle.
