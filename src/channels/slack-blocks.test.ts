@@ -114,6 +114,27 @@ describe('replyBlocksSchema', () => {
 		);
 	});
 
+	test('rejects non-finite chart and table numbers', () => {
+		const overflowing: unknown = JSON.parse('{"value":1e400}');
+		const { value } = v.parse(v.object({ value: v.number() }), overflowing);
+
+		expect(
+			issues([
+				{
+					type: 'data_visualization',
+					title: 'Split',
+					chart: { type: 'pie', segments: [{ label: 'Overflow', value }] },
+				},
+			]),
+		).not.toEqual([]);
+		expect(
+			issues([barChart([{ name: 'A', data: [{ label: 'Mon', value: Number.NaN }] }], ['Mon'])]),
+		).not.toEqual([]);
+		expect(
+			issues([table([[text('N')], [{ type: 'raw_number', value: Number.NEGATIVE_INFINITY }]])]),
+		).not.toEqual([]);
+	});
+
 	test('rejects non-positive pie segments', () => {
 		expect(
 			issues([

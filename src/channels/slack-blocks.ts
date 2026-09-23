@@ -17,6 +17,8 @@ function boundedString(max: number) {
 	return v.pipe(v.string(), v.minLength(1), v.maxLength(max));
 }
 
+const finiteNumber = v.pipe(v.number(), v.finite());
+
 const blockId = v.optional(boundedString(255));
 
 function plainText(max: number) {
@@ -80,7 +82,7 @@ const chartLabel = boundedString(20);
 const pieChart = v.strictObject({
 	type: v.literal('pie'),
 	segments: v.pipe(
-		v.array(v.strictObject({ label: chartLabel, value: v.pipe(v.number(), v.gtValue(0)) })),
+		v.array(v.strictObject({ label: chartLabel, value: v.pipe(finiteNumber, v.gtValue(0)) })),
 		v.minLength(1),
 		v.maxLength(12),
 	),
@@ -89,7 +91,7 @@ const pieChart = v.strictObject({
 const dataSeries = v.strictObject({
 	name: chartLabel,
 	data: v.pipe(
-		v.array(v.strictObject({ label: chartLabel, value: v.number() })),
+		v.array(v.strictObject({ label: chartLabel, value: finiteNumber })),
 		v.minLength(1),
 		v.maxLength(20),
 	),
@@ -176,7 +178,7 @@ const tableCell = v.variant('type', [
 	v.strictObject({ type: v.literal('raw_text'), text: v.pipe(v.string(), v.minLength(1)) }),
 	v.strictObject({
 		type: v.literal('raw_number'),
-		value: v.number(),
+		value: finiteNumber,
 		text: v.optional(v.pipe(v.string(), v.minLength(1))),
 	}),
 ]);
@@ -193,8 +195,8 @@ const dataTableBlock = v.pipe(
 			v.minLength(2),
 			v.maxLength(201),
 		),
-		page_size: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(100))),
-		row_header_column_index: v.optional(v.pipe(v.number(), v.integer(), v.minValue(0))),
+		page_size: v.optional(v.pipe(finiteNumber, v.integer(), v.minValue(1), v.maxValue(100))),
+		row_header_column_index: v.optional(v.pipe(finiteNumber, v.integer(), v.minValue(0))),
 	}),
 	v.rawCheck(({ dataset, addIssue }) => {
 		if (!dataset.typed) return;
