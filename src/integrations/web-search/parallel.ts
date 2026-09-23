@@ -29,15 +29,17 @@ export function createParallelProvider(args: {
 				advanced_settings: { max_results: input.maxResults },
 			};
 
+			const searchResults = await postProviderJson({
+				provider: 'parallel',
+				url: SEARCH_URL,
+				apiKey,
+				fetchImpl,
+				body,
+			});
+
 			return {
 				provider: 'parallel',
-				searchResults: await postProviderJson({
-					provider: 'parallel',
-					url: SEARCH_URL,
-					apiKey,
-					fetchImpl,
-					body,
-				}),
+				searchResults,
 			};
 		},
 		async fetch(input: FetchInput): Promise<FetchResult> {
@@ -48,15 +50,17 @@ export function createParallelProvider(args: {
 				},
 			};
 
+			const fetchResults = await postProviderJson({
+				provider: 'parallel',
+				url: EXTRACT_URL,
+				apiKey,
+				fetchImpl,
+				body,
+			});
+
 			return {
 				provider: 'parallel',
-				fetchResults: await postProviderJson({
-					provider: 'parallel',
-					url: EXTRACT_URL,
-					apiKey,
-					fetchImpl,
-					body,
-				}),
+				fetchResults,
 			};
 		},
 	};

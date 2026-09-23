@@ -37,16 +37,16 @@ export async function postProviderJson(args: {
 	const text = await response.text();
 
 	if (response.ok) {
-		const body = parseJsonBody(text);
+		try {
+			const body: unknown = JSON.parse(text);
 
-		if (body === undefined) {
+			return v.parse(jsonValueSchema, body);
+		} catch {
 			throw new ProviderUnavailableError(
 				`${args.provider} returned HTTP ${response.status} with non-JSON body`,
 				TRANSIENT_COOLDOWN_MS,
 			);
 		}
-
-		return body;
 	}
 
 	const errorBody = text.trim().slice(0, 200);
@@ -84,21 +84,6 @@ function parseRetryAfterMs(header: string | null): number | undefined {
 	const dateMs = Date.parse(header);
 
 	if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now());
-
-	return undefined;
-}
-
-/** Valid JSON value, or undefined when the body is not JSON. */
-function parseJsonBody(text: string): JsonValue | undefined {
-	if (!text) return undefined;
-
-	try {
-		const parsed: unknown = JSON.parse(text);
-
-		if (v.is(jsonValueSchema, parsed)) return parsed;
-	} catch {
-		return undefined;
-	}
 
 	return undefined;
 }

@@ -45,9 +45,9 @@ export function createWebSearchRouter(args: {
 	const now = args.now ?? Date.now;
 	const cooldown = args.cooldown ?? sharedCooldown;
 
-	async function runStacked<T>(
-		op: 'search' | 'fetch',
-		call: (provider: WebSearchProvider) => Promise<T>,
+	async function withProviderFallback<T>(
+		operation: 'search' | 'fetch',
+		execute: (provider: WebSearchProvider) => Promise<T>,
 	): Promise<T> {
 		if (args.providers.length === 0) {
 			throw new Error('No web search providers configured (set EXA_API_KEY or PARALLEL_API_KEY)');
@@ -56,10 +56,9 @@ export function createWebSearchRouter(args: {
 		const failures: string[] = [];
 
 		for (const provider of args.providers) {
-			const at = now();
 			const unavailableUntil = cooldown.get(provider.id);
 
-			if (unavailableUntil !== undefined && unavailableUntil > at) {
+			if (unavailableUntil && unavailableUntil > now()) {
 				failures.push(`${provider.id}: cooling until ${new Date(unavailableUntil).toISOString()}`);
 				continue;
 			}
@@ -67,7 +66,9 @@ export function createWebSearchRouter(args: {
 			cooldown.delete(provider.id);
 
 			try {
-				return await call(provider);
+				const result = await execute(provider);
+
+				return result;
 			} catch (error) {
 				if (error instanceof ProviderUnavailableError) {
 					cooldown.set(provider.id, now() + error.cooldownMs);
@@ -77,17 +78,19 @@ export function createWebSearchRouter(args: {
 
 				if (error instanceof Error) throw error;
 
-				throw new Error(`${op} failed`, { cause: error });
+				throw new Error(`${operation} failed`, { cause: error });
 			}
 		}
 
 		throw new Error(
-			`web_${op} failed for all providers: ${failures.join('; ') || 'none available'}`,
+			`web_${operation} failed for all providers: ${failures.join('; ') || 'none available'}`,
 		);
 	}
 
 	return {
-		search: (input: SearchInput) => runStacked('search', (provider) => provider.search(input)),
-		fetch: (input: FetchInput) => runStacked('fetch', (provider) => provider.fetch(input)),
+		search: (input: SearchInput) =>
+			withProviderFallback('search', (provider) => provider.search(input)),
+		fetch: (input: FetchInput) =>
+			withProviderFallback('fetch', (provider) => provider.fetch(input)),
 	};
 }

@@ -29,15 +29,17 @@ export function createExaProvider(args: {
 				contents: { highlights: true },
 			};
 
+			const searchResults = await postProviderJson({
+				provider: 'exa',
+				url: SEARCH_URL,
+				apiKey,
+				fetchImpl,
+				body,
+			});
+
 			return {
 				provider: 'exa',
-				searchResults: await postProviderJson({
-					provider: 'exa',
-					url: SEARCH_URL,
-					apiKey,
-					fetchImpl,
-					body,
-				}),
+				searchResults,
 			};
 		},
 		async fetch(input: FetchInput): Promise<FetchResult> {
@@ -46,15 +48,17 @@ export function createExaProvider(args: {
 				text: { maxCharacters: MAX_FETCH_CHARACTERS_PER_URL },
 			};
 
+			const fetchResults = await postProviderJson({
+				provider: 'exa',
+				url: CONTENTS_URL,
+				apiKey,
+				fetchImpl,
+				body,
+			});
+
 			return {
 				provider: 'exa',
-				fetchResults: await postProviderJson({
-					provider: 'exa',
-					url: CONTENTS_URL,
-					apiKey,
-					fetchImpl,
-					body,
-				}),
+				fetchResults,
 			};
 		},
 	};
