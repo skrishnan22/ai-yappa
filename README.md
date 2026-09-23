@@ -28,6 +28,8 @@ GITHUB_APP_INSTALLATION_ID=
 CLOUDFLARE_MCP_API_TOKEN=
 HONEYCOMB_MCP_API_TOKEN=
 LANGFUSE_MCP_BASIC_AUTH=
+EXA_API_KEY=
+PARALLEL_API_KEY=
 ```
 
 `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` are optional. If both are set, hydration configures that identity in the cloned repo (GitHub App bot: `{slug}[bot]` / `{id}+{slug}[bot]@users.noreply.github.com`). If neither is set, commits would otherwise be `root` — do not guess. If only one is set, boot fails.
@@ -36,6 +38,8 @@ LANGFUSE_MCP_BASIC_AUTH=
 
 `LANGFUSE_MCP_BASIC_AUTH` is the base64 encoding of the US project's
 `public-key:secret-key`. It is optional; leave it empty to skip Langfuse trace analysis.
+
+`EXA_API_KEY` and `PARALLEL_API_KEY` are optional. When at least one is set, Coworker mounts native `web_search` / `web_fetch` tools that call those providers' REST APIs (Exa first, then Parallel when Exa is unavailable). Tool output is `{ provider, searchResults|fetchResults }` with the provider's own JSON body. Missing both keys skips the tools. Keys stay Worker-side; they never enter Daytona.
 
 GitHub tools require `GITHUB_APP_ID`, the RSA `.pem` GitHub downloads for `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_APP_INSTALLATION_ID`. PEM values may use `\n` in `.dev.vars`. Install the App only on the enrolled pilot repository. Its minimum application permissions are **Contents: Read and write**, **Pull requests: Read and write**, and **Issues: Read-only** (GitHub grants metadata read access automatically); do not grant administration, workflows/actions, deployments, secrets, or merge bypass.
 
@@ -126,7 +130,7 @@ A threaded reply that reflects work in the already-cloned repo (not clone/`ls` a
 npm run deploy
 ```
 
-Use a Cloudflare account that is not the Codevil account. `npx wrangler secret put OPENCODE_API_KEY` (and the Slack/Daytona/GitHub secrets). Optional catalog secrets such as `CLOUDFLARE_MCP_API_TOKEN`, `HONEYCOMB_MCP_API_TOKEN`, and `LANGFUSE_MCP_BASIC_AUTH` use the same command. If `CLOUDFLARE_API_TOKEN` is set in the shell (or `.env`) to an MCP-scoped token, unset it for Wrangler commands so the CLI can use `wrangler login` or a token with **Workers Scripts Write**. Do not put secrets in git.
+Use a Cloudflare account that is not the Codevil account. `npx wrangler secret put OPENCODE_API_KEY` (and the Slack/Daytona/GitHub secrets). Optional catalog secrets such as `CLOUDFLARE_MCP_API_TOKEN`, `HONEYCOMB_MCP_API_TOKEN`, and `LANGFUSE_MCP_BASIC_AUTH` use the same command, as do optional web-search keys `EXA_API_KEY` and `PARALLEL_API_KEY`. If `CLOUDFLARE_API_TOKEN` is set in the shell (or `.env`) to an MCP-scoped token, unset it for Wrangler commands so the CLI can use `wrangler login` or a token with **Workers Scripts Write**. Do not put secrets in git.
 
 ## Observability
 

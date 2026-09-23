@@ -34,6 +34,7 @@ import {
 } from '../sandboxes/hydrate.ts';
 import { githubTools } from './github-tools.ts';
 import { coworkerModelSpecifier, coworkerThinkingLevel } from './model-route.ts';
+import { webSearchTools } from './web-search-tools.ts';
 
 observe((event, context) => {
 	const cardEvent = cardEventFromObservation(event);
@@ -100,6 +101,11 @@ export function Coworker(props: { id: string }) {
 			},
 		},
 	})) {
+		useTool(tool);
+	}
+
+	// Optional Exa / Parallel keys — same optional-secret posture as MCP catalog.
+	for (const tool of webSearchTools(process.env)) {
 		useTool(tool);
 	}
 
