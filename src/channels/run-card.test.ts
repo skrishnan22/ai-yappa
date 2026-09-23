@@ -3,7 +3,6 @@ import {
 	__resetRunCardForTests,
 	applyCardEvent,
 	bindRunCard,
-	enqueueCardEvent,
 	formatElapsed,
 	publishCardEvent,
 	formatModelRoute,
@@ -265,6 +264,52 @@ describe('formatElapsed', () => {
 });
 
 describe('publishCardEvent', () => {
+	test('posts once when hydration overlaps a new submission', async () => {
+		const posts: Array<{ ts: string }> = [];
+		const updates: Array<{ ts: string }> = [];
+		let releasePost = () => {};
+
+		const postGate = new Promise<void>((resolve) => {
+			releasePost = resolve;
+		});
+
+		const port: SlackCardPort = {
+			async post() {
+				const ts = `card-${posts.length + 1}`;
+				posts.push({ ts });
+				await postGate;
+
+				return { ts };
+			},
+			async update(args) {
+				updates.push({ ts: args.ts });
+			},
+			async notify() {},
+		};
+
+		bindRunCard({
+			instanceId: 'conversation-1',
+			channelId: 'C1',
+			threadTs: '1.2',
+			state: working({ status: 'completed', step: 'Completed', messageTs: 'old.ts' }),
+			persist() {},
+			port,
+		});
+
+		const running = publishCardEvent(
+			routed({ type: 'submission_running', submissionId: 'sub-2' }),
+			1_000,
+		);
+
+		const hydration = publishCardEvent(routed({ type: 'hydration', phase: 'start' }), 1_000);
+
+		releasePost();
+		await Promise.all([running, hydration]);
+
+		expect(posts).toEqual([{ ts: 'card-1' }]);
+		expect(updates).toEqual([{ ts: 'card-1' }]);
+	});
+
 	test('stamps model route from bindRunCard onto the posted card', async () => {
 		const posts: Array<{ text: string; blocks: unknown }> = [];
 
@@ -504,7 +549,7 @@ describe('publishCardEvent', () => {
 			2_000,
 		);
 
-		await enqueueCardEvent(
+		await publishCardEvent(
 			routed({ type: 'submission_settled', submissionId: 'sub-1', outcome: 'completed' }),
 			3_000,
 		);
@@ -540,7 +585,7 @@ describe('publishCardEvent', () => {
 
 		await publishCardEvent(routed({ type: 'submission_running', submissionId: 'sub-1' }), 1_000);
 		await expect(
-			enqueueCardEvent(
+			publishCardEvent(
 				routed({
 					type: 'submission_settled',
 					submissionId: 'sub-1',

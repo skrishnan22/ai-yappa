@@ -16,7 +16,6 @@ import * as v from 'valibot';
 import { jsonValueSchema } from '../json.ts';
 import {
 	bindRunCard,
-	enqueueCardEvent,
 	publishCardEvent,
 	type CardEvent,
 	type RunCardState,
@@ -41,7 +40,7 @@ observe((event, context) => {
 
 	if (!cardEvent) return Promise.resolve();
 
-	return enqueueCardEvent({ ...cardEvent, instanceId: context.id });
+	return publishCardEvent({ ...cardEvent, instanceId: context.id });
 });
 
 const initialDataSchema = v.object({

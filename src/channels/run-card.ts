@@ -131,19 +131,19 @@ export function __resetRunCardForTests(): void {
 	handles.clear();
 }
 
-export function enqueueCardEvent(event: RoutedCardEvent, now = Date.now()): Promise<void> {
+export function publishCardEvent(event: RoutedCardEvent, now = Date.now()): Promise<void> {
 	const handle = handles.get(event.instanceId);
 
 	if (handle === undefined) return Promise.resolve();
 	handle.chain = handle.chain.then(
-		() => publishCardEvent(event, now).catch(() => publishCardEvent(event, now)),
-		() => publishCardEvent(event, now),
+		() => deliverCardEvent(event, now).catch(() => deliverCardEvent(event, now)),
+		() => deliverCardEvent(event, now),
 	);
 
 	return handle.chain;
 }
 
-export async function publishCardEvent(event: RoutedCardEvent, now = Date.now()): Promise<void> {
+async function deliverCardEvent(event: RoutedCardEvent, now: number): Promise<void> {
 	const handle = handles.get(event.instanceId);
 
 	if (handle === undefined) return;
