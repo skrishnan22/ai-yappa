@@ -1,6 +1,8 @@
 import { defineTool } from '@flue/runtime';
 import { WebClient } from '@slack/web-api';
 import * as v from 'valibot';
+import { jsonObjectSchema } from '../json.ts';
+import { replyBlocksSchema } from './slack-blocks.ts';
 
 export function slackFetch(url: string | URL, init?: RequestInit): Promise<Response> {
 	return fetch(url, init?.redirect === 'error' ? { ...init, redirect: 'manual' } : init);
@@ -63,15 +65,25 @@ export function replyInThread(
 ) {
 	return defineTool({
 		name: 'reply_in_slack_thread',
-		description:
-			'Reply in the Slack thread bound to this conversation. Include full exact operational identifiers; never abbreviate trace IDs, request IDs, commit hashes, or similar values with ... or ….',
-		input: v.object({ text: v.pipe(v.string(), v.minLength(1)) }),
+		description: [
+			'Reply in the Slack thread bound to this conversation.',
+			'By default `text` is the whole reply, written in Markdown.',
+			'Add `blocks` (native Slack Block Kit) only when a chart, table, or composed layout helps the reader; then `text` is the notification and screen-reader fallback and must state the substantive takeaway, including a verbal summary of any chart.',
+			'Allowed blocks: markdown, header, divider, text-only section and context, data_visualization, and data_table with raw_text or raw_number cells. Images, accessories, and interactive elements are rejected.',
+			'Compute chart and table values from the repo or tools; never estimate them.',
+			'Include full exact operational identifiers; never abbreviate trace IDs, request IDs, commit hashes, or similar values with ... or ….',
+		].join(' '),
+		input: v.object({
+			text: v.pipe(v.string(), v.minLength(1)),
+			blocks: v.optional(replyBlocksSchema),
+		}),
 		async run({ data }) {
 			if (!slackBotToken) {
 				return {
 					output: {
 						posted: false,
 						text: data.text,
+						blocks: data.blocks ? v.parse(v.array(jsonObjectSchema), data.blocks) : null,
 						channel: null,
 						ts: null,
 					},
@@ -81,13 +93,16 @@ export function replyInThread(
 			const result = await getSlackClient(slackBotToken).chat.postMessage({
 				channel: ref.channelId,
 				thread_ts: ref.threadTs,
-				markdown_text: data.text,
+				...(data.blocks ? { text: data.text, blocks: data.blocks } : { markdown_text: data.text }),
+				unfurl_links: false,
+				unfurl_media: false,
 			});
 
 			return {
 				output: {
 					posted: true,
 					text: data.text,
+					blocks: null,
 					channel: result.channel ?? null,
 					ts: result.ts ?? null,
 				},

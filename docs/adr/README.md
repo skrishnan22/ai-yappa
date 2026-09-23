@@ -21,3 +21,4 @@
 | 0015 Daytona for sandbox compute | Holds (spec D2). Direct Durable Object control; container filesystem persists across stop/start; Git remains recovery truth |
 | 0016 Simplify GitHub authorization inside the Worker | Holds (spec D13, D14) for **native** Credential Proxy ops. Direct trusted context policy with bounded checkpoint-token exposure |
 | 0017 Open MCP catalog with deployment secrets | Holds, amended for per-row Basic auth and fixed tool allowlists. Langfuse mounts read-only trace-analysis tools; existing open Bearer mounts are unchanged |
+| 0019 Model-authored Block Kit replies | Holds. Markdown by default; native model-authored blocks validated at the posting boundary. App-callback controls require implemented handlers |
