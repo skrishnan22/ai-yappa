@@ -1,7 +1,7 @@
 import { defineTool } from '@flue/runtime';
 import { WebClient } from '@slack/web-api';
 import * as v from 'valibot';
-import { jsonObjectSchema } from '../json.ts';
+import { errorMessage, jsonObjectSchema } from '../json.ts';
 import { replyBlocksSchema } from './slack-blocks.ts';
 
 export function slackFetch(url: string | URL, init?: RequestInit): Promise<Response> {
@@ -59,6 +59,32 @@ export function __setSlackClientFactoryForTests(factory?: SlackClientFactory): v
 	__resetSlackClientForTests();
 }
 
+const SLACK_ERROR_LIMIT = 500;
+
+const slackPlatformErrorSchema = v.looseObject({
+	data: v.looseObject({
+		error: v.pipe(v.string(), v.minLength(1)),
+	}),
+});
+
+function slackErrorCode(cause: unknown): string {
+	const message = v.is(slackPlatformErrorSchema, cause) ? cause.data.error : errorMessage(cause);
+
+	return message.slice(0, SLACK_ERROR_LIMIT);
+}
+
+function logSlackPost(fields: Record<string, string | number | boolean>): void {
+	const line = JSON.stringify({
+		event: 'slack.post_message',
+		service: 'slack-agent',
+		timestamp: new Date().toISOString(),
+		...fields,
+	});
+
+	if ('error' in fields) console.warn(line);
+	else console.log(line);
+}
+
 export function replyInThread(
 	ref: { channelId: string; threadTs: string },
 	slackBotToken?: string,
@@ -77,7 +103,7 @@ export function replyInThread(
 			text: v.pipe(v.string(), v.minLength(1)),
 			blocks: v.optional(replyBlocksSchema),
 		}),
-		async run({ data }) {
+		async run({ data, toolCallId }) {
 			if (!slackBotToken) {
 				return {
 					output: {
@@ -90,23 +116,47 @@ export function replyInThread(
 				};
 			}
 
-			const result = await getSlackClient(slackBotToken).chat.postMessage({
+			const payload = {
 				channel: ref.channelId,
 				thread_ts: ref.threadTs,
 				...(data.blocks ? { text: data.text, blocks: data.blocks } : { markdown_text: data.text }),
 				unfurl_links: false,
 				unfurl_media: false,
-			});
-
-			return {
-				output: {
-					posted: true,
-					text: data.text,
-					blocks: null,
-					channel: result.channel ?? null,
-					ts: result.ts ?? null,
-				},
 			};
+
+			const startedAt = Date.now();
+
+			const postLog = {
+				toolCallId,
+				channel: ref.channelId,
+				blocks: data.blocks !== undefined,
+				blockCount: data.blocks?.length ?? 0,
+				payloadBytes: JSON.stringify(payload).length,
+			};
+
+			try {
+				const result = await getSlackClient(slackBotToken).chat.postMessage(payload);
+
+				logSlackPost({ ...postLog, durationMs: Date.now() - startedAt, ok: true });
+
+				return {
+					output: {
+						posted: true,
+						text: data.text,
+						blocks: null,
+						channel: result.channel ?? null,
+						ts: result.ts ?? null,
+					},
+				};
+			} catch (cause) {
+				logSlackPost({
+					...postLog,
+					durationMs: Date.now() - startedAt,
+					ok: false,
+					error: slackErrorCode(cause),
+				});
+				throw cause;
+			}
 		},
 	});
 }

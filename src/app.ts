@@ -2,11 +2,13 @@ import { Hono } from 'hono';
 import { instrument } from '@flue/runtime';
 import { createSlackChannelForEnv } from './channels/slack.ts';
 import { loadServerEnv } from './env.ts';
+import { registerEventLog } from './event-log.ts';
 
 // Capture full agent content for the single-user observability pilot.
 if (process.env.NODE_ENV !== 'test') {
 	const { createCloudflareTracing } = await import('@flue/runtime/cloudflare');
 	instrument(createCloudflareTracing());
+	registerEventLog();
 }
 
 const app = new Hono();
