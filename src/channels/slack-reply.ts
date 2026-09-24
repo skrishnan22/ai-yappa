@@ -73,16 +73,20 @@ function slackErrorCode(cause: unknown): string {
 	return message.slice(0, SLACK_ERROR_LIMIT);
 }
 
-function logSlackPost(fields: Record<string, string | number | boolean>): void {
-	const line = JSON.stringify({
-		event: 'slack.post_message',
-		service: 'slack-agent',
-		timestamp: new Date().toISOString(),
-		...fields,
-	});
+function logReplyPost(fields: Record<string, string | number | boolean>): void {
+	try {
+		const line = JSON.stringify({
+			event: 'slack.reply_post',
+			service: 'slack-agent',
+			timestamp: new Date().toISOString(),
+			...fields,
+		});
 
-	if ('error' in fields) console.warn(line);
-	else console.log(line);
+		if ('error' in fields) console.warn(line);
+		else console.log(line);
+	} catch {
+		// A log failure must not turn a delivered reply into a failed tool call the model retries.
+	}
 }
 
 export function replyInThread(
@@ -131,25 +135,15 @@ export function replyInThread(
 				channel: ref.channelId,
 				blocks: data.blocks !== undefined,
 				blockCount: data.blocks?.length ?? 0,
-				payloadBytes: JSON.stringify(payload).length,
+				payloadBytes: new TextEncoder().encode(JSON.stringify(payload)).length,
 			};
 
+			let result: Awaited<ReturnType<SlackBotClient['chat']['postMessage']>>;
+
 			try {
-				const result = await getSlackClient(slackBotToken).chat.postMessage(payload);
-
-				logSlackPost({ ...postLog, durationMs: Date.now() - startedAt, ok: true });
-
-				return {
-					output: {
-						posted: true,
-						text: data.text,
-						blocks: null,
-						channel: result.channel ?? null,
-						ts: result.ts ?? null,
-					},
-				};
+				result = await getSlackClient(slackBotToken).chat.postMessage(payload);
 			} catch (cause) {
-				logSlackPost({
+				logReplyPost({
 					...postLog,
 					durationMs: Date.now() - startedAt,
 					ok: false,
@@ -157,6 +151,18 @@ export function replyInThread(
 				});
 				throw cause;
 			}
+
+			logReplyPost({ ...postLog, durationMs: Date.now() - startedAt, ok: true });
+
+			return {
+				output: {
+					posted: true,
+					text: data.text,
+					blocks: null,
+					channel: result.channel ?? null,
+					ts: result.ts ?? null,
+				},
+			};
 		},
 	});
 }

@@ -345,7 +345,7 @@ describe('slack WebClient factory', () => {
 
 		expect(console.log).not.toHaveBeenCalled();
 		expect(JSON.parse(String(vi.mocked(console.warn).mock.calls[0]?.[0]))).toMatchObject({
-			event: 'slack.post_message',
+			event: 'slack.reply_post',
 			toolCallId: 'post-fail',
 			channel: 'C-test',
 			blocks: true,
@@ -353,5 +353,22 @@ describe('slack WebClient factory', () => {
 			ok: false,
 			error: 'invalid_blocks',
 		});
+	});
+
+	test('reports a delivered reply as posted when logging throws', async () => {
+		__setSlackClientFactoryForTests(fakeClient);
+		vi.mocked(console.log).mockImplementation(() => {
+			throw new Error('console unavailable');
+		});
+		const tool = replyInThread({ channelId: 'C-test', threadTs: '2.3' }, 'xoxb-injected');
+
+		await expect(
+			tool.run({
+				data: { text: 'hello Slack' },
+				toolCallId: 'post-log-throws',
+				log: { info() {}, warn() {}, error() {} },
+			}),
+		).resolves.toMatchObject({ output: { posted: true } });
+		expect(posted).toHaveLength(1);
 	});
 });

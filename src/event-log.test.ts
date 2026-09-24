@@ -46,6 +46,7 @@ describe('formatEventLog', () => {
 					isError: true,
 					durationMs: 4,
 					result,
+					errorInfo: { type: 'tool_input_validation', message: `schema rejected: ${detail}` },
 				}),
 			),
 		).toEqual({
@@ -61,6 +62,7 @@ describe('formatEventLog', () => {
 			isError: true,
 			durationMs: 4,
 			resultBytes: JSON.stringify(result).length,
+			errorType: 'tool_input_validation',
 			error: `schema rejected: ${detail}`.slice(0, 500),
 		});
 	});
