@@ -89,6 +89,10 @@ type SubmissionBoundaryEvent = Extract<
 
 type PendingBoundary = { event: SubmissionBoundaryEvent; now: number };
 
+const MAX_PENDING_CONVERSATIONS = 128;
+
+const MAX_PENDING_BOUNDARIES_PER_CONVERSATION = 8;
+
 const pendingBoundaries = new Map<string, PendingBoundary[]>();
 
 export function bindRunCard(args: {
@@ -156,7 +160,16 @@ export function publishCardEvent(event: RoutedCardEvent, now = Date.now()): Prom
 	if (handle === undefined) {
 		if (isSubmissionBoundary(event)) {
 			const pending = pendingBoundaries.get(event.instanceId) ?? [];
+
+			if (pending.length === 0 && pendingBoundaries.size >= MAX_PENDING_CONVERSATIONS) {
+				const oldestInstanceId = pendingBoundaries.keys().next().value;
+
+				if (oldestInstanceId !== undefined) pendingBoundaries.delete(oldestInstanceId);
+			}
+
+			if (pending.length >= MAX_PENDING_BOUNDARIES_PER_CONVERSATION) pending.shift();
 			pending.push({ event, now });
+			pendingBoundaries.delete(event.instanceId);
 			pendingBoundaries.set(event.instanceId, pending);
 		}
 
