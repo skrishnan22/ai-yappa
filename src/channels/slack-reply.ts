@@ -69,7 +69,7 @@ export function replyInThread(
 			'Reply in the Slack thread bound to this conversation.',
 			'By default `text` is the whole reply, written in Markdown.',
 			'Add `blocks` (native Slack Block Kit) only when a chart, table, or composed layout helps the reader; then `text` is the notification and screen-reader fallback and must state the substantive takeaway, including a verbal summary of any chart.',
-			'Allowed blocks: markdown, header, divider, text-only section and context, data_visualization, and data_table with raw_text or raw_number cells. Images, accessories, and interactive elements are rejected.',
+			'Allowed blocks: markdown, header, divider, text-only section and context, data_visualization, and data_table. Cells may be raw_text, raw_number, a string, or a number. Header text may be plain_text or a string. Images, accessories, and interactive elements are rejected.',
 			'Compute chart and table values from the repo or tools; never estimate them.',
 			'Include full exact operational identifiers; never abbreviate trace IDs, request IDs, commit hashes, or similar values with ... or ….',
 		].join(' '),
