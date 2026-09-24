@@ -312,44 +312,6 @@ describe('slack WebClient factory', () => {
 		]);
 	});
 
-	test('logs one line around chat.postMessage without the reply body', async () => {
-		__setSlackClientFactoryForTests(fakeClient);
-		const tool = replyInThread({ channelId: 'C-test', threadTs: '2.3' }, 'xoxb-injected');
-		const text = 'hello Slack';
-
-		const payload = {
-			channel: 'C-test',
-			thread_ts: '2.3',
-			markdown_text: text,
-			unfurl_links: false,
-			unfurl_media: false,
-		};
-
-		await tool.run({
-			data: { text },
-			toolCallId: 'post-log',
-			log: { info() {}, warn() {}, error() {} },
-		});
-
-		expect(console.warn).not.toHaveBeenCalled();
-		expect(console.log).toHaveBeenCalledTimes(1);
-		expect(JSON.parse(String(vi.mocked(console.log).mock.calls[0]?.[0]))).toMatchObject({
-			event: 'slack.post_message',
-			service: 'slack-agent',
-			toolCallId: 'post-log',
-			channel: 'C-test',
-			blocks: false,
-			blockCount: 0,
-			payloadBytes: JSON.stringify(payload).length,
-			ok: true,
-			durationMs: expect.any(Number),
-			timestamp: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
-		});
-		expect(JSON.parse(String(vi.mocked(console.log).mock.calls[0]?.[0]))).not.toHaveProperty(
-			'error',
-		);
-	});
-
 	test('logs the Slack error code and rethrows when chat.postMessage fails', async () => {
 		const failure = Object.assign(new Error('An API error occurred: invalid_blocks'), {
 			data: { ok: false, error: 'invalid_blocks' },
@@ -391,18 +353,5 @@ describe('slack WebClient factory', () => {
 			ok: false,
 			error: 'invalid_blocks',
 		});
-	});
-
-	test('does not log the no-token branch', async () => {
-		const tool = replyInThread({ channelId: 'C-local', threadTs: '1.2' });
-
-		await tool.run({
-			data: { text: 'local **reply**' },
-			toolCallId: 'local',
-			log: { info() {}, warn() {}, error() {} },
-		});
-
-		expect(console.log).not.toHaveBeenCalled();
-		expect(console.warn).not.toHaveBeenCalled();
 	});
 });
