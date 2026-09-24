@@ -100,6 +100,18 @@ describe('applyCardEvent', () => {
 		expect(applied?.state.messageTs).toBeNull();
 	});
 
+	test('a tool event from a later submission does not keep the old messageTs', () => {
+		const applied = applyCardEvent(
+			working({ messageTs: 'old.ts' }),
+			{ type: 'tool_start', submissionId: 'sub-2', toolName: 'bash' },
+			9_000,
+		);
+
+		expect(applied?.state.submissionId).toBe('sub-2');
+		expect(applied?.state.messageTs).toBeNull();
+		expect(applied?.state.step).toBe('Running a command');
+	});
+
 	test('does not downgrade working back to queued on replay', () => {
 		const applied = applyCardEvent(
 			working(),
@@ -129,11 +141,18 @@ describe('applyCardEvent', () => {
 
 	test('tool_start maps known tools and leaves unknown names readable', () => {
 		expect(
-			applyCardEvent(working(), { type: 'tool_start', toolName: 'open_pull_request' }, 2_000)?.state
-				.step,
+			applyCardEvent(
+				working(),
+				{ type: 'tool_start', submissionId: 'sub-1', toolName: 'open_pull_request' },
+				2_000,
+			)?.state.step,
 		).toBe('Opening pull request');
 		expect(
-			applyCardEvent(working(), { type: 'tool_start', toolName: 'mystery' }, 2_000)?.state.step,
+			applyCardEvent(
+				working(),
+				{ type: 'tool_start', submissionId: 'sub-1', toolName: 'mystery' },
+				2_000,
+			)?.state.step,
 		).toBe('Running mystery');
 	});
 
@@ -141,7 +160,7 @@ describe('applyCardEvent', () => {
 		expect(
 			applyCardEvent(
 				working({ status: 'completed', step: 'Completed' }),
-				{ type: 'tool_start', toolName: 'bash' },
+				{ type: 'tool_start', submissionId: 'sub-1', toolName: 'bash' },
 				2_000,
 			),
 		).toBeUndefined();
@@ -152,6 +171,7 @@ describe('applyCardEvent', () => {
 			working(),
 			{
 				type: 'tool',
+				submissionId: 'sub-1',
 				toolName: 'checkpoint_working_branch',
 				result: { output: { htmlUrl: 'https://github.com/org/repo/tree/agent/x' } },
 			},
@@ -164,6 +184,7 @@ describe('applyCardEvent', () => {
 			withBranch!.state,
 			{
 				type: 'tool',
+				submissionId: 'sub-1',
 				toolName: 'open_pull_request',
 				result: { details: { output: { htmlUrl: 'https://github.com/org/repo/pull/4' } } },
 			},
@@ -264,6 +285,38 @@ describe('formatElapsed', () => {
 });
 
 describe('publishCardEvent', () => {
+	test('replays a submission boundary that arrived before the card was bound', async () => {
+		const posts: Array<{ ts: string }> = [];
+		const updates: Array<{ ts: string }> = [];
+
+		await publishCardEvent(routed({ type: 'submission_running', submissionId: 'sub-2' }), 1_000);
+
+		bindRunCard({
+			instanceId: 'conversation-1',
+			channelId: 'C1',
+			threadTs: '1.2',
+			state: working({ messageTs: 'old.ts' }),
+			persist() {},
+			port: {
+				async post() {
+					const ts = `card-${posts.length + 1}`;
+					posts.push({ ts });
+
+					return { ts };
+				},
+				async update(args) {
+					updates.push({ ts: args.ts });
+				},
+				async notify() {},
+			},
+		});
+
+		await publishCardEvent(routed({ type: 'hydration', phase: 'start' }), 2_000);
+
+		expect(posts).toEqual([{ ts: 'card-1' }]);
+		expect(updates).toEqual([{ ts: 'card-1' }]);
+	});
+
 	test('posts once when hydration overlaps a new submission', async () => {
 		const posts: Array<{ ts: string }> = [];
 		const updates: Array<{ ts: string }> = [];
@@ -427,10 +480,14 @@ describe('publishCardEvent', () => {
 		});
 
 		await publishCardEvent(routed({ type: 'submission_running', submissionId: 'sub-1' }), 1_000);
-		await publishCardEvent(routed({ type: 'tool_start', toolName: 'bash' }), 2_000);
+		await publishCardEvent(
+			routed({ type: 'tool_start', submissionId: 'sub-1', toolName: 'bash' }),
+			2_000,
+		);
 		await publishCardEvent(
 			routed({
 				type: 'tool',
+				submissionId: 'sub-1',
 				toolName: 'open_pull_request',
 				result: { output: { htmlUrl: 'https://github.com/org/repo/pull/4' } },
 			}),
@@ -498,7 +555,10 @@ describe('publishCardEvent', () => {
 		});
 		updates.length = 0;
 		await publishCardEvent(routed({ type: 'submission_running', submissionId: 'sub-2' }), 3_000);
-		await publishCardEvent(routed({ type: 'tool_start', toolName: 'bash' }), 4_000);
+		await publishCardEvent(
+			routed({ type: 'tool_start', submissionId: 'sub-2', toolName: 'bash' }),
+			4_000,
+		);
 
 		expect(posts.map((entry) => entry.ts)).toEqual(['card-1', 'card-2']);
 		expect(persisted.at(-1)?.submissionId).toBe('sub-2');
@@ -543,6 +603,7 @@ describe('publishCardEvent', () => {
 		await publishCardEvent(
 			routed({
 				type: 'tool',
+				submissionId: 'sub-1',
 				toolName: 'open_pull_request',
 				result: { output: { htmlUrl: 'https://github.com/org/repo/pull/4' } },
 			}),

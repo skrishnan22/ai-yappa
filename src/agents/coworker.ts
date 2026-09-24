@@ -178,9 +178,15 @@ function cardEventFromObservation(event: FlueObservation): CardEvent | undefined
 			return { type: 'submission_queued', submissionId: event.submissionId };
 		case 'submission_running':
 			return { type: 'submission_running', submissionId: event.submissionId };
-		case 'tool_start':
+		case 'tool_start': {
+			if (event.submissionId === undefined) return undefined;
+
 			return { type: 'tool_start', toolName: event.toolName, submissionId: event.submissionId };
+		}
+
 		case 'tool': {
+			if (event.submissionId === undefined) return undefined;
+
 			const rawResult = event.effectiveResult ?? event.result;
 
 			return {
