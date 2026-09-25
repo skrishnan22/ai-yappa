@@ -24,8 +24,8 @@ export type CardEvent =
 	| { type: 'submission_queued'; submissionId: string }
 	| { type: 'submission_running'; submissionId: string }
 	| { type: 'hydration'; phase: 'start' | 'done'; skipped?: boolean }
-	| { type: 'tool_start'; submissionId?: string; toolName: string }
-	| { type: 'tool'; submissionId?: string; toolName: string; isError?: boolean; result?: JsonValue }
+	| { type: 'tool_start'; submissionId: string; toolName: string }
+	| { type: 'tool'; submissionId: string; toolName: string; isError?: boolean; result?: JsonValue }
 	| {
 			type: 'submission_settled';
 			submissionId: string;
@@ -82,6 +82,19 @@ type CardHandle = {
 
 const handles = new Map<string, CardHandle>();
 
+type SubmissionBoundaryEvent = Extract<
+	RoutedCardEvent,
+	{ type: 'submission_queued' | 'submission_running' }
+>;
+
+type PendingBoundary = { event: SubmissionBoundaryEvent; now: number };
+
+const MAX_PENDING_CONVERSATIONS = 128;
+
+const MAX_PENDING_BOUNDARIES_PER_CONVERSATION = 8;
+
+const pendingBoundaries = new Map<string, PendingBoundary[]>();
+
 export function bindRunCard(args: {
 	instanceId: string;
 	channelId: string;
@@ -98,6 +111,15 @@ export function bindRunCard(args: {
 	if (handle === undefined) {
 		handle = { ...args, chain: Promise.resolve() };
 		handles.set(args.instanceId, handle);
+		const pending = pendingBoundaries.get(args.instanceId);
+
+		if (pending !== undefined) {
+			pendingBoundaries.delete(args.instanceId);
+
+			for (const boundary of pending) {
+				enqueueOnHandle(handle, boundary.event, boundary.now);
+			}
+		}
 
 		return;
 	}
@@ -129,18 +151,41 @@ export function bindRunCard(args: {
 
 export function __resetRunCardForTests(): void {
 	handles.clear();
+	pendingBoundaries.clear();
 }
 
 export function publishCardEvent(event: RoutedCardEvent, now = Date.now()): Promise<void> {
 	const handle = handles.get(event.instanceId);
 
-	if (handle === undefined) return Promise.resolve();
+	if (handle === undefined) {
+		if (isSubmissionBoundary(event)) {
+			const pending = pendingBoundaries.get(event.instanceId) ?? [];
+
+			if (pending.length === 0 && pendingBoundaries.size >= MAX_PENDING_CONVERSATIONS) {
+				const oldestInstanceId = pendingBoundaries.keys().next().value;
+
+				if (oldestInstanceId !== undefined) pendingBoundaries.delete(oldestInstanceId);
+			}
+
+			if (pending.length >= MAX_PENDING_BOUNDARIES_PER_CONVERSATION) pending.shift();
+			pending.push({ event, now });
+			pendingBoundaries.delete(event.instanceId);
+			pendingBoundaries.set(event.instanceId, pending);
+		}
+
+		return Promise.resolve();
+	}
+
+	enqueueOnHandle(handle, event, now);
+
+	return handle.chain;
+}
+
+function enqueueOnHandle(handle: CardHandle, event: RoutedCardEvent, now: number): void {
 	handle.chain = handle.chain.then(
 		() => deliverCardEvent(event, now).catch(() => deliverCardEvent(event, now)),
 		() => deliverCardEvent(event, now),
 	);
-
-	return handle.chain;
 }
 
 async function deliverCardEvent(event: RoutedCardEvent, now: number): Promise<void> {
@@ -232,11 +277,13 @@ export function applyCardEvent(
 		}
 
 		case 'tool_start': {
-			if (state === null || isTerminal(state.status)) return undefined;
+			const active = stateForToolEvent(state, event.submissionId, now);
+
+			if (active === undefined) return undefined;
 
 			return {
 				state: {
-					...state,
+					...active,
 					status: 'working',
 					step: stepForTool(event.toolName),
 				},
@@ -244,16 +291,16 @@ export function applyCardEvent(
 		}
 
 		case 'tool': {
-			if (state === null || isTerminal(state.status)) return undefined;
-			const links = linksFromTool(event.toolName, event.result);
+			const active = stateForToolEvent(state, event.submissionId, now);
 
-			if (links.branchUrl === undefined && links.prUrl === undefined) return undefined;
+			if (active === undefined) return undefined;
+			const links = linksFromTool(event.toolName, event.result);
 
 			return {
 				state: {
-					...state,
-					branchUrl: links.branchUrl ?? state.branchUrl,
-					prUrl: links.prUrl ?? state.prUrl,
+					...active,
+					branchUrl: links.branchUrl ?? active.branchUrl,
+					prUrl: links.prUrl ?? active.prUrl,
 				},
 			};
 		}
@@ -288,6 +335,10 @@ export function applyCardEvent(
 			return _exhaustive;
 		}
 	}
+}
+
+function isSubmissionBoundary(event: RoutedCardEvent): event is SubmissionBoundaryEvent {
+	return event.type === 'submission_queued' || event.type === 'submission_running';
 }
 
 export type CardRender = {
@@ -396,6 +447,28 @@ function beginOrRefresh(
 			step,
 			startedAt: now,
 		},
+	};
+}
+
+function stateForToolEvent(
+	state: RunCardState | null,
+	submissionId: string,
+	now: number,
+): RunCardState | undefined {
+	if (state !== null && state.submissionId === submissionId) {
+		return isTerminal(state.status) ? undefined : state;
+	}
+
+	if (state !== null && state.submissionId === 'active' && !isTerminal(state.status)) {
+		return { ...state, submissionId };
+	}
+
+	return {
+		submissionId,
+		messageTs: null,
+		status: 'working',
+		step: 'Working',
+		startedAt: now,
 	};
 }
 
