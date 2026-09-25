@@ -4,6 +4,11 @@ import * as v from 'valibot';
 // Every object is strict, so URL-bearing fields (image_url, accessory, …) and
 // app-callback elements are rejected rather than stripped. Adding a block or
 // element type here is a reviewed capability change.
+//
+// Table cells accept a bare string or number, and header text accepts a bare
+// string; both normalize to the object form. The bare branches stay in the
+// schema so the tool JSON Schema admits them (transforms are dropped). Section
+// and context text stay objects, because plain_text and mrkdwn are both valid.
 
 const MAX_BLOCKS = 50;
 
@@ -49,7 +54,13 @@ const markdownBlock = v.strictObject({
 const headerBlock = v.strictObject({
 	type: v.literal('header'),
 	block_id: blockId,
-	text: plainText(150),
+	text: v.union([
+		plainText(150),
+		v.pipe(
+			boundedString(150),
+			v.transform((text) => ({ type: 'plain_text' as const, text })),
+		),
+	]),
 });
 
 const dividerBlock = v.strictObject({
@@ -109,10 +120,14 @@ type SeriesChart = {
 };
 
 function seriesChartIssue({ series, axis_config }: SeriesChart): string | undefined {
-	const categories = new Set(axis_config.categories);
+	const categories = new Set<string>();
 
-	if (categories.size !== axis_config.categories.length) {
-		return 'axis_config.categories must be unique';
+	for (const category of axis_config.categories) {
+		if (categories.has(category)) {
+			return `axis_config.categories lists "${category}" more than once; remove the duplicate`;
+		}
+
+		categories.add(category);
 	}
 
 	const names = new Set<string>();
@@ -125,7 +140,7 @@ function seriesChartIssue({ series, axis_config }: SeriesChart): string | undefi
 
 		for (const point of entry.data) {
 			if (!categories.has(point.label)) {
-				return `series[${index}].data label "${point.label}" is not in axis_config.categories`;
+				return `series[${index}].data label "${point.label}" is not in axis_config.categories; change the label or add "${point.label}" to axis_config.categories`;
 			}
 
 			if (seen.has(point.label)) {
@@ -174,13 +189,24 @@ const dataVisualizationBlock = v.strictObject({
 	]),
 });
 
-const tableCell = v.variant('type', [
-	v.strictObject({ type: v.literal('raw_text'), text: v.pipe(v.string(), v.minLength(1)) }),
-	v.strictObject({
-		type: v.literal('raw_number'),
-		value: finiteNumber,
-		text: v.optional(v.pipe(v.string(), v.minLength(1))),
-	}),
+const tableCell = v.union([
+	v.variant('type', [
+		v.strictObject({ type: v.literal('raw_text'), text: v.pipe(v.string(), v.minLength(1)) }),
+		v.strictObject({
+			type: v.literal('raw_number'),
+			value: finiteNumber,
+			text: v.optional(v.pipe(v.string(), v.minLength(1))),
+		}),
+	]),
+	v.pipe(
+		v.string(),
+		v.minLength(1),
+		v.transform((text) => ({ type: 'raw_text' as const, text })),
+	),
+	v.pipe(
+		finiteNumber,
+		v.transform((value) => ({ type: 'raw_number' as const, value })),
+	),
 ]);
 
 type TableCell = v.InferOutput<typeof tableCell>;
@@ -212,7 +238,7 @@ const dataTableBlock = v.pipe(
 
 		if (rowHeader !== undefined && rowHeader >= columns) {
 			addIssue({
-				message: `row_header_column_index ${rowHeader} is outside the ${columns} columns`,
+				message: `row_header_column_index ${rowHeader} is not a column index; use an integer from 0 to ${columns - 1}, or omit it`,
 			});
 		}
 	}),
@@ -231,7 +257,11 @@ const block = v.variant('type', [
 export type ReplyBlock = v.InferOutput<typeof block>;
 
 function cellChars(cell: TableCell): number {
-	return cell.type === 'raw_text' ? cell.text.length : (cell.text ?? String(cell.value)).length;
+	if (cell.type === 'raw_text') return cell.text.length;
+
+	if ('text' in cell && cell.text !== undefined) return cell.text.length;
+
+	return String(cell.value).length;
 }
 
 function messageIssues(blocks: readonly ReplyBlock[]): string[] {
@@ -266,7 +296,7 @@ function messageIssues(blocks: readonly ReplyBlock[]): string[] {
 
 	if (markdownChars > MAX_MARKDOWN_CHARS) {
 		issues.push(
-			`markdown blocks total ${markdownChars} characters; the limit is ${MAX_MARKDOWN_CHARS}`,
+			`markdown blocks total ${markdownChars} characters; shorten them to at most ${MAX_MARKDOWN_CHARS}`,
 		);
 	}
 
