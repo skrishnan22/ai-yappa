@@ -2,7 +2,7 @@
 
 Slack-native engineering coworker. Investigates a repo, makes changes, and opens PRs via native GitHub tools. Mounted MCP tools may exercise the authority of the deployment-scoped secrets you configure.
 
-Built as a Flue app on the Cloudflare target. Execution is Daytona container Sandboxes, not Cloudflare Sandbox. A stopped container retains its filesystem but loses RAM and running processes. The model is OpenCode Go: `deepseek-v4.1-flash` if [models.dev](https://models.dev/providers/opencode-go/) lists it, otherwise bundled `deepseek-v4-flash`.
+Built as a Flue app on the Cloudflare target. Execution is Daytona container Sandboxes, not Cloudflare Sandbox. A stopped container retains its filesystem but loses RAM and running processes. The model is `openai-codex/gpt-5.6-sol` on a ChatGPT subscription when a Codex credential is configured ([ADR 0020](docs/adr/0020-chatgpt-subscription-model-route.md)). Otherwise it is OpenCode Go: `deepseek-v4.1-flash` if [models.dev](https://models.dev/providers/opencode-go/) lists it, otherwise bundled `deepseek-v4-flash`.
 
 ## Setup
 
@@ -16,6 +16,7 @@ Fill `.env` (never commit it):
 
 ```
 OPENCODE_API_KEY=
+OPENAI_CODEX_ACCESS_TOKEN=
 SLACK_SIGNING_SECRET=
 SLACK_BOT_TOKEN=
 DAYTONA_API_KEY=
@@ -31,6 +32,8 @@ LANGFUSE_MCP_BASIC_AUTH=
 EXA_API_KEY=
 PARALLEL_API_KEY=
 ```
+
+`OPENAI_CODEX_ACCESS_TOKEN` is optional and temporary. When set, Coworker runs on the ChatGPT subscription instead of OpenCode Go. Get one by running `npx @earendil-works/pi-ai login openai-codex` outside this repo (choose device code login; it writes `auth.json` to the current directory) and copying `openai-codex.access` from that file. The token expires and is not refreshed; Slack login through `/coworker openai` replaces it ([ADR 0020](docs/adr/0020-chatgpt-subscription-model-route.md)). `OPENCODE_API_KEY` stays required as the fallback route.
 
 `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` are optional. If both are set, hydration configures that identity in the cloned repo (GitHub App bot: `{slug}[bot]` / `{id}+{slug}[bot]@users.noreply.github.com`). If neither is set, commits would otherwise be `root` — do not guess. If only one is set, boot fails.
 

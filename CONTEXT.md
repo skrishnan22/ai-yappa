@@ -79,8 +79,12 @@ A durable record that a remote tool operation may have run but its completion an
 _Avoid_: Tool failure, timeout, retryable error
 
 **Model Route**:
-The deployment-configured provider and model used by Flue for an Agent Conversation. V1 supports OpenCode Zen and OpenRouter routes but exposes no per-user model selection.
+The deployment-configured provider and model used by Flue for an Agent Conversation. V1 uses the ChatGPT subscription (`openai-codex`) when the Codex Credential is usable and OpenCode Go otherwise. It exposes no per-user model selection.
 _Avoid_: Model picker, automatic model routing
+
+**Codex Credential**:
+The deployment's single ChatGPT subscription login (OAuth access and refresh token) that the ChatGPT Model Route bills against. One `CodexAuth` Durable Object owns it; only access tokens leave that object.
+_Avoid_: OpenAI API key, per-user login
 
 **Workspace Fingerprint**:
 An identifier for the source state in an Execution Workspace. A Tool Observation such as a test result remains current only while this fingerprint is unchanged.
