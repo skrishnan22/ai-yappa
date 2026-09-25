@@ -169,7 +169,7 @@ export async function toOtlpSpan(
 		parentSpanId,
 		name: span.name,
 		kind: 1,
-		startTimeUnixNano: `${endMs - Math.max(0, span.durationMs)}000000`,
+		startTimeUnixNano: String(Math.round((endMs - Math.max(0, span.durationMs)) * 1_000_000)),
 		endTimeUnixNano: `${endMs}000000`,
 		attributes: Object.entries(fields).flatMap(([key, value]) =>
 			value === undefined ? [] : [{ key, value: { stringValue: value } }],
