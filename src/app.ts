@@ -2,11 +2,13 @@ import { Hono } from 'hono';
 import { instrument } from '@flue/runtime';
 import { createSlackChannelForEnv } from './channels/slack.ts';
 import { loadServerEnv } from './env.ts';
+import { registerLangfuseExport } from './langfuse-export.ts';
 
 // Capture full agent content for the single-user observability pilot.
 if (process.env.NODE_ENV !== 'test') {
 	const { createCloudflareTracing } = await import('@flue/runtime/cloudflare');
 	instrument(createCloudflareTracing());
+	registerLangfuseExport(process.env.LANGFUSE_MCP_BASIC_AUTH);
 }
 
 const app = new Hono();

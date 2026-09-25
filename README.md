@@ -134,28 +134,32 @@ Use a Cloudflare account that is not the Codevil account. `npx wrangler secret p
 
 ## Observability
 
-The Worker uses Cloudflare's native Workers Logs and Workers Traces. Flue provides the
-`invoke_agent`, `chat`, and `execute_tool` spans automatically; `src/app.ts` installs
-`createCloudflareTracing()` with full content for this single-user pilot. Prompts,
-responses, tool arguments, and tool results are therefore exported to both Honeycomb
-and Langfuse. The small `slack_admission` log remains the only application-owned
-semantic event.
+The Worker uses Cloudflare's native Workers Logs and Workers Traces for Honeycomb. Flue
+provides the `invoke_agent`, `chat`, and `execute_tool` spans automatically; `src/app.ts`
+installs `createCloudflareTracing()` with full content for this single-user pilot.
+Native spans are attached to the Durable Object invocation that started the run, so
+runs longer than about a minute lose their later spans. The small `slack_admission`
+log remains the only application-owned semantic event.
+
+Langfuse receives its traces from `src/langfuse-export.ts` instead. It sends each
+finished agent operation, model turn, and tool call to Langfuse's OTLP endpoint as a
+complete span, so long runs arrive whole. Each Slack message is one trace and each
+Slack thread is one Langfuse session. Tool errors carry their error message. Prompts,
+responses, tool arguments, and tool results are included, capped at 16,000 characters
+each.
 
 Destination credentials belong to the Cloudflare account, not source control. The
 checked-in Wrangler config expects the existing `honeycomb-logs` and
-`honeycomb-traces` destinations plus `langfuse-us-traces`.
+`honeycomb-traces` destinations.
 
-To add Langfuse without replacing Honeycomb:
+To send traces to Langfuse:
 
 1. Create a project at `https://us.cloud.langfuse.com` and copy its public and secret
    project keys.
 2. Base64-encode the literal `public-key:secret-key` pair. Store that encoded value as
-   the Worker secret `LANGFUSE_MCP_BASIC_AUTH` and in local `.env` / `.dev.vars`.
-3. In Cloudflare Dashboard → Workers Observability → Destinations, create a **Traces**
-   destination named `langfuse-us-traces` with endpoint
-   `https://us.cloud.langfuse.com/api/public/otel/v1/traces`.
-4. Add destination headers `Authorization: Basic <encoded-value>` and
-   `x-langfuse-ingestion-version: 4`, then redeploy.
+   the Worker secret `LANGFUSE_MCP_BASIC_AUTH` and in local `.env` / `.dev.vars`, then
+   redeploy. Without it, the exporter stays off. The same value authenticates the
+   Langfuse MCP catalog row.
 
 The existing Honeycomb destinations remain configured as follows:
 
@@ -181,7 +185,7 @@ The existing Honeycomb destinations remain configured as follows:
   },
   "traces": {
     "enabled": true,
-    "destinations": ["honeycomb-traces", "langfuse-us-traces"],
+    "destinations": ["honeycomb-traces"],
     "head_sampling_rate": 1,
     "persist": true
   }
@@ -189,7 +193,7 @@ The existing Honeycomb destinations remain configured as follows:
 ```
 
 Start at 100% sampling while traffic is low. Confirm that Honeycomb receives logs and
-traces and Langfuse receives traces, then set `persist: false` for each section if
+traces, then set `persist: false` for each section if
 Cloudflare dashboard retention is not needed. Cloudflare OTLP export is
 currently beta, requires Workers Paid or higher, and its pricing/availability can
 change; check the account's current Workers Observability terms before enabling it.
