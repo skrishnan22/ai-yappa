@@ -34,4 +34,15 @@
 		{ "tag": "v1", "new_sqlite_classes": ["FlueCoworkerAgent"] },
 		{ "tag": "v2", "new_sqlite_classes": ["CodexAuth"] },
 	],
+	// Cross-thread memory (Person Preferences + Conversation Digests).
+	// Apply migrations with: npx wrangler d1 migrations apply MEMORY_DB --remote
+	// Replace database_id with the id from: npx wrangler d1 create slack-agent-memory
+	"d1_databases": [
+		{
+			"binding": "MEMORY_DB",
+			"database_name": "slack-agent-memory",
+			"database_id": "00000000-0000-0000-0000-000000000000",
+			"migrations_dir": "migrations",
+		},
+	],
 }
