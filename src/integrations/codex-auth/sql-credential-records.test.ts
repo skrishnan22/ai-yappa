@@ -1,39 +1,20 @@
-import type { SqlStorage } from 'cloudflare:workers';
 import { DatabaseSync } from 'node:sqlite';
-import * as v from 'valibot';
 import { describe, expect, test } from 'vitest';
-import { CodexAuthService } from './codex-auth.ts';
+import { type CodexAuthStorage, CodexAuthService } from './codex-auth.ts';
 import { DurableCredentialStore } from './durable-credential-store.ts';
+import { nodeSqlStorage } from './node-sql-storage.ts';
+import { sqlPendingLogin } from './pending-login.ts';
 import { sqlCredentialRecords } from './sql-credential-records.ts';
 
 const credentialKey = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
 
-// The credentials table holds only text, so values pass straight through.
-const sqlValueSchema = v.union([v.string(), v.number(), v.null()]);
+function sqlStorage(db: DatabaseSync): CodexAuthStorage {
+	const sql = nodeSqlStorage(db);
 
-// Node's SQLite behind the Durable Object `SqlStorage` shape.
-function nodeSqlStorage(db: DatabaseSync): SqlStorage {
 	return {
-		exec(query, ...bindings) {
-			const statement = db.prepare(query);
-			const params = bindings.map((value) => v.parse(sqlValueSchema, value));
-
-			if (statement.columns().length === 0) {
-				statement.run(...params);
-
-				return { toArray: () => [] };
-			}
-
-			const rows = statement
-				.all(...params)
-				.map((row) =>
-					Object.fromEntries(
-						Object.entries(row).map(([column, value]) => [column, v.parse(sqlValueSchema, value)]),
-					),
-				);
-
-			return { toArray: () => rows };
-		},
+		credentials: sqlCredentialRecords(sql),
+		pendingLogin: sqlPendingLogin(sql),
+		alarm: { set: async () => {}, clear: async () => {} },
 	};
 }
 
@@ -42,16 +23,16 @@ describe('sqlCredentialRecords', () => {
 		const db = new DatabaseSync(':memory:');
 		const expires = Date.now() + 60 * 60 * 1000;
 
-		await new CodexAuthService(sqlCredentialRecords(nodeSqlStorage(db)), credentialKey).seed({
+		await new CodexAuthService(sqlStorage(db), credentialKey).seed({
 			access: 'access-1',
 			refresh: 'refresh-1',
 			expires,
 			accountId: 'account-1',
 		});
 
-		const records = sqlCredentialRecords(nodeSqlStorage(db));
-		const store = new DurableCredentialStore(records, credentialKey);
-		const service = new CodexAuthService(records, credentialKey);
+		const storage = sqlStorage(db);
+		const store = new DurableCredentialStore(storage.credentials, credentialKey);
+		const service = new CodexAuthService(storage, credentialKey);
 
 		await expect(service.status()).resolves.toEqual({
 			state: 'connected',
@@ -90,5 +71,38 @@ describe('sqlCredentialRecords', () => {
 
 		await expect(store.read('openai-codex')).resolves.toBeUndefined();
 		await expect(store.list()).resolves.toEqual([]);
+	});
+});
+
+describe('sqlPendingLogin', () => {
+	const login = {
+		deviceAuthId: 'device-1',
+		userCode: 'ABCD-EFGH',
+		intervalMs: 5000,
+		deadline: 1_790_000_000_000,
+		responseUrl: 'https://hooks.slack.com/commands/T1/1/abc',
+	};
+
+	test('a fresh instance over the same SQLite storage reads the pending login', () => {
+		const db = new DatabaseSync(':memory:');
+
+		sqlPendingLogin(nodeSqlStorage(db)).set(login);
+
+		expect(sqlPendingLogin(nodeSqlStorage(db)).get()).toEqual(login);
+	});
+
+	test('keeps one pending login and clears it', () => {
+		const db = new DatabaseSync(':memory:');
+		const record = sqlPendingLogin(nodeSqlStorage(db));
+
+		record.set(login);
+		record.set({ ...login, deviceAuthId: 'device-2', intervalMs: 10_000 });
+
+		expect(record.get()).toEqual({ ...login, deviceAuthId: 'device-2', intervalMs: 10_000 });
+		expect(db.prepare('SELECT COUNT(*) AS count FROM pending_login').get()?.count).toBe(1);
+
+		record.clear();
+
+		expect(record.get()).toBeUndefined();
 	});
 });

@@ -1,11 +1,16 @@
 import {
 	createAssistantMessageEventStream,
+	createModels,
 	normalizeContext,
 	type ProviderStreams,
 } from '@earendil-works/pi-ai';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 import { describe, expect, test, vi } from 'vitest';
-import { OPENAI_CODEX_MODEL_ID, withSseTransport } from './openai-codex-route.ts';
+import {
+	createOpenAICodexProvider,
+	OPENAI_CODEX_MODEL_ID,
+	withSseTransport,
+} from './openai-codex-route.ts';
 
 const context = normalizeContext({ messages: [] });
 
@@ -35,5 +40,17 @@ describe('openai-codex route', () => {
 			reasoning: 'medium',
 			transport: 'sse',
 		});
+	});
+
+	test('resolves auth from the CodexAuth access token on every request', async () => {
+		const tokens = ['token-1', undefined];
+		const models = createModels();
+
+		models.setProvider(createOpenAICodexProvider(async () => tokens.shift()));
+
+		await expect(models.getAuth('openai-codex')).resolves.toMatchObject({
+			auth: { apiKey: 'token-1' },
+		});
+		await expect(models.getAuth('openai-codex')).resolves.toBeUndefined();
 	});
 });

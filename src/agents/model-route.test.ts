@@ -1,48 +1,34 @@
 import { describe, expect, test } from 'vitest';
-import { resolveCoworkerModelSpecifier } from './model-route.ts';
+import { coworkerModelSpecifier, deliveredModelRoute, modelRouteFor } from './model-route.ts';
 import { openAICodexModelSpecifier } from './openai-codex-route.ts';
 import { openCodeGoModelSpecifier } from './opencode-go-catalog.ts';
 
-function accessToken(expiresInMs: number): string {
-	const claims = { exp: Math.floor((Date.now() + expiresInMs) / 1000) };
-
-	const payload = btoa(JSON.stringify(claims))
-		.replaceAll('+', '-')
-		.replaceAll('/', '_')
-		.replace(/=+$/, '');
-
-	return `header.${payload}.signature`;
-}
-
-describe('resolveCoworkerModelSpecifier', () => {
-	test('routes to the ChatGPT subscription while the Codex token is valid', () => {
-		expect(
-			resolveCoworkerModelSpecifier({ OPENAI_CODEX_ACCESS_TOKEN: accessToken(60 * 60 * 1000) }),
-		).toBe(openAICodexModelSpecifier);
+describe('Model Route', () => {
+	test('routes to the ChatGPT subscription only while CodexAuth is connected', () => {
+		expect(modelRouteFor({ state: 'connected', expires: 0, accountId: 'account-1' })).toBe(
+			'chatgpt',
+		);
+		expect(modelRouteFor({ state: 'pending_login', expires: 0 })).toBe('opencode-go');
+		expect(modelRouteFor({ state: 'disconnected' })).toBe('opencode-go');
 	});
 
-	test('routes to OpenCode Go without a Codex token', () => {
-		expect(resolveCoworkerModelSpecifier({})).toBe(openCodeGoModelSpecifier);
-		expect(resolveCoworkerModelSpecifier({ OPENAI_CODEX_ACCESS_TOKEN: '  ' })).toBe(
-			openCodeGoModelSpecifier,
+	test('reads the route from the Slack signal that woke the submission', () => {
+		const signal = { kind: 'signal', type: 'slack.app_mention', body: 'hi' } as const;
+
+		expect(deliveredModelRoute({ ...signal, attributes: { modelRoute: 'chatgpt' } })).toBe(
+			'chatgpt',
 		);
+		expect(deliveredModelRoute({ ...signal, attributes: { modelRoute: 'opencode-go' } })).toBe(
+			'opencode-go',
+		);
+		expect(deliveredModelRoute({ ...signal, attributes: { modelRoute: 'gpt-9' } })).toBeUndefined();
+		expect(deliveredModelRoute(signal)).toBeUndefined();
+		expect(deliveredModelRoute({ kind: 'user', body: 'Hi' })).toBeUndefined();
 	});
 
-	test('routes to OpenCode Go when the Codex token is expired or about to expire', () => {
-		expect(
-			resolveCoworkerModelSpecifier({ OPENAI_CODEX_ACCESS_TOKEN: accessToken(-60 * 1000) }),
-		).toBe(openCodeGoModelSpecifier);
-		expect(
-			resolveCoworkerModelSpecifier({ OPENAI_CODEX_ACCESS_TOKEN: accessToken(60 * 1000) }),
-		).toBe(openCodeGoModelSpecifier);
-	});
-
-	test('routes to OpenCode Go when the Codex token is not a JWT with an expiry', () => {
-		expect(resolveCoworkerModelSpecifier({ OPENAI_CODEX_ACCESS_TOKEN: 'not-a-jwt' })).toBe(
-			openCodeGoModelSpecifier,
-		);
-		expect(resolveCoworkerModelSpecifier({ OPENAI_CODEX_ACCESS_TOKEN: 'a.%%%.c' })).toBe(
-			openCodeGoModelSpecifier,
-		);
+	test('uses OpenCode Go without a ChatGPT route', () => {
+		expect(coworkerModelSpecifier('chatgpt')).toBe(openAICodexModelSpecifier);
+		expect(coworkerModelSpecifier('opencode-go')).toBe(openCodeGoModelSpecifier);
+		expect(coworkerModelSpecifier(undefined)).toBe(openCodeGoModelSpecifier);
 	});
 });

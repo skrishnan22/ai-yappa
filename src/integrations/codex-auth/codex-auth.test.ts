@@ -1,34 +1,15 @@
-import { type Credential, type CredentialInfo, ModelsError } from '@earendil-works/pi-ai';
+import { ModelsError } from '@earendil-works/pi-ai';
 import { ValiError } from 'valibot';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { CodexAuthService } from './codex-auth.ts';
 import { type CredentialRecords, DurableCredentialStore } from './durable-credential-store.ts';
+import { MemoryRecords, memoryStorage } from './memory-storage.ts';
 
 const TOKEN_URL = 'https://auth.openai.com/oauth/token';
 
 const CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 
 const credentialKey = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
-
-class MemoryRecords implements CredentialRecords {
-	readonly rows = new Map<string, { type: Credential['type']; record: string }>();
-
-	get(providerId: string): string | undefined {
-		return this.rows.get(providerId)?.record;
-	}
-
-	set(providerId: string, type: Credential['type'], record: string): void {
-		this.rows.set(providerId, { type, record });
-	}
-
-	delete(providerId: string): void {
-		this.rows.delete(providerId);
-	}
-
-	list(): CredentialInfo[] {
-		return [...this.rows].map(([providerId, { type }]) => ({ providerId, type }));
-	}
-}
 
 function codexAccessToken(label: string): string {
 	const claims = { 'https://api.openai.com/auth': { chatgpt_account_id: 'account-1' }, label };
@@ -61,10 +42,10 @@ function rotatedTokenResponse(access: string): Response {
 }
 
 async function seededService(
-	records: CredentialRecords,
+	records: MemoryRecords,
 	expiresInMs: number,
 ): Promise<CodexAuthService> {
-	const service = new CodexAuthService(records, credentialKey);
+	const service = new CodexAuthService(memoryStorage(records), credentialKey);
 
 	await service.seed({
 		access: codexAccessToken('old'),
@@ -82,7 +63,7 @@ afterEach(() => {
 
 describe('CodexAuthService', () => {
 	test('reports disconnected and returns no token before a credential is seeded', async () => {
-		const service = new CodexAuthService(new MemoryRecords(), credentialKey);
+		const service = new CodexAuthService(memoryStorage(), credentialKey);
 
 		await expect(service.status()).resolves.toEqual({ state: 'disconnected' });
 		await expect(service.accessToken()).resolves.toBeUndefined();
@@ -90,7 +71,7 @@ describe('CodexAuthService', () => {
 
 	test('status reports connection metadata without tokens', async () => {
 		const expires = Date.now() + 60 * 60 * 1000;
-		const service = new CodexAuthService(new MemoryRecords(), credentialKey);
+		const service = new CodexAuthService(memoryStorage(), credentialKey);
 
 		const status = await service.seed({
 			access: codexAccessToken('old'),
@@ -153,7 +134,7 @@ describe('CodexAuthService', () => {
 			accountId: 'account-1',
 		});
 
-		const restarted = new CodexAuthService(records, credentialKey);
+		const restarted = new CodexAuthService(memoryStorage(records), credentialKey);
 
 		await expect(restarted.accessToken()).resolves.toBe(codexAccessToken('new'));
 		expect(requests).toHaveLength(1);
@@ -178,7 +159,7 @@ describe('CodexAuthService', () => {
 	});
 
 	test('fails closed without a credential key', async () => {
-		const service = new CodexAuthService(new MemoryRecords(), undefined);
+		const service = new CodexAuthService(memoryStorage(), undefined);
 
 		await expect(
 			service.seed({
@@ -191,7 +172,7 @@ describe('CodexAuthService', () => {
 	});
 
 	test('seed rejects a credential without an account id', async () => {
-		const service = new CodexAuthService(new MemoryRecords(), credentialKey);
+		const service = new CodexAuthService(memoryStorage(), credentialKey);
 
 		await expect(
 			service.seed({ access: 'a', refresh: 'r', expires: Date.now(), accountId: '' }),
