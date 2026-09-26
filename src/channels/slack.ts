@@ -12,6 +12,7 @@ import type { SlackSignal } from './admit.ts';
 import { handleSlashCommand } from './slash-command.ts';
 import { getSlackClient } from './slack-reply.ts';
 import { loadThreadContext } from './thread-context.ts';
+import { buildSignalAttributes } from './signal-attributes.ts';
 import type { ServerEnv } from '../env.ts';
 
 async function conversationExistsInThread(signalType: SlackSignal, id: string): Promise<boolean> {
@@ -189,12 +190,8 @@ async function admitThread({
 				// Thread history is context for the agent, not a dispatch requirement.
 			}
 
-			type SignalAttributes = { eventId: string; modelRoute: ModelRoute; threadContext?: string };
-
 			const modelRoute = await modelRouteForDispatch(codexAuth);
-			const attributes: SignalAttributes = { eventId, modelRoute };
-
-			if (threadContext !== undefined) attributes.threadContext = threadContext;
+			const attributes = { ...buildSignalAttributes(eventId, userId, threadContext), modelRoute };
 
 			try {
 				const receipt = await dispatch(Coworker, {
