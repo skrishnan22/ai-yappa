@@ -6,12 +6,13 @@ import {
 	importCredentialKey,
 } from './credential-cipher.ts';
 
-// Encrypted credential rows, keyed by pi provider id.
+// Encrypted credential rows, keyed by pi provider id. The credential type is
+// stored in plaintext beside the encrypted record so `list` needs no decrypt.
 export interface CredentialRecords {
 	get(providerId: string): ArrayBuffer | undefined;
-	set(providerId: string, record: ArrayBuffer): void;
+	set(providerId: string, type: Credential['type'], record: ArrayBuffer): void;
 	delete(providerId: string): void;
-	providerIds(): string[];
+	list(): CredentialInfo[];
 }
 
 // pi's `CredentialStore` over encrypted Durable Object rows. A per-provider
@@ -40,42 +41,40 @@ export class DurableCredentialStore implements CredentialStore {
 
 		if (record === undefined) return undefined;
 
-		return decryptCredential(await this.#cryptoKey(), providerId, record);
+		const key = await this.#cryptoKey();
+
+		return decryptCredential(key, providerId, record);
 	}
 
 	async list(): Promise<readonly CredentialInfo[]> {
-		const infos: CredentialInfo[] = [];
-
-		for (const providerId of this.#records.providerIds()) {
-			const credential = await this.read(providerId);
-
-			if (credential) infos.push({ providerId, type: credential.type });
-		}
-
-		return infos;
+		return this.#records.list();
 	}
 
+	// pi's only write path. `update` receives the stored credential as it is
+	// now, read inside the lock, and returns its replacement or undefined to
+	// keep it. On refresh, pi's `update` returns undefined when another request
+	// already refreshed while this one waited for the lock.
 	modify(
 		providerId: string,
-		fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+		update: (stored: Credential | undefined) => Promise<Credential | undefined>,
 	): Promise<Credential | undefined> {
-		return this.#enqueue(providerId, async () => {
-			const current = await this.read(providerId);
-			const next = await fn(current);
+		return this.#withLock(providerId, async () => {
+			const stored = await this.read(providerId);
+			const replacement = await update(stored);
 
-			if (next === undefined) return current;
+			if (replacement === undefined) return stored;
 
-			this.#records.set(
-				providerId,
-				await encryptCredential(await this.#cryptoKey(), providerId, next),
-			);
+			const key = await this.#cryptoKey();
+			const record = await encryptCredential(key, providerId, replacement);
 
-			return next;
+			this.#records.set(providerId, replacement.type, record);
+
+			return replacement;
 		});
 	}
 
 	delete(providerId: string): Promise<void> {
-		return this.#enqueue(providerId, async () => {
+		return this.#withLock(providerId, async () => {
 			this.#records.delete(providerId);
 		});
 	}
@@ -86,7 +85,7 @@ export class DurableCredentialStore implements CredentialStore {
 		return this.#key;
 	}
 
-	#enqueue<T>(providerId: string, task: () => Promise<T>): Promise<T> {
+	#withLock<T>(providerId: string, task: () => Promise<T>): Promise<T> {
 		const queued = (this.#chains.get(providerId) ?? Promise.resolve()).then(task);
 
 		this.#chains.set(

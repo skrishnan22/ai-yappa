@@ -1,4 +1,4 @@
-import { ModelsError } from '@earendil-works/pi-ai';
+import { type Credential, type CredentialInfo, ModelsError } from '@earendil-works/pi-ai';
 import { ValiError } from 'valibot';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { CodexAuthService } from './codex-auth.ts';
@@ -11,22 +11,22 @@ const CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const credentialKey = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
 
 class MemoryRecords implements CredentialRecords {
-	readonly rows = new Map<string, ArrayBuffer>();
+	readonly rows = new Map<string, { type: Credential['type']; record: ArrayBuffer }>();
 
 	get(providerId: string): ArrayBuffer | undefined {
-		return this.rows.get(providerId);
+		return this.rows.get(providerId)?.record;
 	}
 
-	set(providerId: string, record: ArrayBuffer): void {
-		this.rows.set(providerId, record);
+	set(providerId: string, type: Credential['type'], record: ArrayBuffer): void {
+		this.rows.set(providerId, { type, record });
 	}
 
 	delete(providerId: string): void {
 		this.rows.delete(providerId);
 	}
 
-	providerIds(): string[] {
-		return [...this.rows.keys()];
+	list(): CredentialInfo[] {
+		return [...this.rows].map(([providerId, { type }]) => ({ providerId, type }));
 	}
 }
 

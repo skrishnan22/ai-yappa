@@ -1,7 +1,6 @@
-import { DurableObject, type DurableObjectState, type SqlStorage } from 'cloudflare:workers';
-import * as v from 'valibot';
+import { DurableObject, type DurableObjectState } from 'cloudflare:workers';
 import { type CodexAuthStatus, type CodexCredentialSeed, CodexAuthService } from './codex-auth.ts';
-import type { CredentialRecords } from './durable-credential-store.ts';
+import { sqlCredentialRecords } from './sql-credential-records.ts';
 
 type CodexAuthEnv = { CODEX_CREDENTIAL_KEY?: string };
 
@@ -31,39 +30,4 @@ export class CodexAuth extends DurableObject<CodexAuthEnv> {
 	seed(credential: CodexCredentialSeed): Promise<CodexAuthStatus> {
 		return this.#service.seed(credential);
 	}
-}
-
-function sqlCredentialRecords(sql: SqlStorage): CredentialRecords {
-	sql.exec(
-		'CREATE TABLE IF NOT EXISTS credentials (provider_id TEXT PRIMARY KEY, record BLOB NOT NULL)',
-	);
-
-	return {
-		get(providerId) {
-			const [row] = sql
-				.exec('SELECT record FROM credentials WHERE provider_id = ?', providerId)
-				.toArray();
-
-			return row?.record instanceof ArrayBuffer ? row.record : undefined;
-		},
-		set(providerId, record) {
-			sql.exec(
-				'INSERT INTO credentials (provider_id, record) VALUES (?, ?) ON CONFLICT (provider_id) DO UPDATE SET record = excluded.record',
-				providerId,
-				record,
-			);
-		},
-		delete(providerId) {
-			sql.exec('DELETE FROM credentials WHERE provider_id = ?', providerId);
-		},
-		providerIds() {
-			const ids: string[] = [];
-
-			for (const row of sql.exec('SELECT provider_id FROM credentials').toArray()) {
-				if (v.is(v.string(), row.provider_id)) ids.push(row.provider_id);
-			}
-
-			return ids;
-		},
-	};
 }
