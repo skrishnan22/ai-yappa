@@ -4,7 +4,7 @@ export type ChannelConfig = {
 
 export const allowedInvokerIds = new Set<string>(['U0BGR738WMC']);
 
-// Slack users who may run `/coworker openai connect` and `disconnect`, which
+// Slack users who may run `/aiyappa openai connect` and `disconnect`, which
 // bind the whole deployment to one ChatGPT subscription (ADR 0020). Separate
 // from the invoker allowlist; empty means nobody.
 export const codexAdminIds = new Set<string>(['U0BGR738WMC']);

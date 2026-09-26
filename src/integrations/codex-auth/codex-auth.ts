@@ -67,8 +67,10 @@ export type CodexConnectResult =
 	| ConnectedStatus
 	| { state: 'pending_login'; expires: number; userCode: string; verificationUrl: string };
 
+// `unreadable`: the stored row no longer decrypted, so it was deleted without
+// revoking its refresh token.
 export type CodexDisconnectResult = {
-	revocation: 'revoked' | 'failed' | 'none';
+	revocation: 'revoked' | 'failed' | 'unreadable' | 'none';
 	cancelledLogin: boolean;
 };
 
@@ -88,6 +90,12 @@ export class CodexAuthService {
 	readonly #alarm: LoginAlarm;
 
 	readonly #credentialKey: string | undefined;
+
+	// Serializes every change to the pending login and the credential a login
+	// produces: `startLogin`, `disconnect`, and each poll's outcome. Requests
+	// that only read the pending login (a poll, the code exchange) run outside
+	// it, and their results apply only if that login is still pending.
+	#loginChain: Promise<void> = Promise.resolve();
 
 	constructor(storage: CodexAuthStorage, key: string | undefined) {
 		this.#store = new DurableCredentialStore(storage.credentials, key);
@@ -139,30 +147,32 @@ export class CodexAuthService {
 	// Starts a device-code login, replacing any pending one. An existing
 	// credential is kept: replacing it would strand a live refresh token, so
 	// the admin disconnects (and revokes) first.
-	async startLogin(responseUrl: string): Promise<CodexConnectResult> {
-		// Fail now rather than after the admin approves the login.
-		credentialKey(this.#credentialKey);
-		const status = await this.status();
+	startLogin(responseUrl: string): Promise<CodexConnectResult> {
+		return this.#withLoginLock(async () => {
+			// Fail now rather than after the admin approves the login.
+			credentialKey(this.#credentialKey);
+			const status = await this.status();
 
-		if (status.state === 'connected') return status;
+			if (status.state === 'connected') return status;
 
-		const code = await requestDeviceCode();
+			const code = await requestDeviceCode();
 
-		const login: PendingLogin = {
-			...code,
-			deadline: Date.now() + DEVICE_LOGIN_TIMEOUT_MS,
-			responseUrl,
-		};
+			const login: PendingLogin = {
+				...code,
+				deadline: Date.now() + DEVICE_LOGIN_TIMEOUT_MS,
+				responseUrl,
+			};
 
-		this.#pendingLogin.set(login);
-		await this.#schedulePoll(login);
+			this.#pendingLogin.set(login);
+			await this.#schedulePoll(login);
 
-		return {
-			state: 'pending_login',
-			expires: login.deadline,
-			userCode: code.userCode,
-			verificationUrl: DEVICE_VERIFICATION_URL,
-		};
+			return {
+				state: 'pending_login',
+				expires: login.deadline,
+				userCode: code.userCode,
+				verificationUrl: DEVICE_VERIFICATION_URL,
+			};
+		});
 	}
 
 	// One poll per alarm. pi's in-process sleep loop would keep the object
@@ -176,7 +186,7 @@ export class CodexAuthService {
 		if (Date.now() >= login.deadline) {
 			await this.#settle(
 				login,
-				'The ChatGPT login code expired before it was approved. Run `/coworker openai connect` for a new code.',
+				'The ChatGPT login code expired before it was approved. Run `/aiyappa openai connect` for a new code.',
 			);
 
 			return;
@@ -184,23 +194,15 @@ export class CodexAuthService {
 
 		const poll = await pollDeviceCode(login);
 
-		// `startLogin` or `disconnect` may have replaced this login during the request.
-		if (!this.#isPending(login)) return;
-
 		switch (poll.kind) {
 			case 'pending':
-				await this.#schedulePoll(login);
+				await this.#pollAgain(login, login.intervalMs);
 
 				return;
-			case 'slow_down': {
-				const slower = { ...login, intervalMs: login.intervalMs + SLOW_DOWN_INCREMENT_MS };
-
-				this.#pendingLogin.set(slower);
-				await this.#schedulePoll(slower);
+			case 'slow_down':
+				await this.#pollAgain(login, login.intervalMs + SLOW_DOWN_INCREMENT_MS);
 
 				return;
-			}
-
 			case 'failed':
 				await this.#settle(login, `ChatGPT login failed: ${poll.message}`);
 
@@ -219,23 +221,33 @@ export class CodexAuthService {
 
 	// Cancels a pending login, revokes the stored refresh token, and deletes
 	// the credential. The credential is deleted even when revocation fails.
+	// A login still requesting its code finishes first, then is cancelled.
 	async disconnect(): Promise<CodexDisconnectResult> {
-		const login = this.#pendingLogin.get();
+		const { login, revocation } = await this.#withLoginLock(async () => {
+			const pending = this.#pendingLogin.get();
+
+			if (pending !== undefined) {
+				this.#pendingLogin.clear();
+				await this.#alarm.clear();
+			}
+
+			let revoked: CodexDisconnectResult['revocation'] = 'none';
+
+			const outcome = await this.#store.revokeAndDelete(CODEX_PROVIDER_ID, async (stored) => {
+				if (stored.type !== 'oauth') return;
+				const ok = await revokeRefreshToken(stored.refresh);
+
+				revoked = ok ? 'revoked' : 'failed';
+			});
+
+			if (outcome === 'unreadable') revoked = 'unreadable';
+
+			return { login: pending, revocation: revoked };
+		});
 
 		if (login !== undefined) {
-			this.#pendingLogin.clear();
-			await this.#alarm.clear();
 			await editSlackResponse(login.responseUrl, 'ChatGPT login cancelled by a disconnect.');
 		}
-
-		let revocation: CodexDisconnectResult['revocation'] = 'none';
-
-		await this.#store.revokeAndDelete(CODEX_PROVIDER_ID, async (stored) => {
-			if (stored.type !== 'oauth') return;
-			const revoked = await revokeRefreshToken(stored.refresh);
-
-			revocation = revoked ? 'revoked' : 'failed';
-		});
 
 		return { revocation, cancelledLogin: login !== undefined };
 	}
@@ -255,16 +267,24 @@ export class CodexAuthService {
 			return;
 		}
 
-		// A disconnect during the exchange wins; do not strand the new token.
-		if (!this.#isPending(login)) {
+		const stored = await this.#withLoginLock(async () => {
+			if (!this.#isPending(login)) return false;
+			await this.#store.modify(CODEX_PROVIDER_ID, async () => credential);
+			this.#pendingLogin.clear();
+
+			return true;
+		});
+
+		// A disconnect or a newer connect during the exchange wins; do not strand
+		// the new token.
+		if (!stored) {
 			await revokeRefreshToken(credential.refresh);
 
 			return;
 		}
 
-		await this.#store.modify(CODEX_PROVIDER_ID, async () => credential);
-		await this.#settle(
-			login,
+		await editSlackResponse(
+			login.responseUrl,
 			`Connected ChatGPT account \`${credential.accountId}\`. New Coworker runs use the ChatGPT subscription.`,
 		);
 	}
@@ -273,18 +293,48 @@ export class CodexAuthService {
 		return this.#pendingLogin.get()?.deviceAuthId === login.deviceAuthId;
 	}
 
+	// Polls `login` again after `intervalMs`, unless a connect or disconnect
+	// replaced it during the poll.
+	#pollAgain(login: PendingLogin, intervalMs: number): Promise<void> {
+		return this.#withLoginLock(async () => {
+			if (!this.#isPending(login)) return;
+			const next = { ...login, intervalMs };
+
+			this.#pendingLogin.set(next);
+			await this.#schedulePoll(next);
+		});
+	}
+
 	// The last alarm lands on the deadline, where `pollLogin` expires the login.
 	#schedulePoll(login: PendingLogin): Promise<void> {
 		return this.#alarm.set(Math.min(Date.now() + login.intervalMs, login.deadline));
 	}
 
+	// Ends `login` and tells the admin, unless it was already replaced.
 	async #settle(login: PendingLogin, text: string): Promise<void> {
-		this.#pendingLogin.clear();
-		await editSlackResponse(login.responseUrl, text);
+		const settled = await this.#withLoginLock(async () => {
+			if (!this.#isPending(login)) return false;
+			this.#pendingLogin.clear();
+
+			return true;
+		});
+
+		if (settled) await editSlackResponse(login.responseUrl, text);
+	}
+
+	#withLoginLock<T>(task: () => Promise<T>): Promise<T> {
+		const queued = this.#loginChain.then(task);
+
+		this.#loginChain = queued.then(
+			() => undefined,
+			() => undefined,
+		);
+
+		return queued;
 	}
 }
 
-// Replaces the admin's ephemeral `/coworker openai connect` response. Best
+// Replaces the admin's ephemeral `/aiyappa openai connect` response. Best
 // effort: the outcome is already stored, and `status` reports it.
 async function editSlackResponse(responseUrl: string, text: string): Promise<void> {
 	try {

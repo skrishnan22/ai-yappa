@@ -9,7 +9,7 @@ import { errorMessage } from '../json.ts';
 import { emitSemanticEvent } from '../observability.ts';
 import { decideAdmit, mentionsAuthorizedBot } from './admit.ts';
 import type { SlackSignal } from './admit.ts';
-import { handleCoworkerCommand } from './coworker-command.ts';
+import { handleSlashCommand } from './slash-command.ts';
 import { getSlackClient } from './slack-reply.ts';
 import { loadThreadContext } from './thread-context.ts';
 import type { ServerEnv } from '../env.ts';
@@ -25,7 +25,9 @@ async function conversationExistsInThread(signalType: SlackSignal, id: string): 
 // ChatGPT connection never blocks Slack.
 async function modelRouteForDispatch(codexAuth: () => CodexAuthControl): Promise<ModelRoute> {
 	try {
-		return modelRouteFor(await codexAuth().status());
+		const status = await codexAuth().status();
+
+		return modelRouteFor(status);
 	} catch (error) {
 		console.warn(`[slack] CodexAuth status failed; routing to OpenCode Go: ${errorMessage(error)}`);
 
@@ -38,7 +40,7 @@ export function createSlackChannelForEnv(env: ServerEnv, codexAuth: () => CodexA
 		signingSecret: env.SLACK_SIGNING_SECRET,
 
 		commands({ payload }) {
-			return handleCoworkerCommand(payload, codexAuth);
+			return handleSlashCommand(payload, codexAuth);
 		},
 
 		async events({ payload }) {
@@ -189,10 +191,8 @@ async function admitThread({
 
 			type SignalAttributes = { eventId: string; modelRoute: ModelRoute; threadContext?: string };
 
-			const attributes: SignalAttributes = {
-				eventId,
-				modelRoute: await modelRouteForDispatch(codexAuth),
-			};
+			const modelRoute = await modelRouteForDispatch(codexAuth);
+			const attributes: SignalAttributes = { eventId, modelRoute };
 
 			if (threadContext !== undefined) attributes.threadContext = threadContext;
 

@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
-import { instrument, setProvider } from '@flue/runtime';
-import { createOpenAICodexProvider } from './agents/openai-codex-route.ts';
+import { instrument } from '@flue/runtime';
 import { createSlackChannelForEnv } from './channels/slack.ts';
 import { loadServerEnv, type EnvSource } from './env.ts';
 import { type CodexAuthBinding, codexAuth } from './integrations/codex-auth/codex-auth-binding.ts';
@@ -11,13 +10,6 @@ if (process.env.NODE_ENV !== 'test') {
 	const { createCloudflareTracing } = await import('@flue/runtime/cloudflare');
 	instrument(createCloudflareTracing());
 	registerLangfuseExport(process.env.LANGFUSE_MCP_BASIC_AUTH);
-
-	// The ChatGPT Model Route gets its token from the `CodexAuth` Durable
-	// Object. app.ts runs in every Worker isolate, including each Coworker's;
-	// `flue run` never loads it, so it neither imports `cloudflare:workers`
-	// nor offers the ChatGPT route.
-	const { env } = await import('cloudflare:workers');
-	setProvider(createOpenAICodexProvider(() => codexAuth(env).accessToken()));
 }
 
 const app = new Hono<{ Bindings: EnvSource & CodexAuthBinding }>();

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { codexAdminIds } from '../config.ts';
 import { type CodexAuthControl, CodexAuthService } from '../integrations/codex-auth/codex-auth.ts';
 import { memoryStorage } from '../integrations/codex-auth/memory-storage.ts';
-import { handleCoworkerCommand } from './coworker-command.ts';
+import { handleSlashCommand } from './slash-command.ts';
 
 const ADMIN = 'U_TEST_CODEX_ADMIN';
 
@@ -23,7 +23,7 @@ function command(
 	responseUrl = RESPONSE_URL,
 ): SlackSlashCommandPayload {
 	return {
-		command: '/coworker',
+		command: '/aiyappa',
 		text,
 		response_url: responseUrl,
 		trigger_id: 'trigger-1',
@@ -65,14 +65,14 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
-describe('/coworker openai', () => {
+describe('/aiyappa openai', () => {
 	test('shows usage for anything but openai connect|status|disconnect', async () => {
 		const service = new CodexAuthService(memoryStorage(), credentialKey);
 
 		for (const text of ['', 'openai', 'openai login', 'anthropic status', 'openai status now']) {
-			await expect(handleCoworkerCommand(command(text, ADMIN), () => service)).resolves.toEqual({
+			await expect(handleSlashCommand(command(text, ADMIN), () => service)).resolves.toEqual({
 				response_type: 'ephemeral',
-				text: 'Usage: `/coworker openai connect|status|disconnect`',
+				text: 'Usage: `/aiyappa openai connect|status|disconnect`',
 			});
 		}
 	});
@@ -83,12 +83,12 @@ describe('/coworker openai', () => {
 		);
 
 		for (const action of ['connect', 'disconnect']) {
-			const reply = await handleCoworkerCommand(command(`openai ${action}`, STRANGER), reach);
+			const reply = await handleSlashCommand(command(`openai ${action}`, STRANGER), reach);
 
 			expect(reply.text).toContain('Only Codex admins');
 		}
 
-		const status = await handleCoworkerCommand(command('openai status', STRANGER), reach);
+		const status = await handleSlashCommand(command('openai status', STRANGER), reach);
 
 		expect(status.text).toContain('not on the invoker allowlist');
 		expect(reach).not.toHaveBeenCalled();
@@ -99,14 +99,14 @@ describe('/coworker openai', () => {
 		const storage = memoryStorage();
 		const service = new CodexAuthService(storage, credentialKey);
 
-		const reply = await handleCoworkerCommand(command('openai connect', ADMIN), () => service);
+		const reply = await handleSlashCommand(command('openai connect', ADMIN), () => service);
 
 		expect(reply.response_type).toBe('ephemeral');
 		expect(reply.text).toContain('`ABCD-EFGH`');
 		expect(reply.text).toContain('https://auth.openai.com/codex/device');
 		expect(storage.pendingLogin.get()?.responseUrl).toBe(RESPONSE_URL);
 
-		const status = await handleCoworkerCommand(command('openai status', ADMIN), () => service);
+		const status = await handleSlashCommand(command('openai status', ADMIN), () => service);
 
 		expect(status.text).toContain('waiting for approval');
 		expect(status.text).not.toContain('ABCD-EFGH');
@@ -116,7 +116,7 @@ describe('/coworker openai', () => {
 		const urls = stubFetch(new Map([[USER_CODE_URL, userCodeResponse]]));
 		const service = new CodexAuthService(memoryStorage(), credentialKey);
 
-		const reply = await handleCoworkerCommand(
+		const reply = await handleSlashCommand(
 			command('openai connect', ADMIN, 'https://attacker.example/hook'),
 			() => service,
 		);
@@ -129,7 +129,7 @@ describe('/coworker openai', () => {
 		stubFetch(new Map([[USER_CODE_URL, () => new Response(null, { status: 404 })]]));
 		const service = new CodexAuthService(memoryStorage(), credentialKey);
 
-		const reply = await handleCoworkerCommand(command('openai connect', ADMIN), () => service);
+		const reply = await handleSlashCommand(command('openai connect', ADMIN), () => service);
 
 		expect(reply.text).toMatch(/^ChatGPT connect failed: .*not enabled device code login/);
 	});
@@ -145,19 +145,16 @@ describe('/coworker openai', () => {
 			accountId: 'account-1',
 		});
 
-		const status = await handleCoworkerCommand(command('openai status', ADMIN), () => service);
+		const status = await handleSlashCommand(command('openai status', ADMIN), () => service);
 
 		expect(status.text).toContain('connected as account `account-1`');
 		expect(status.text).toContain('openai-codex/');
 
-		const disconnect = await handleCoworkerCommand(
-			command('openai disconnect', ADMIN),
-			() => service,
-		);
+		const disconnect = await handleSlashCommand(command('openai disconnect', ADMIN), () => service);
 
 		expect(disconnect.text).toContain('revoked its refresh token');
 
-		const after = await handleCoworkerCommand(command('openai status', ADMIN), () => service);
+		const after = await handleSlashCommand(command('openai status', ADMIN), () => service);
 
 		expect(after.text).toContain('not connected');
 	});

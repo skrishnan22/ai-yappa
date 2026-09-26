@@ -2,7 +2,7 @@
 
 Slack-native engineering coworker. Investigates a repo, makes changes, and opens PRs via native GitHub tools. Mounted MCP tools may exercise the authority of the deployment-scoped secrets you configure.
 
-Built as a Flue app on the Cloudflare target. Execution is Daytona container Sandboxes, not Cloudflare Sandbox. A stopped container retains its filesystem but loses RAM and running processes. The model is `openai-codex/gpt-5.6-sol` on a ChatGPT subscription once an admin connects one with `/coworker openai connect` ([ChatGPT subscription](#chatgpt-subscription), [ADR 0020](docs/adr/0020-chatgpt-subscription-model-route.md)). Otherwise it is OpenCode Go: `deepseek-v4.1-flash` if [models.dev](https://models.dev/providers/opencode-go/) lists it, otherwise bundled `deepseek-v4-flash`.
+Built as a Flue app on the Cloudflare target. Execution is Daytona container Sandboxes, not Cloudflare Sandbox. A stopped container retains its filesystem but loses RAM and running processes. The model is `openai-codex/gpt-5.6-sol` on a ChatGPT subscription once an admin connects one with `/aiyappa openai connect` ([ChatGPT subscription](#chatgpt-subscription), [ADR 0020](docs/adr/0020-chatgpt-subscription-model-route.md)). Otherwise it is OpenCode Go: `deepseek-v4.1-flash` if [models.dev](https://models.dev/providers/opencode-go/) lists it, otherwise bundled `deepseek-v4-flash`.
 
 ## Setup
 
@@ -35,7 +35,7 @@ PARALLEL_API_KEY=
 
 `OPENCODE_API_KEY` stays required: OpenCode Go is the fallback whenever no ChatGPT subscription is connected.
 
-`CODEX_CREDENTIAL_KEY` is the AES-GCM key the `CodexAuth` Durable Object uses to encrypt the stored Codex Credential. Generate it with `openssl rand -base64 32`. Only the Worker reads it (`npm run dev` and deploys); `flue run` has no Durable Objects. Without it, `CodexAuth` refuses to store or read a credential. There is no key rotation: a changed or lost key makes the stored credential unreadable, and the admin must log in again.
+`CODEX_CREDENTIAL_KEY` is the AES-GCM key the `CodexAuth` Durable Object uses to encrypt the stored Codex Credential. Generate it with `openssl rand -base64 32`. Only the Worker reads it (`npm run dev` and deploys); `flue run` has no Durable Objects. Without it, `CodexAuth` refuses to store or read a credential. There is no key rotation: a changed or lost key makes the stored credential unreadable. An admin then runs `/aiyappa openai disconnect`, which deletes the unreadable credential without revoking it, and connects again.
 
 `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` are optional. If both are set, hydration configures that identity in the cloned repo (GitHub App bot: `{slug}[bot]` / `{id}+{slug}[bot]@users.noreply.github.com`). If neither is set, commits would otherwise be `root` — do not guess. If only one is set, boot fails.
 
@@ -84,15 +84,15 @@ Do not pick Slack’s Bolt, AI assistant, or workflow templates. Those enable So
 
 Event Subscriptions come after `npm run dev` plus a tunnel, because Slack must verify `https://<host>/channels/slack/events`. Then subscribe the bot to `app_mention`, `message.channels`, and `message.groups`. Reinstall if Slack asks.
 
-The manifest registers the `/coworker` slash command with a placeholder host. Once you have a host, set its Request URL (**Slash Commands**) to `https://<host>/channels/slack/commands`, or edit the manifest's `url` before pasting.
+The manifest registers the `/aiyappa` slash command with a placeholder host. Once you have a host, set its Request URL (**Slash Commands**) to `https://<host>/channels/slack/commands`, or edit the manifest's `url` before pasting.
 
 ## ChatGPT subscription
 
 Coworker runs on `openai-codex/gpt-5.6-sol` through a ChatGPT Plus/Pro subscription once a Codex admin connects one. Until then, and after a disconnect, it uses OpenCode Go. One `CodexAuth` Durable Object holds the deployment's single credential, encrypted under `CODEX_CREDENTIAL_KEY`, and refreshes it; only access tokens leave it ([ADR 0020](docs/adr/0020-chatgpt-subscription-model-route.md)).
 
-- `/coworker openai connect` (admins): replies, visible only to you, with a code to enter at `https://auth.openai.com/codex/device` within 15 minutes. Whoever enters the code connects the whole deployment to their account, so do not share it. Sign in with a ChatGPT account dedicated to the bot; that account must enable "Device code authorization for Codex" in ChatGPT security settings, and on Team or Enterprise a workspace admin must allow it. The reply updates when the login finishes. Connect refuses while an account is connected; disconnect first to switch.
-- `/coworker openai status` (admins and invokers): the connected account id, the current access token's expiry, and the route Coworker uses. It never shows the code.
-- `/coworker openai disconnect` (admins): cancels a pending login, revokes the refresh token at OpenAI, and deletes the credential. The credential is deleted even if OpenAI does not confirm the revocation; the reply says so.
+- `/aiyappa openai connect` (admins): replies, visible only to you, with a code to enter at `https://auth.openai.com/codex/device` within 15 minutes. Whoever enters the code connects the whole deployment to their account, so do not share it. Sign in with a ChatGPT account dedicated to the bot; that account must enable "Device code authorization for Codex" in ChatGPT security settings, and on Team or Enterprise a workspace admin must allow it. The reply updates when the login finishes. Connect refuses while an account is connected; disconnect first to switch.
+- `/aiyappa openai status` (admins and invokers): the connected account id, the current access token's expiry, and the route Coworker uses. It never shows the code.
+- `/aiyappa openai disconnect` (admins): cancels a pending login, revokes the refresh token at OpenAI, and deletes the credential. The credential is deleted even if OpenAI does not confirm the revocation; the reply says so.
 
 Admins are `codexAdminIds` in `src/config.ts`, separate from the invoker allowlist. An empty list lets nobody connect or disconnect. Slack ingress picks the route when each event arrives, so a change applies from the next message. `flue run` always uses OpenCode Go because it has no Durable Objects.
 
@@ -136,7 +136,7 @@ Setup writes the assigned host into `TUNNEL_HOSTNAME`. Then:
 
 1. `npm run dev` (default `http://localhost:5173`).
 2. `npm run tunnel`.
-3. Slack Events URL, once: `https://<assigned-host>/channels/slack/events`. Subscribe to `app_mention` and thread `message` events. Scopes: `app_mentions:read`, `chat:write`, `commands`, channel history. Point the `/coworker` slash command at `https://<assigned-host>/channels/slack/commands`.
+3. Slack Events URL, once: `https://<assigned-host>/channels/slack/events`. Subscribe to `app_mention` and thread `message` events. Scopes: `app_mentions:read`, `chat:write`, `commands`, channel history. Point the `/aiyappa` slash command at `https://<assigned-host>/channels/slack/commands`.
 4. Mention the bot in a mapped channel.
 
 Stop with `npm run tunnel:stop`. Free ngrok also shows a browser warning page. Slack's event POSTs skip that. If you open the URL in a browser, click through once.

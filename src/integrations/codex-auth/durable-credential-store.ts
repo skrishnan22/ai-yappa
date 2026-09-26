@@ -10,6 +10,22 @@ export interface CredentialRecords {
 	list(): CredentialInfo[];
 }
 
+// A stored row that does not decrypt under the current key, typically after
+// `CODEX_CREDENTIAL_KEY` changed. Only deleting the row recovers.
+export class UnreadableCredentialError extends Error {
+	constructor(providerId: string, options: ErrorOptions) {
+		super(
+			`The stored ${providerId} credential does not decrypt under the current CODEX_CREDENTIAL_KEY; disconnect to delete it`,
+			options,
+		);
+		this.name = 'UnreadableCredentialError';
+	}
+}
+
+// What `revokeAndDelete` found: a credential it handed to `revoke`, a row it
+// deleted unrevoked because it no longer decrypts, or nothing.
+export type RevokeAndDeleteOutcome = 'deleted' | 'unreadable' | 'absent';
+
 // pi's `CredentialStore` over encrypted Durable Object rows. A per-provider
 // promise chain serializes `modify` and `delete`; `CodexAuth` has exactly one
 // instance, so that chain is the deployment-wide refresh lock.
@@ -33,8 +49,13 @@ export class DurableCredentialStore implements CredentialStore {
 		const record = this.#records.get(providerId);
 
 		if (record === undefined) return undefined;
+		const key = credentialKey(this.#secret);
 
-		return decryptCredential(credentialKey(this.#secret), providerId, record);
+		try {
+			return await decryptCredential(key, providerId, record);
+		} catch (error) {
+			throw new UnreadableCredentialError(providerId, { cause: error });
+		}
 	}
 
 	async list(): Promise<readonly CredentialInfo[]> {
@@ -70,16 +91,30 @@ export class DurableCredentialStore implements CredentialStore {
 	}
 
 	// Hands the stored credential to `revoke`, then deletes it, both inside
-	// the lock, so no refresh can rotate the token being revoked.
+	// the lock, so no refresh can rotate the token being revoked. A row that no
+	// longer decrypts is deleted without revoking, so a new login can replace
+	// it. A missing or malformed key still throws before anything is deleted.
 	revokeAndDelete(
 		providerId: string,
 		revoke: (stored: Credential) => Promise<void>,
-	): Promise<void> {
+	): Promise<RevokeAndDeleteOutcome> {
 		return this.#withLock(providerId, async () => {
-			const stored = await this.read(providerId);
+			let stored: Credential | undefined;
 
-			if (stored !== undefined) await revoke(stored);
+			try {
+				stored = await this.read(providerId);
+			} catch (error) {
+				if (!(error instanceof UnreadableCredentialError)) throw error;
+				this.#records.delete(providerId);
+
+				return 'unreadable';
+			}
+
+			if (stored === undefined) return 'absent';
+			await revoke(stored);
 			this.#records.delete(providerId);
+
+			return 'deleted';
 		});
 	}
 

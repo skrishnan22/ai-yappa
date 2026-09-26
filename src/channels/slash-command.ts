@@ -11,9 +11,9 @@ import type {
 } from '../integrations/codex-auth/codex-auth.ts';
 import { errorMessage } from '../json.ts';
 
-export const COWORKER_COMMAND = '/coworker';
+export const SLASH_COMMAND = '/aiyappa';
 
-const USAGE = 'Usage: `/coworker openai connect|status|disconnect`';
+const USAGE = 'Usage: `/aiyappa openai connect|status|disconnect`';
 
 const subcommandSchema = v.picklist(['connect', 'status', 'disconnect']);
 
@@ -24,7 +24,7 @@ const responseUrlSchema = v.pipe(v.string(), v.url(), v.startsWith('https://hook
 export type SlashCommandReply = { response_type: 'ephemeral'; text: string };
 
 /**
- * `/coworker openai connect|status|disconnect` (ADR 0020). Every reply is
+ * `/aiyappa openai connect|status|disconnect` (ADR 0020). Every reply is
  * ephemeral, and only the connect reply carries the device code: whoever
  * enters it binds the deployment to their ChatGPT account.
  *
@@ -32,11 +32,11 @@ export type SlashCommandReply = { response_type: 'ephemeral'; text: string };
  * invoker allowlist; it shows the account id, the token expiry, and which
  * route Coworker uses, nothing an invoker could act on.
  */
-export async function handleCoworkerCommand(
+export async function handleSlashCommand(
 	payload: SlackSlashCommandPayload,
 	codexAuth: () => CodexAuthControl,
 ): Promise<SlashCommandReply> {
-	if (payload.command !== COWORKER_COMMAND) return reply(`Unknown command ${payload.command}.`);
+	if (payload.command !== SLASH_COMMAND) return reply(`Unknown command ${payload.command}.`);
 	const [provider, action, ...extra] = payload.text.trim().split(/\s+/);
 	const subcommand = v.safeParse(subcommandSchema, action);
 
@@ -50,7 +50,11 @@ export async function handleCoworkerCommand(
 				return reply('You are not on the invoker allowlist for this deployment.');
 			}
 
-			return runReply('status', async () => statusText(await codexAuth().status()));
+			return runReply('status', async () => {
+				const status = await codexAuth().status();
+
+				return statusText(status);
+			});
 		}
 
 		case 'connect': {
@@ -59,15 +63,21 @@ export async function handleCoworkerCommand(
 
 			if (!responseUrl.success) return reply('Slack sent no usable response URL.');
 
-			return runReply('connect', async () =>
-				connectText(await codexAuth().startLogin(responseUrl.output)),
-			);
+			return runReply('connect', async () => {
+				const result = await codexAuth().startLogin(responseUrl.output);
+
+				return connectText(result);
+			});
 		}
 
 		case 'disconnect': {
 			if (!isCodexAdmin(payload.user_id)) return reply(adminOnly('disconnect'));
 
-			return runReply('disconnect', async () => disconnectText(await codexAuth().disconnect()));
+			return runReply('disconnect', async () => {
+				const result = await codexAuth().disconnect();
+
+				return disconnectText(result);
+			});
 		}
 
 		default: {
@@ -88,7 +98,9 @@ function adminOnly(action: string): string {
 
 async function runReply(action: string, run: () => Promise<string>): Promise<SlashCommandReply> {
 	try {
-		return reply(await run());
+		const text = await run();
+
+		return reply(text);
 	} catch (error) {
 		return reply(`ChatGPT ${action} failed: ${errorMessage(error)}`);
 	}
@@ -101,7 +113,7 @@ function statusText(status: CodexAuthStatus): string {
 		case 'pending_login':
 			return `A ChatGPT login is waiting for approval until ${slackDate(status.expires)}. Until then Coworker uses \`${openCodeGoModelSpecifier}\`.`;
 		case 'disconnected':
-			return `ChatGPT is not connected; Coworker uses \`${openCodeGoModelSpecifier}\`. A Codex admin can run \`/coworker openai connect\`.`;
+			return `ChatGPT is not connected; Coworker uses \`${openCodeGoModelSpecifier}\`. A Codex admin can run \`/aiyappa openai connect\`.`;
 		default: {
 			const _exhaustive: never = status;
 
@@ -112,7 +124,7 @@ function statusText(status: CodexAuthStatus): string {
 
 function connectText(result: CodexConnectResult): string {
 	if (result.state === 'connected') {
-		return `ChatGPT is already connected as account \`${result.accountId}\`. Run \`/coworker openai disconnect\` first to switch accounts.`;
+		return `ChatGPT is already connected as account \`${result.accountId}\`. Run \`/aiyappa openai disconnect\` first to switch accounts.`;
 	}
 
 	return [
@@ -131,6 +143,8 @@ function disconnectText(result: CodexDisconnectResult): string {
 			return `Disconnected ChatGPT and revoked its refresh token. ${route}`;
 		case 'failed':
 			return `Disconnected ChatGPT, but OpenAI did not confirm the token revocation. Sign the session out from ChatGPT's security settings. ${route}`;
+		case 'unreadable':
+			return `Deleted a stored ChatGPT credential that no longer decrypts (was \`CODEX_CREDENTIAL_KEY\` changed?), so its token was not revoked. Sign the session out from ChatGPT's security settings. ${route}`;
 		case 'none':
 			return result.cancelledLogin
 				? `Cancelled the pending ChatGPT login. ${route}`

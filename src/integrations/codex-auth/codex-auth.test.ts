@@ -81,7 +81,10 @@ describe('CodexAuthService', () => {
 		});
 
 		expect(status).toEqual({ state: 'connected', expires, accountId: 'account-1' });
-		expect(await service.status()).toEqual(status);
+
+		const reread = await service.status();
+
+		expect(reread).toEqual(status);
 		expect(JSON.stringify(status)).not.toContain('refresh-1');
 		expect(JSON.stringify(status)).not.toContain(codexAccessToken('old'));
 	});

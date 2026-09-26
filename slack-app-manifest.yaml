@@ -7,7 +7,7 @@ features:
     always_online: true
   # Replace the host with your tunnel or Worker host (README "Slack app").
   slash_commands:
-    - command: /coworker
+    - command: /aiyappa
       url: https://example.invalid/channels/slack/commands
       description: Connect, check, or disconnect the ChatGPT subscription
       usage_hint: openai connect|status|disconnect

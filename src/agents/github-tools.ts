@@ -21,23 +21,27 @@ export async function performReadIssue(
 	ctx: OwnerProxyCtx,
 	input: { number: number },
 ): Promise<PublicIssue> {
-	return publicIssue(await executeOperation(ctx, 'readIssue', { number: input.number }));
+	const issue = await executeOperation(ctx, 'readIssue', { number: input.number });
+
+	return publicIssue(issue);
 }
 
 export async function performReadRepo(ctx: OwnerProxyCtx): Promise<PublicRepo> {
-	return publicRepo(await executeOperation(ctx, 'readRepoMetadata', {}));
+	const repo = await executeOperation(ctx, 'readRepoMetadata', {});
+
+	return publicRepo(repo);
 }
 
 export async function performCreateWorkingBranch(
 	ctx: OwnerProxyCtx,
 	input: { fromSha: string },
 ): Promise<PublicRef> {
-	return publicRef(
-		await executeOperation(ctx, 'createBranch', {
-			name: workingBranchName(ctx.conversationId),
-			fromSha: input.fromSha,
-		}),
-	);
+	const ref = await executeOperation(ctx, 'createBranch', {
+		name: workingBranchName(ctx.conversationId),
+		fromSha: input.fromSha,
+	});
+
+	return publicRef(ref);
 }
 
 export async function performOpenPullRequest(

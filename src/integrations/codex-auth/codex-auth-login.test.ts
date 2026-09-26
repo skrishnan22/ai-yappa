@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { CodexAuthService } from './codex-auth.ts';
+import { UnreadableCredentialError } from './durable-credential-store.ts';
 import { type MemoryStorage, memoryStorage } from './memory-storage.ts';
 import type { PendingLogin } from './pending-login.ts';
 
@@ -15,7 +16,13 @@ const REVOKE_URL = 'https://auth.openai.com/oauth/revoke';
 
 const RESPONSE_URL = 'https://hooks.slack.com/commands/T1/1/abc';
 
-const credentialKey = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+const OTHER_RESPONSE_URL = 'https://hooks.slack.com/commands/T1/2/def';
+
+function randomKey(): string {
+	return btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+}
+
+const credentialKey = randomKey();
 
 type SentRequest = { url: string; body: string };
 
@@ -297,6 +304,96 @@ describe('CodexAuthService device-code login', () => {
 		await expect(service.status()).resolves.toEqual({ state: 'disconnected' });
 	});
 
+	test('a disconnect while the device code request is in flight cancels that login once it lands', async () => {
+		const userCode = Promise.withResolvers<Response>();
+
+		const requests = stubFetch(
+			new Map([
+				[USER_CODE_URL, [() => userCode.promise]],
+				[RESPONSE_URL, [slackOk]],
+			]),
+		);
+
+		const storage = memoryStorage();
+		const service = new CodexAuthService(storage, credentialKey);
+		const connecting = service.startLogin(RESPONSE_URL);
+
+		await vi.waitFor(() => {
+			expect(requests.map((request) => request.url)).toContain(USER_CODE_URL);
+		});
+		const disconnecting = service.disconnect();
+
+		userCode.resolve(
+			Response.json({ device_auth_id: 'device-1', user_code: 'ABCD-EFGH', interval: 5 }),
+		);
+
+		await expect(connecting).resolves.toMatchObject({ state: 'pending_login' });
+		await expect(disconnecting).resolves.toEqual({ revocation: 'none', cancelledLogin: true });
+		expect(storage.pendingLogin.get()).toBeUndefined();
+		expect(storage.alarm.at).toBeUndefined();
+		expect(slackText(requests.at(-1))).toContain('cancelled');
+	});
+
+	test('a connect that starts before an approved login is stored replaces it, and the approved token is revoked', async () => {
+		const exchange = Promise.withResolvers<Response>();
+		const userCode = Promise.withResolvers<Response>();
+
+		const requests = stubFetch(
+			new Map([
+				[
+					DEVICE_TOKEN_URL,
+					[() => Response.json({ authorization_code: 'auth-code', code_verifier: 'verifier' })],
+				],
+				[TOKEN_URL, [() => exchange.promise]],
+				[USER_CODE_URL, [() => userCode.promise]],
+				[REVOKE_URL, [() => new Response(null, { status: 200 })]],
+				[RESPONSE_URL, [slackOk]],
+			]),
+		);
+
+		const { service, storage } = serviceWithPendingLogin();
+		const polling = service.pollLogin();
+
+		await vi.waitFor(() => {
+			expect(requests.map((request) => request.url)).toContain(TOKEN_URL);
+		});
+
+		// The new connect has checked status and is waiting for its code.
+		const connecting = service.startLogin(OTHER_RESPONSE_URL);
+
+		await vi.waitFor(() => {
+			expect(requests.map((request) => request.url)).toContain(USER_CODE_URL);
+		});
+
+		exchange.resolve(
+			Response.json({
+				access_token: accessToken('account-1'),
+				refresh_token: 'refresh-1',
+				expires_in: 3600,
+			}),
+		);
+		// Time for an unserialized exchange to store its credential first.
+		await new Promise((resolve) => {
+			setTimeout(resolve, 50);
+		});
+		userCode.resolve(
+			Response.json({ device_auth_id: 'device-2', user_code: 'WXYZ-2345', interval: 5 }),
+		);
+
+		await expect(connecting).resolves.toMatchObject({ userCode: 'WXYZ-2345' });
+		await polling;
+
+		expect(storage.pendingLogin.get()).toMatchObject({
+			deviceAuthId: 'device-2',
+			responseUrl: OTHER_RESPONSE_URL,
+		});
+		await expect(service.status()).resolves.toMatchObject({ state: 'pending_login' });
+		expect(requests.at(-1)).toEqual({
+			url: REVOKE_URL,
+			body: expect.stringContaining('token=refresh-1'),
+		});
+	});
+
 	test('startLogin keeps an existing credential and requests nothing', async () => {
 		const requests = stubFetch(new Map());
 		const service = new CodexAuthService(memoryStorage(), credentialKey);
@@ -379,6 +476,47 @@ describe('CodexAuthService disconnect', () => {
 			cancelledLogin: false,
 		});
 		await expect(service.status()).resolves.toEqual({ state: 'disconnected' });
+	});
+
+	test('deletes a credential that no longer decrypts, without revoking it', async () => {
+		const requests = stubFetch(new Map());
+		const storage = memoryStorage();
+
+		await new CodexAuthService(storage, credentialKey).seed({
+			access: accessToken('account-1'),
+			refresh: 'refresh-1',
+			expires: Date.now() + 60 * 60 * 1000,
+			accountId: 'account-1',
+		});
+
+		const rekeyed = new CodexAuthService(storage, randomKey());
+
+		await expect(rekeyed.status()).rejects.toThrow(UnreadableCredentialError);
+		await expect(rekeyed.disconnect()).resolves.toEqual({
+			revocation: 'unreadable',
+			cancelledLogin: false,
+		});
+		await expect(rekeyed.status()).resolves.toEqual({ state: 'disconnected' });
+		expect(requests).toHaveLength(0);
+	});
+
+	test('deletes nothing without a credential key', async () => {
+		const requests = stubFetch(new Map());
+		const storage = memoryStorage();
+		const service = new CodexAuthService(storage, credentialKey);
+
+		await service.seed({
+			access: accessToken('account-1'),
+			refresh: 'refresh-1',
+			expires: Date.now() + 60 * 60 * 1000,
+			accountId: 'account-1',
+		});
+
+		const keyless = new CodexAuthService(storage, undefined);
+
+		await expect(keyless.disconnect()).rejects.toThrow(/CODEX_CREDENTIAL_KEY/);
+		await expect(service.status()).resolves.toMatchObject({ state: 'connected' });
+		expect(requests).toHaveLength(0);
 	});
 
 	test('cancels a pending login and its alarm', async () => {

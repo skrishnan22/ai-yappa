@@ -72,8 +72,14 @@ export async function requestDeviceCode(): Promise<DeviceCode> {
 		throw new Error('OpenAI has not enabled device code login for the Codex client (HTTP 404)');
 	}
 
-	if (!response.ok) throw new Error(await failureMessage('Device code request', response));
-	const parsed = v.safeParse(deviceCodeSchema, await response.json());
+	if (!response.ok) {
+		const message = await failureMessage('Device code request', response);
+
+		throw new Error(message);
+	}
+
+	const body = await response.json();
+	const parsed = v.safeParse(deviceCodeSchema, body);
 
 	if (!parsed.success) throw new Error('OpenAI returned an unexpected device code response');
 
@@ -110,7 +116,8 @@ export async function pollDeviceCode(code: DeviceCode): Promise<DevicePoll> {
 	}
 
 	if (response.ok) {
-		const parsed = v.safeParse(approvalSchema, await response.json());
+		const body = await response.json();
+		const parsed = v.safeParse(approvalSchema, body);
 
 		if (!parsed.success) {
 			return { kind: 'failed', message: 'OpenAI returned an unexpected device approval response' };
@@ -167,8 +174,14 @@ export async function exchangeDeviceCode(
 		signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
 	});
 
-	if (!response.ok) throw new Error(await failureMessage('Token exchange', response));
-	const parsed = v.safeParse(tokenSchema, await response.json());
+	if (!response.ok) {
+		const message = await failureMessage('Token exchange', response);
+
+		throw new Error(message);
+	}
+
+	const body = await response.json();
+	const parsed = v.safeParse(tokenSchema, body);
 
 	if (!parsed.success) throw new Error('OpenAI returned an unexpected token response');
 
@@ -215,7 +228,9 @@ export async function revokeRefreshToken(refresh: string): Promise<boolean> {
 }
 
 async function failureMessage(action: string, response: Response): Promise<string> {
-	return failureText(action, response.status, await response.text());
+	const text = await response.text();
+
+	return failureText(action, response.status, text);
 }
 
 // OpenAI error bodies carry codes and descriptions, never tokens.

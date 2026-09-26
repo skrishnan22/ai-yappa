@@ -20,8 +20,8 @@ export function withSseTransport(api: ProviderStreams): ProviderStreams {
 
 // The ChatGPT subscription provider. `accessToken` asks the `CodexAuth`
 // Durable Object, which refreshes under its lock; the refresh token never
-// leaves it. app.ts registers this in the Worker; `flue run` never loads
-// app.ts, has no Durable Object, and stays on OpenCode Go.
+// leaves it. src/cloudflare.ts registers this in the Worker; `flue run`
+// never loads that file, has no Durable Object, and stays on OpenCode Go.
 export function createOpenAICodexProvider(
 	accessToken: () => Promise<string | undefined>,
 ): Provider {
