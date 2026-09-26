@@ -5,6 +5,11 @@ features:
   bot_user:
     display_name: Slack Agent
     always_online: true
+  # CodexAuth DMs Codex admins when the ChatGPT login needs renewal.
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: true
   # Replace the host with your tunnel or Worker host (README "Slack app").
   slash_commands:
     - command: /aiyappa

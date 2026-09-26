@@ -2,10 +2,13 @@
 import { dispatch, getAgentInstance } from '@flue/runtime';
 import { createSlackChannel, type SlackThreadRef } from '@flue/slack';
 import { Coworker } from '../agents/coworker.ts';
-import { type ModelRoute, modelRouteFor } from '../agents/model-route.ts';
+import {
+	type ModelRoute,
+	type ModelRouteFallback,
+	resolveModelRoute,
+} from '../agents/model-route.ts';
 import { isAllowedInvoker, repoForChannel } from '../config.ts';
 import type { CodexAuthControl } from '../integrations/codex-auth/codex-auth.ts';
-import { errorMessage } from '../json.ts';
 import { emitSemanticEvent } from '../observability.ts';
 import { decideAdmit, mentionsAuthorizedBot } from './admit.ts';
 import type { SlackSignal } from './admit.ts';
@@ -19,20 +22,6 @@ async function conversationExistsInThread(signalType: SlackSignal, id: string): 
 	const existing = await getAgentInstance(Coworker, id);
 
 	return existing !== null;
-}
-
-// Falls back to OpenCode Go when `CodexAuth` cannot answer, so a broken
-// ChatGPT connection never blocks Slack.
-async function modelRouteForDispatch(codexAuth: () => CodexAuthControl): Promise<ModelRoute> {
-	try {
-		const status = await codexAuth().status();
-
-		return modelRouteFor(status);
-	} catch (error) {
-		console.warn(`[slack] CodexAuth status failed; routing to OpenCode Go: ${errorMessage(error)}`);
-
-		return 'opencode-go';
-	}
 }
 
 export function createSlackChannelForEnv(env: ServerEnv, codexAuth: () => CodexAuthControl) {
@@ -189,10 +178,17 @@ async function admitThread({
 				// Thread history is context for the agent, not a dispatch requirement.
 			}
 
-			type SignalAttributes = { eventId: string; modelRoute: ModelRoute; threadContext?: string };
+			type SignalAttributes = {
+				eventId: string;
+				modelRoute: ModelRoute;
+				modelRouteFallback?: ModelRouteFallback;
+				threadContext?: string;
+			};
 
-			const modelRoute = await modelRouteForDispatch(codexAuth);
-			const attributes: SignalAttributes = { eventId, modelRoute };
+			const { route, fallback } = await resolveModelRoute(() => codexAuth().status());
+			const attributes: SignalAttributes = { eventId, modelRoute: route };
+
+			if (fallback !== undefined) attributes.modelRouteFallback = fallback;
 
 			if (threadContext !== undefined) attributes.threadContext = threadContext;
 

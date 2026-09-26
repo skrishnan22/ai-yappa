@@ -158,4 +158,24 @@ describe('/aiyappa openai', () => {
 
 		expect(after.text).toContain('not connected');
 	});
+
+	test('status names a needs_login connection and the way back', async () => {
+		const storage = memoryStorage();
+		const service = new CodexAuthService(storage, credentialKey);
+
+		await service.seed({
+			access: 'access-1',
+			refresh: 'refresh-1',
+			expires: Date.now() + 60 * 60 * 1000,
+			accountId: 'account-1',
+		});
+		storage.needsLogin.set({ reason: 'refresh_token_expired', since: Date.now() });
+
+		const status = await handleSlashCommand(command('openai status', ADMIN), () => service);
+
+		expect(status.text).toContain('needs a new login');
+		expect(status.text).toContain('`refresh_token_expired`');
+		expect(status.text).toContain('opencode-go/');
+		expect(status.text).toContain('/aiyappa openai connect');
+	});
 });

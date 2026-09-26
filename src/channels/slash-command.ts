@@ -115,6 +115,8 @@ function statusText(status: CodexAuthStatus): string {
 			return `ChatGPT is connected as account \`${status.accountId}\`; Coworker uses \`${openAICodexModelSpecifier}\`. The current access token expires ${slackDate(status.expires)} and refreshes automatically.`;
 		case 'pending_login':
 			return `A ChatGPT login is waiting for approval until ${slackDate(status.expires)}. Until then Coworker uses \`${openCodeGoModelSpecifier}\`.`;
+		case 'needs_login':
+			return `ChatGPT needs a new login: OpenAI rejected the refresh token (\`${status.reason}\`) ${slackDate(status.since)}. Coworker uses \`${openCodeGoModelSpecifier}\` until a Codex admin runs \`/aiyappa openai connect\`.`;
 		case 'disconnected':
 			return `ChatGPT is not connected; Coworker uses \`${openCodeGoModelSpecifier}\`. A Codex admin can run \`/aiyappa openai connect\`.`;
 		default: {

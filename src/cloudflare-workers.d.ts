@@ -13,12 +13,14 @@ declare module 'cloudflare:workers' {
 
 	export interface DurableObjectStorage {
 		readonly sql: SqlStorage;
+		getAlarm(): Promise<number | null>;
 		setAlarm(scheduledTime: number): Promise<void>;
 		deleteAlarm(): Promise<void>;
 	}
 
 	export interface DurableObjectState {
 		readonly storage: DurableObjectStorage;
+		blockConcurrencyWhile<T>(callback: () => Promise<T>): Promise<T>;
 	}
 
 	export abstract class DurableObject<Env = undefined> {

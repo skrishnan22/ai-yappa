@@ -268,6 +268,13 @@ describe('renderRunCard', () => {
 describe('formatModelRoute', () => {
 	test('formats model alone or with thinking level', () => {
 		expect(formatModelRoute({ model: 'opencode-go/x' })).toBe('opencode-go/x');
+		expect(
+			formatModelRoute({
+				model: 'opencode-go/x',
+				modelNote: 'ChatGPT needs a new login',
+				thinkingLevel: 'medium',
+			}),
+		).toBe('opencode-go/x (ChatGPT needs a new login) · thinking medium');
 		expect(formatModelRoute({ model: 'opencode-go/x', thinkingLevel: 'high' })).toBe(
 			'opencode-go/x · thinking high',
 		);
@@ -394,6 +401,59 @@ describe('publishCardEvent', () => {
 		expect(persisted.at(-1)?.model).toBe('opencode-go/deepseek-v4-flash');
 		expect(persisted.at(-1)?.thinkingLevel).toBe('medium');
 	});
+
+	test('shows a fallback note until a render with a new route replaces it', async () => {
+		const texts: string[] = [];
+
+		const port: SlackCardPort = {
+			async post(args) {
+				texts.push(args.text);
+
+				return { ts: 'card.ts' };
+			},
+			async update(args) {
+				texts.push(args.text);
+			},
+			async notify() {},
+		};
+
+		const persisted: RunCardState[] = [];
+
+		function bind(route: { model?: string; modelNote?: string }): void {
+			bindRunCard({
+				instanceId: 'conversation-1',
+				channelId: 'C1',
+				threadTs: '1.2',
+				state: persisted.at(-1) ?? null,
+				...route,
+				persist(state) {
+					persisted.push(state);
+				},
+				port,
+			});
+		}
+
+		bind({ model: 'opencode-go/x', modelNote: 'ChatGPT needs a new login' });
+		await publishCardEvent(routed({ type: 'submission_running', submissionId: 'sub-1' }), 1_000);
+
+		expect(texts.at(-1)).toContain('opencode-go/x (ChatGPT needs a new login)');
+
+		// An appended reminder renders without a route; the note stays.
+		bind({});
+		await publishCardEvent(
+			routed({ type: 'tool_start', submissionId: 'sub-1', toolName: 'bash' }),
+			2_000,
+		);
+
+		expect(texts.at(-1)).toContain('(ChatGPT needs a new login)');
+
+		bind({ model: 'openai-codex/y' });
+		await publishCardEvent(routed({ type: 'submission_running', submissionId: 'sub-2' }), 3_000);
+
+		expect(texts.at(-1)).toContain('openai-codex/y');
+		expect(texts.at(-1)).not.toContain('ChatGPT needs a new login');
+	});
+
 	test('does not route a new conversation event through the previously bound thread', async () => {
 		const firstThreadPosts: unknown[] = [];
 		const secondThreadPosts: unknown[] = [];

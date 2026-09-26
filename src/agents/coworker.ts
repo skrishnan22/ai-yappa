@@ -37,6 +37,8 @@ import {
 	coworkerModelSpecifier,
 	coworkerThinkingLevel,
 	deliveredModelRoute,
+	deliveredModelRouteFallback,
+	modelRouteFallbackNote,
 } from './model-route.ts';
 import { webSearchTools } from './web-search-tools.ts';
 
@@ -57,8 +59,10 @@ const initialDataSchema = v.object({
 });
 
 export function Coworker(props: { id: string }) {
-	const route = deliveredModelRoute(useDelivery());
+	const delivery = useDelivery();
+	const route = deliveredModelRoute(delivery);
 	const model = coworkerModelSpecifier(route);
+	const fallback = deliveredModelRouteFallback(delivery);
 
 	useModel(model, { thinkingLevel: coworkerThinkingLevel });
 
@@ -93,6 +97,7 @@ export function Coworker(props: { id: string }) {
 		// Mid-submission renders (appended reminders) carry no route; the card
 		// keeps the route the submission latched.
 		model: route === undefined ? undefined : model,
+		modelNote: fallback === undefined ? undefined : modelRouteFallbackNote(fallback),
 		thinkingLevel: coworkerThinkingLevel,
 		persist: (state) => {
 			setRunCard(state);
