@@ -74,6 +74,9 @@ export type CodexDisconnectResult = {
 	cancelledLogin: boolean;
 };
 
+// A finished login's final message, sent after the login lock is released.
+type LoginEnd = { responseUrl: string; text: string };
+
 // What Slack ingress needs from `CodexAuth`: the Durable Object stub in the
 // Worker, a `CodexAuthService` in tests.
 export type CodexAuthControl = Pick<CodexAuthService, 'status' | 'startLogin' | 'disconnect'>;
@@ -91,10 +94,9 @@ export class CodexAuthService {
 
 	readonly #credentialKey: string | undefined;
 
-	// Serializes every change to the pending login and the credential a login
-	// produces: `startLogin`, `disconnect`, and each poll's outcome. Requests
-	// that only read the pending login (a poll, the code exchange) run outside
-	// it, and their results apply only if that login is still pending.
+	// Serializes `startLogin`, `disconnect`, and each poll, so none sees
+	// another's half-finished change to the pending login or the credential.
+	// Slack edits happen after release.
 	#loginChain: Promise<void> = Promise.resolve();
 
 	constructor(storage: CodexAuthStorage, key: string | undefined) {
@@ -177,51 +179,17 @@ export class CodexAuthService {
 
 	// One poll per alarm. pi's in-process sleep loop would keep the object
 	// awake for up to 15 minutes; an alarm lets it sleep between polls and
-	// resume after a restart.
+	// resume after a restart. The whole poll holds the login lock, so a
+	// connect or disconnect waits for it rather than racing it.
 	async pollLogin(): Promise<void> {
-		const login = this.#pendingLogin.get();
+		const ended = await this.#withLoginLock(() => this.#pollOnce());
 
-		if (login === undefined) return;
-
-		if (Date.now() >= login.deadline) {
-			await this.#settle(
-				login,
-				'The ChatGPT login code expired before it was approved. Run `/aiyappa openai connect` for a new code.',
-			);
-
-			return;
-		}
-
-		const poll = await pollDeviceCode(login);
-
-		switch (poll.kind) {
-			case 'pending':
-				await this.#pollAgain(login, login.intervalMs);
-
-				return;
-			case 'slow_down':
-				await this.#pollAgain(login, login.intervalMs + SLOW_DOWN_INCREMENT_MS);
-
-				return;
-			case 'failed':
-				await this.#settle(login, `ChatGPT login failed: ${poll.message}`);
-
-				return;
-			case 'approved':
-				await this.#completeLogin(login, poll.authorizationCode, poll.codeVerifier);
-
-				return;
-			default: {
-				const _exhaustive: never = poll;
-
-				return _exhaustive;
-			}
-		}
+		if (ended !== undefined) await editSlackResponse(ended.responseUrl, ended.text);
 	}
 
 	// Cancels a pending login, revokes the stored refresh token, and deletes
 	// the credential. The credential is deleted even when revocation fails.
-	// A login still requesting its code finishes first, then is cancelled.
+	// A login still requesting its code, or a poll in flight, finishes first.
 	async disconnect(): Promise<CodexDisconnectResult> {
 		const { login, revocation } = await this.#withLoginLock(async () => {
 			const pending = this.#pendingLogin.get();
@@ -252,74 +220,77 @@ export class CodexAuthService {
 		return { revocation, cancelledLogin: login !== undefined };
 	}
 
+	// Returns the admin's Slack update when the login ends.
+	async #pollOnce(): Promise<LoginEnd | undefined> {
+		const login = this.#pendingLogin.get();
+
+		if (login === undefined) return undefined;
+
+		if (Date.now() >= login.deadline) {
+			return this.#endLogin(
+				login,
+				'The ChatGPT login code expired before it was approved. Run `/aiyappa openai connect` for a new code.',
+			);
+		}
+
+		const poll = await pollDeviceCode(login);
+
+		switch (poll.kind) {
+			case 'pending':
+				await this.#schedulePoll(login);
+
+				return undefined;
+			case 'slow_down': {
+				const slower = { ...login, intervalMs: login.intervalMs + SLOW_DOWN_INCREMENT_MS };
+
+				this.#pendingLogin.set(slower);
+				await this.#schedulePoll(slower);
+
+				return undefined;
+			}
+
+			case 'failed':
+				return this.#endLogin(login, `ChatGPT login failed: ${poll.message}`);
+			case 'approved':
+				return this.#completeLogin(login, poll.authorizationCode, poll.codeVerifier);
+			default: {
+				const _exhaustive: never = poll;
+
+				return _exhaustive;
+			}
+		}
+	}
+
 	async #completeLogin(
 		login: PendingLogin,
 		authorizationCode: string,
 		codeVerifier: string,
-	): Promise<void> {
+	): Promise<LoginEnd> {
 		let credential: CodexOAuthCredential;
 
 		try {
 			credential = await exchangeDeviceCode(authorizationCode, codeVerifier);
 		} catch (error) {
-			await this.#settle(login, `ChatGPT login failed: ${errorMessage(error)}`);
-
-			return;
+			return this.#endLogin(login, `ChatGPT login failed: ${errorMessage(error)}`);
 		}
 
-		const stored = await this.#withLoginLock(async () => {
-			if (!this.#isPending(login)) return false;
-			await this.#store.modify(CODEX_PROVIDER_ID, async () => credential);
-			this.#pendingLogin.clear();
+		await this.#store.modify(CODEX_PROVIDER_ID, async () => credential);
 
-			return true;
-		});
-
-		// A disconnect or a newer connect during the exchange wins; do not strand
-		// the new token.
-		if (!stored) {
-			await revokeRefreshToken(credential.refresh);
-
-			return;
-		}
-
-		await editSlackResponse(
-			login.responseUrl,
+		return this.#endLogin(
+			login,
 			`Connected ChatGPT account \`${credential.accountId}\`. New Coworker runs use the ChatGPT subscription.`,
 		);
 	}
 
-	#isPending(login: PendingLogin): boolean {
-		return this.#pendingLogin.get()?.deviceAuthId === login.deviceAuthId;
-	}
-
-	// Polls `login` again after `intervalMs`, unless a connect or disconnect
-	// replaced it during the poll.
-	#pollAgain(login: PendingLogin, intervalMs: number): Promise<void> {
-		return this.#withLoginLock(async () => {
-			if (!this.#isPending(login)) return;
-			const next = { ...login, intervalMs };
-
-			this.#pendingLogin.set(next);
-			await this.#schedulePoll(next);
-		});
-	}
-
-	// The last alarm lands on the deadline, where `pollLogin` expires the login.
+	// The last alarm lands on the deadline, where `#pollOnce` expires the login.
 	#schedulePoll(login: PendingLogin): Promise<void> {
 		return this.#alarm.set(Math.min(Date.now() + login.intervalMs, login.deadline));
 	}
 
-	// Ends `login` and tells the admin, unless it was already replaced.
-	async #settle(login: PendingLogin, text: string): Promise<void> {
-		const settled = await this.#withLoginLock(async () => {
-			if (!this.#isPending(login)) return false;
-			this.#pendingLogin.clear();
+	#endLogin(login: PendingLogin, text: string): LoginEnd {
+		this.#pendingLogin.clear();
 
-			return true;
-		});
-
-		if (settled) await editSlackResponse(login.responseUrl, text);
+		return { responseUrl: login.responseUrl, text };
 	}
 
 	#withLoginLock<T>(task: () => Promise<T>): Promise<T> {

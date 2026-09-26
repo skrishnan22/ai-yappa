@@ -264,8 +264,8 @@ describe('CodexAuthService device-code login', () => {
 		await expect(service.status()).resolves.toEqual({ state: 'disconnected' });
 	});
 
-	test('a disconnect during the token exchange wins, and the new refresh token is revoked', async () => {
-		const storage = memoryStorage();
+	test('a disconnect during the token exchange waits for it, then revokes the new credential', async () => {
+		const exchange = Promise.withResolvers<Response>();
 
 		const requests = stubFetch(
 			new Map([
@@ -273,34 +273,34 @@ describe('CodexAuthService device-code login', () => {
 					DEVICE_TOKEN_URL,
 					[() => Response.json({ authorization_code: 'auth-code', code_verifier: 'verifier' })],
 				],
-				[
-					TOKEN_URL,
-					[
-						() => {
-							storage.pendingLogin.clear();
-
-							return Response.json({
-								access_token: accessToken('account-1'),
-								refresh_token: 'refresh-1',
-								expires_in: 3600,
-							});
-						},
-					],
-				],
+				[TOKEN_URL, [() => exchange.promise]],
 				[REVOKE_URL, [() => new Response(null, { status: 200 })]],
+				[RESPONSE_URL, [slackOk]],
 			]),
 		);
 
-		storage.pendingLogin.set(pendingLogin());
-		const service = new CodexAuthService(storage, credentialKey);
+		const { service } = serviceWithPendingLogin();
+		const polling = service.pollLogin();
 
-		await service.pollLogin();
+		await vi.waitFor(() => {
+			expect(requests.map((request) => request.url)).toContain(TOKEN_URL);
+		});
+		const disconnecting = service.disconnect();
 
-		expect(requests.map((request) => request.url)).toEqual([
-			DEVICE_TOKEN_URL,
-			TOKEN_URL,
-			REVOKE_URL,
-		]);
+		exchange.resolve(
+			Response.json({
+				access_token: accessToken('account-1'),
+				refresh_token: 'refresh-1',
+				expires_in: 3600,
+			}),
+		);
+
+		await expect(disconnecting).resolves.toEqual({ revocation: 'revoked', cancelledLogin: false });
+		await polling;
+
+		expect(requests.find((request) => request.url === REVOKE_URL)?.body).toContain(
+			'token=refresh-1',
+		);
 		await expect(service.status()).resolves.toEqual({ state: 'disconnected' });
 	});
 
@@ -334,9 +334,8 @@ describe('CodexAuthService device-code login', () => {
 		expect(slackText(requests.at(-1))).toContain('cancelled');
 	});
 
-	test('a connect that starts before an approved login is stored replaces it, and the approved token is revoked', async () => {
+	test('a connect during the token exchange waits for it, then reports the new connection', async () => {
 		const exchange = Promise.withResolvers<Response>();
-		const userCode = Promise.withResolvers<Response>();
 
 		const requests = stubFetch(
 			new Map([
@@ -345,8 +344,6 @@ describe('CodexAuthService device-code login', () => {
 					[() => Response.json({ authorization_code: 'auth-code', code_verifier: 'verifier' })],
 				],
 				[TOKEN_URL, [() => exchange.promise]],
-				[USER_CODE_URL, [() => userCode.promise]],
-				[REVOKE_URL, [() => new Response(null, { status: 200 })]],
 				[RESPONSE_URL, [slackOk]],
 			]),
 		);
@@ -357,13 +354,7 @@ describe('CodexAuthService device-code login', () => {
 		await vi.waitFor(() => {
 			expect(requests.map((request) => request.url)).toContain(TOKEN_URL);
 		});
-
-		// The new connect has checked status and is waiting for its code.
 		const connecting = service.startLogin(OTHER_RESPONSE_URL);
-
-		await vi.waitFor(() => {
-			expect(requests.map((request) => request.url)).toContain(USER_CODE_URL);
-		});
 
 		exchange.resolve(
 			Response.json({
@@ -372,26 +363,15 @@ describe('CodexAuthService device-code login', () => {
 				expires_in: 3600,
 			}),
 		);
-		// Time for an unserialized exchange to store its credential first.
-		await new Promise((resolve) => {
-			setTimeout(resolve, 50);
-		});
-		userCode.resolve(
-			Response.json({ device_auth_id: 'device-2', user_code: 'WXYZ-2345', interval: 5 }),
-		);
 
-		await expect(connecting).resolves.toMatchObject({ userCode: 'WXYZ-2345' });
+		await expect(connecting).resolves.toMatchObject({
+			state: 'connected',
+			accountId: 'account-1',
+		});
 		await polling;
 
-		expect(storage.pendingLogin.get()).toMatchObject({
-			deviceAuthId: 'device-2',
-			responseUrl: OTHER_RESPONSE_URL,
-		});
-		await expect(service.status()).resolves.toMatchObject({ state: 'pending_login' });
-		expect(requests.at(-1)).toEqual({
-			url: REVOKE_URL,
-			body: expect.stringContaining('token=refresh-1'),
-		});
+		expect(storage.pendingLogin.get()).toBeUndefined();
+		expect(requests.map((request) => request.url)).not.toContain(USER_CODE_URL);
 	});
 
 	test('startLogin keeps an existing credential and requests nothing', async () => {
