@@ -1,5 +1,5 @@
-import type { SqlStorage, SqlStorageValue } from 'cloudflare:workers';
-import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
+import type { SqlStorage } from 'cloudflare:workers';
+import { DatabaseSync } from 'node:sqlite';
 import * as v from 'valibot';
 import { describe, expect, test } from 'vitest';
 import { CodexAuthService } from './codex-auth.ts';
@@ -8,16 +8,15 @@ import { sqlCredentialRecords } from './sql-credential-records.ts';
 
 const credentialKey = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
 
-// Node's SQLite behind the Durable Object `SqlStorage` shape: BLOBs go in and
-// come out as ArrayBuffer, as they do in workerd.
+// The credentials table holds only text, so values pass straight through.
+const sqlValueSchema = v.union([v.string(), v.number(), v.null()]);
+
+// Node's SQLite behind the Durable Object `SqlStorage` shape.
 function nodeSqlStorage(db: DatabaseSync): SqlStorage {
 	return {
 		exec(query, ...bindings) {
 			const statement = db.prepare(query);
-
-			const params = bindings.map((value) =>
-				value instanceof ArrayBuffer ? new Uint8Array(value) : value,
-			);
+			const params = bindings.map((value) => v.parse(sqlValueSchema, value));
 
 			if (statement.columns().length === 0) {
 				statement.run(...params);
@@ -29,21 +28,13 @@ function nodeSqlStorage(db: DatabaseSync): SqlStorage {
 				.all(...params)
 				.map((row) =>
 					Object.fromEntries(
-						Object.entries(row).map(([column, value]) => [column, sqlStorageValue(value)]),
+						Object.entries(row).map(([column, value]) => [column, v.parse(sqlValueSchema, value)]),
 					),
 				);
 
 			return { toArray: () => rows };
 		},
 	};
-}
-
-const sqlScalarSchema = v.union([v.string(), v.number(), v.null()]);
-
-function sqlStorageValue(value: SQLOutputValue): SqlStorageValue {
-	if (value instanceof Uint8Array) return value.slice().buffer;
-
-	return v.parse(sqlScalarSchema, value);
 }
 
 describe('sqlCredentialRecords', () => {
@@ -90,13 +81,10 @@ describe('sqlCredentialRecords', () => {
 		}));
 
 		const row = db.prepare('SELECT type, record FROM credentials').get();
-		const record = row?.record;
 
 		expect(row?.type).toBe('oauth');
-		expect(record).toBeInstanceOf(Uint8Array);
-		expect(
-			new TextDecoder().decode(record instanceof Uint8Array ? record : undefined),
-		).not.toContain('refresh-1');
+		expect(row?.record).toEqual(expect.any(String));
+		expect(row?.record).not.toContain('refresh-1');
 
 		await store.delete('openai-codex');
 

@@ -1,9 +1,9 @@
 import type { Credential } from '@earendil-works/pi-ai';
 import { describe, expect, test } from 'vitest';
-import { decryptCredential, encryptCredential, importCredentialKey } from './credential-cipher.ts';
+import { credentialKey, decryptCredential, encryptCredential } from './credential-cipher.ts';
 
-function randomKeySecret(): string {
-	return btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+function randomKey(): Uint8Array {
+	return credentialKey(btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))));
 }
 
 const credential: Credential = {
@@ -16,44 +16,42 @@ const credential: Credential = {
 
 describe('credential cipher', () => {
 	test('round-trips a credential', async () => {
-		const key = await importCredentialKey(randomKeySecret());
+		const key = randomKey();
 		const record = await encryptCredential(key, 'openai-codex', credential);
 
 		await expect(decryptCredential(key, 'openai-codex', record)).resolves.toEqual(credential);
 	});
 
-	test('stores bytes that are not plaintext JSON', async () => {
-		const key = await importCredentialKey(randomKeySecret());
-		const text = new TextDecoder().decode(await encryptCredential(key, 'openai-codex', credential));
+	test('stores a record without the plaintext tokens', async () => {
+		const record = await encryptCredential(randomKey(), 'openai-codex', credential);
 
-		expect(text).not.toContain('refresh-secret');
-		expect(text).not.toContain('access-secret');
-		expect(() => JSON.parse(text)).toThrow(SyntaxError);
+		expect(record).not.toContain('refresh-secret');
+		expect(record).not.toContain('access-secret');
 	});
 
-	test('uses a fresh IV for every write', async () => {
-		const key = await importCredentialKey(randomKeySecret());
-		const first = new Uint8Array(await encryptCredential(key, 'openai-codex', credential));
-		const second = new Uint8Array(await encryptCredential(key, 'openai-codex', credential));
+	test('encrypts the same credential differently on every write', async () => {
+		const key = randomKey();
+		const first = await encryptCredential(key, 'openai-codex', credential);
+		const second = await encryptCredential(key, 'openai-codex', credential);
 
-		expect(first.subarray(0, 12)).not.toEqual(second.subarray(0, 12));
+		expect(first).not.toEqual(second);
 	});
 
 	test('rejects a record read with another key or under another provider id', async () => {
-		const key = await importCredentialKey(randomKeySecret());
+		const key = randomKey();
 		const record = await encryptCredential(key, 'openai-codex', credential);
 
-		await expect(
-			decryptCredential(await importCredentialKey(randomKeySecret()), 'openai-codex', record),
-		).rejects.toMatchObject({ name: 'OperationError' });
-		await expect(decryptCredential(key, 'anthropic', record)).rejects.toMatchObject({
-			name: 'OperationError',
+		await expect(decryptCredential(randomKey(), 'openai-codex', record)).rejects.toMatchObject({
+			code: 'ERR_JWE_DECRYPTION_FAILED',
 		});
+		await expect(decryptCredential(key, 'anthropic', record)).rejects.toThrow(
+			/not for provider anthropic/,
+		);
 	});
 
-	test('requires a base64-encoded 32-byte key', async () => {
-		await expect(importCredentialKey(undefined)).rejects.toThrow(/CODEX_CREDENTIAL_KEY/);
-		await expect(importCredentialKey(btoa('too short'))).rejects.toThrow(/CODEX_CREDENTIAL_KEY/);
-		await expect(importCredentialKey('%%%not base64%%%')).rejects.toThrow(/CODEX_CREDENTIAL_KEY/);
+	test('requires a base64-encoded 32-byte key', () => {
+		expect(() => credentialKey(undefined)).toThrow(/CODEX_CREDENTIAL_KEY/);
+		expect(() => credentialKey(btoa('too short'))).toThrow(/CODEX_CREDENTIAL_KEY/);
+		expect(() => credentialKey('%%%not base64%%%')).toThrow(/CODEX_CREDENTIAL_KEY/);
 	});
 });

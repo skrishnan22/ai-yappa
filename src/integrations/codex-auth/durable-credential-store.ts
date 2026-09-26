@@ -1,16 +1,11 @@
 import type { Credential, CredentialInfo, CredentialStore } from '@earendil-works/pi-ai';
-import {
-	type CredentialKey,
-	decryptCredential,
-	encryptCredential,
-	importCredentialKey,
-} from './credential-cipher.ts';
+import { credentialKey, decryptCredential, encryptCredential } from './credential-cipher.ts';
 
 // Encrypted credential rows, keyed by pi provider id. The credential type is
 // stored in plaintext beside the encrypted record so `list` needs no decrypt.
 export interface CredentialRecords {
-	get(providerId: string): ArrayBuffer | undefined;
-	set(providerId: string, type: Credential['type'], record: ArrayBuffer): void;
+	get(providerId: string): string | undefined;
+	set(providerId: string, type: Credential['type'], record: string): void;
 	delete(providerId: string): void;
 	list(): CredentialInfo[];
 }
@@ -27,8 +22,6 @@ export class DurableCredentialStore implements CredentialStore {
 
 	readonly #secret: string | undefined;
 
-	#key: Promise<CredentialKey> | undefined;
-
 	readonly #chains = new Map<string, Promise<void>>();
 
 	constructor(records: CredentialRecords, secret: string | undefined) {
@@ -41,9 +34,7 @@ export class DurableCredentialStore implements CredentialStore {
 
 		if (record === undefined) return undefined;
 
-		const key = await this.#cryptoKey();
-
-		return decryptCredential(key, providerId, record);
+		return decryptCredential(credentialKey(this.#secret), providerId, record);
 	}
 
 	async list(): Promise<readonly CredentialInfo[]> {
@@ -64,8 +55,7 @@ export class DurableCredentialStore implements CredentialStore {
 
 			if (replacement === undefined) return stored;
 
-			const key = await this.#cryptoKey();
-			const record = await encryptCredential(key, providerId, replacement);
+			const record = await encryptCredential(credentialKey(this.#secret), providerId, replacement);
 
 			this.#records.set(providerId, replacement.type, record);
 
@@ -77,12 +67,6 @@ export class DurableCredentialStore implements CredentialStore {
 		return this.#withLock(providerId, async () => {
 			this.#records.delete(providerId);
 		});
-	}
-
-	#cryptoKey(): Promise<CredentialKey> {
-		this.#key ??= importCredentialKey(this.#secret);
-
-		return this.#key;
 	}
 
 	#withLock<T>(providerId: string, task: () => Promise<T>): Promise<T> {

@@ -11,13 +11,13 @@ const CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const credentialKey = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
 
 class MemoryRecords implements CredentialRecords {
-	readonly rows = new Map<string, { type: Credential['type']; record: ArrayBuffer }>();
+	readonly rows = new Map<string, { type: Credential['type']; record: string }>();
 
-	get(providerId: string): ArrayBuffer | undefined {
+	get(providerId: string): string | undefined {
 		return this.rows.get(providerId)?.record;
 	}
 
-	set(providerId: string, type: Credential['type'], record: ArrayBuffer): void {
+	set(providerId: string, type: Credential['type'], record: string): void {
 		this.rows.set(providerId, { type, record });
 	}
 

@@ -1,12 +1,9 @@
 import type { Credential } from '@earendil-works/pi-ai';
+import { CompactEncrypt, compactDecrypt } from 'jose';
 import * as v from 'valibot';
 import type { JsonValue } from '../../json.ts';
 
-export type CredentialKey = Awaited<ReturnType<typeof crypto.subtle.importKey>>;
-
 const KEY_BYTES = 32;
-
-const IV_BYTES = 12;
 
 const credentialSchema = v.variant('type', [
 	v.looseObject({
@@ -22,17 +19,17 @@ const credentialSchema = v.variant('type', [
 	}),
 ]);
 
-export async function importCredentialKey(secret: string | undefined): Promise<CredentialKey> {
+export function credentialKey(secret: string | undefined): Uint8Array {
 	const bytes = secret ? base64Bytes(secret.trim()) : undefined;
 
 	if (bytes?.byteLength !== KEY_BYTES) {
 		throw new Error('CODEX_CREDENTIAL_KEY must be 32 random bytes, base64-encoded');
 	}
 
-	return crypto.subtle.importKey('raw', bytes, 'AES-GCM', false, ['encrypt', 'decrypt']);
+	return bytes;
 }
 
-function base64Bytes(value: string): Uint8Array<ArrayBuffer> | undefined {
+function base64Bytes(value: string): Uint8Array | undefined {
 	try {
 		return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
 	} catch {
@@ -40,43 +37,31 @@ function base64Bytes(value: string): Uint8Array<ArrayBuffer> | undefined {
 	}
 }
 
-// The provider id is authenticated data, so a record cannot be replayed under
-// another provider's row.
-export async function encryptCredential(
-	key: CredentialKey,
+// A compact JWE (direct AES-256-GCM). The provider id is in the authenticated
+// header, so a record cannot be replayed under another provider's row.
+export function encryptCredential(
+	key: Uint8Array,
 	providerId: string,
 	credential: Credential,
-): Promise<ArrayBuffer> {
-	const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
-
-	const ciphertext = await crypto.subtle.encrypt(
-		{ name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(providerId) },
-		key,
-		new TextEncoder().encode(JSON.stringify(credential)),
-	);
-
-	const record = new Uint8Array(IV_BYTES + ciphertext.byteLength);
-
-	record.set(iv);
-	record.set(new Uint8Array(ciphertext), IV_BYTES);
-
-	return record.buffer;
+): Promise<string> {
+	return new CompactEncrypt(new TextEncoder().encode(JSON.stringify(credential)))
+		.setProtectedHeader({ alg: 'dir', enc: 'A256GCM', provider: providerId })
+		.encrypt(key);
 }
 
 export async function decryptCredential(
-	key: CredentialKey,
+	key: Uint8Array,
 	providerId: string,
-	record: ArrayBuffer,
+	record: string,
 ): Promise<Credential> {
-	const plaintext = await crypto.subtle.decrypt(
-		{
-			name: 'AES-GCM',
-			iv: new Uint8Array(record, 0, IV_BYTES),
-			additionalData: new TextEncoder().encode(providerId),
-		},
-		key,
-		new Uint8Array(record, IV_BYTES),
-	);
+	const { plaintext, protectedHeader } = await compactDecrypt(record, key, {
+		keyManagementAlgorithms: ['dir'],
+		contentEncryptionAlgorithms: ['A256GCM'],
+	});
+
+	if (protectedHeader.provider !== providerId) {
+		throw new Error(`Credential record is not for provider ${providerId}`);
+	}
 
 	const parsed: JsonValue = JSON.parse(new TextDecoder().decode(plaintext));
 

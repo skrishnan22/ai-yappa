@@ -10,7 +10,7 @@ const credentialInfosSchema = v.array(
 // `CodexAuth` so tests can run it against Node's SQLite.
 export function sqlCredentialRecords(sql: SqlStorage): CredentialRecords {
 	sql.exec(
-		'CREATE TABLE IF NOT EXISTS credentials (provider_id TEXT PRIMARY KEY, type TEXT NOT NULL, record BLOB NOT NULL)',
+		'CREATE TABLE IF NOT EXISTS credentials (provider_id TEXT PRIMARY KEY, type TEXT NOT NULL, record TEXT NOT NULL)',
 	);
 
 	return {
@@ -19,7 +19,7 @@ export function sqlCredentialRecords(sql: SqlStorage): CredentialRecords {
 				.exec('SELECT record FROM credentials WHERE provider_id = ?', providerId)
 				.toArray();
 
-			return row?.record instanceof ArrayBuffer ? row.record : undefined;
+			return row === undefined ? undefined : v.parse(v.string(), row.record);
 		},
 		set(providerId, type, record) {
 			sql.exec(
