@@ -62,6 +62,25 @@ describe('PreferenceStore', () => {
 		expect(await store.list('U_A')).toHaveLength(1);
 	});
 
+	test('re-saving an existing preference at the cap returns the existing id', async () => {
+		const store = createPreferenceStore(openMigratedSqlite(), testClock());
+
+		let firstId: string | undefined;
+
+		for (let i = 0; i < PREFERENCE_LIMIT; i++) {
+			const result = await store.add('U_A', `pref ${i}`, 'conv-1');
+
+			expect(result.ok).toBe(true);
+
+			if (i === 0 && result.ok) firstId = result.id;
+		}
+
+		const result = await store.add('U_A', `  pref 0 `, 'conv-1');
+
+		expect(result).toEqual({ ok: true, id: firstId });
+		expect(await store.list('U_A')).toHaveLength(PREFERENCE_LIMIT);
+	});
+
 	test('forgetting erases the content but keeps a tombstone', async () => {
 		const db = openMigratedSqlite();
 		const store = createPreferenceStore(db, testClock());
