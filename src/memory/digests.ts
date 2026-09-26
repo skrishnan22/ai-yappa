@@ -57,16 +57,32 @@ const digestRow = v.object({
 });
 
 // Coarse scope in SQL; callers re-check live Slack visibility (src/memory/scope.ts).
+// Every query using this must bind the current channel ID as parameter ?2.
 const IN_SCOPE = "(d.channel_visibility = 'public' OR d.channel_id = ?2)";
 
 // Model-written queries become an OR of quoted words, so FTS5 syntax
 // (quotes, parentheses, AND/NEAR, *, -) can never cause a parse error.
+export const FTS_QUERY_MAX_WORDS = 32;
+
 export function ftsQuery(text: string): string | undefined {
 	const words = text.match(/[\p{L}\p{N}_]+/gu) ?? [];
+	const seen = new Set<string>();
+	const deduped: string[] = [];
 
-	if (words.length === 0) return undefined;
+	for (const word of words) {
+		const key = word.toLowerCase();
 
-	return words.map((word) => `"${word}"`).join(' OR ');
+		if (seen.has(key)) continue;
+
+		seen.add(key);
+		deduped.push(word);
+
+		if (deduped.length === FTS_QUERY_MAX_WORDS) break;
+	}
+
+	if (deduped.length === 0) return undefined;
+
+	return deduped.map((word) => `"${word}"`).join(' OR ');
 }
 
 export function createDigestStore(db: D1Database): DigestStore {
@@ -92,7 +108,7 @@ export function createDigestStore(db: D1Database): DigestStore {
 					digest.channelId,
 					digest.channelVisibility,
 					digest.threadTs,
-					digest.invokerUserIds.join(','),
+					JSON.stringify(digest.invokerUserIds),
 					digest.requests,
 					digest.replies,
 					digest.toolsUsed,
@@ -112,7 +128,7 @@ export function createDigestStore(db: D1Database): DigestStore {
 					`SELECT d.conversation_id, d.channel_id, d.thread_ts, d.pr_url, d.created_at,
 					        snippet(conversation_digests_fts, -1, '[', ']', '…', 16) AS snippet
 					 FROM conversation_digests_fts
-					 JOIN conversation_digests d ON d.rowid = conversation_digests_fts.rowid
+					 JOIN conversation_digests d ON d.seq = conversation_digests_fts.rowid
 					 WHERE conversation_digests_fts MATCH ?1 AND ${IN_SCOPE}
 					 ORDER BY bm25(conversation_digests_fts)
 					 LIMIT ?3`,
@@ -146,7 +162,7 @@ export function createDigestStore(db: D1Database): DigestStore {
 				channelId: row.channel_id,
 				channelVisibility: row.channel_visibility,
 				threadTs: row.thread_ts,
-				invokerUserIds: row.invoker_user_ids.split(','),
+				invokerUserIds: v.parse(v.array(v.string()), JSON.parse(row.invoker_user_ids)),
 				requests: row.requests,
 				replies: row.replies,
 				toolsUsed: row.tools_used,

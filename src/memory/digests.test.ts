@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'vitest';
-import { createDigestStore, ftsQuery, type ConversationDigest } from './digests.ts';
+import {
+	createDigestStore,
+	ftsQuery,
+	FTS_QUERY_MAX_WORDS,
+	type ConversationDigest,
+} from './digests.ts';
 import { openMigratedSqlite } from './testing/sqlite-d1.ts';
 
 function digest(overrides: Partial<ConversationDigest>): ConversationDigest {
@@ -25,6 +30,21 @@ describe('ftsQuery', () => {
 			'"c" OR "crash" OR "AND" OR "NEAR" OR "flaky"',
 		);
 		expect(ftsQuery('  ?? ')).toBeUndefined();
+	});
+
+	test('collapses duplicate words case-insensitively, keeping the first spelling', () => {
+		expect(ftsQuery('flaky Flaky FLAKY test')).toBe('"flaky" OR "test"');
+	});
+
+	test('keeps at most FTS_QUERY_MAX_WORDS distinct words', () => {
+		const words = Array.from({ length: 100 }, (_, i) => `word${i}`);
+
+		const result = ftsQuery(words.join(' '));
+
+		expect(result?.split(' OR ')).toHaveLength(FTS_QUERY_MAX_WORDS);
+		expect(result?.split(' OR ')).toEqual(
+			words.slice(0, FTS_QUERY_MAX_WORDS).map((word) => `"${word}"`),
+		);
 	});
 });
 
@@ -100,6 +120,21 @@ describe('DigestStore', () => {
 
 		expect(rows.map((row) => row.id)).toEqual(['x:1', 'x:2']);
 		expect(rows[1]?.invokerUserIds).toEqual(['U_B', 'U_C']);
+	});
+
+	test('invokerUserIds round-trips as a JSON array, including empty', async () => {
+		const store = createDigestStore(openMigratedSqlite());
+
+		await store.upsert(digest({ id: 'empty', conversationId: 'empty', invokerUserIds: [] }));
+		await store.upsert(
+			digest({ id: 'many', conversationId: 'many', invokerUserIds: ['U_B', 'U_C'] }),
+		);
+
+		const [empty] = await store.forConversation('empty', 'C_PUBLIC');
+		const [many] = await store.forConversation('many', 'C_PUBLIC');
+
+		expect(empty?.invokerUserIds).toEqual([]);
+		expect(many?.invokerUserIds).toEqual(['U_B', 'U_C']);
 	});
 
 	test('deleteOlderThan removes old rows and their index entries', async () => {
