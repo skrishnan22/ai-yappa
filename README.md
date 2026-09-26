@@ -17,6 +17,7 @@ Fill `.env` (never commit it):
 ```
 OPENCODE_API_KEY=
 OPENAI_CODEX_ACCESS_TOKEN=
+CODEX_CREDENTIAL_KEY=
 SLACK_SIGNING_SECRET=
 SLACK_BOT_TOKEN=
 DAYTONA_API_KEY=
@@ -34,6 +35,8 @@ PARALLEL_API_KEY=
 ```
 
 `OPENAI_CODEX_ACCESS_TOKEN` is optional and temporary. When set, Coworker runs on the ChatGPT subscription instead of OpenCode Go. Get one by running `npx @earendil-works/pi-ai login openai-codex` outside this repo (choose device code login; it writes `auth.json` to the current directory) and copying `openai-codex.access` from that file. The token is not refreshed; once it is within five minutes of expiring, Coworker falls back to OpenCode Go. Slack login through `/coworker openai` replaces it ([ADR 0020](docs/adr/0020-chatgpt-subscription-model-route.md)). `OPENCODE_API_KEY` stays required as the fallback route.
+
+`CODEX_CREDENTIAL_KEY` is the AES-GCM key the `CodexAuth` Durable Object uses to encrypt the stored Codex Credential. Generate it with `openssl rand -base64 32`. Only the Worker reads it (`npm run dev` and deploys); `flue run` has no Durable Objects. Without it, `CodexAuth` refuses to store or read a credential. There is no key rotation: a changed or lost key makes the stored credential unreadable, and the admin must log in again.
 
 `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` are optional. If both are set, hydration configures that identity in the cloned repo (GitHub App bot: `{slug}[bot]` / `{id}+{slug}[bot]@users.noreply.github.com`). If neither is set, commits would otherwise be `root` — do not guess. If only one is set, boot fails.
 
@@ -133,7 +136,7 @@ A threaded reply that reflects work in the already-cloned repo (not clone/`ls` a
 npm run deploy
 ```
 
-Use a Cloudflare account that is not the Codevil account. `npx wrangler secret put OPENCODE_API_KEY` (and the Slack/Daytona/GitHub secrets). To run a deployment on the ChatGPT subscription before Slack login exists, also `npx wrangler secret put OPENAI_CODEX_ACCESS_TOKEN`; the Worker returns to OpenCode Go once that token expires. Optional catalog secrets such as `CLOUDFLARE_MCP_API_TOKEN`, `HONEYCOMB_MCP_API_TOKEN`, and `LANGFUSE_MCP_BASIC_AUTH` use the same command, as do optional web-search keys `EXA_API_KEY` and `PARALLEL_API_KEY`. If `CLOUDFLARE_API_TOKEN` is set in the shell (or `.env`) to an MCP-scoped token, unset it for Wrangler commands so the CLI can use `wrangler login` or a token with **Workers Scripts Write**. Do not put secrets in git.
+Use a Cloudflare account that is not the Codevil account. `npx wrangler secret put OPENCODE_API_KEY` (and the Slack/Daytona/GitHub secrets). To run a deployment on the ChatGPT subscription before Slack login exists, also `npx wrangler secret put OPENAI_CODEX_ACCESS_TOKEN`; the Worker returns to OpenCode Go once that token expires. Set `CODEX_CREDENTIAL_KEY` with `npx wrangler secret put CODEX_CREDENTIAL_KEY`, using a fresh `openssl rand -base64 32` value rather than your local one. Optional catalog secrets such as `CLOUDFLARE_MCP_API_TOKEN`, `HONEYCOMB_MCP_API_TOKEN`, and `LANGFUSE_MCP_BASIC_AUTH` use the same command, as do optional web-search keys `EXA_API_KEY` and `PARALLEL_API_KEY`. If `CLOUDFLARE_API_TOKEN` is set in the shell (or `.env`) to an MCP-scoped token, unset it for Wrangler commands so the CLI can use `wrangler login` or a token with **Workers Scripts Write**. Do not put secrets in git.
 
 ## Observability
 

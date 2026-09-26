@@ -11,11 +11,12 @@ Implementation source of truth: `SLACK_AGENT_SPEC.md`. Milestone scope: `SLACK_A
 - `src/channels/slack-reply.ts` — thread-bound reply tool. Without `SLACK_BOT_TOKEN`, the tool returns the text and does not post.
 - `src/sandboxes/daytona.ts` — Flue `SandboxFactory` over an already-created Daytona container sandbox. Application code owns create/stop/start; stop/start preserves files but not RAM or processes.
 - `src/integrations/mcp-catalog.ts` — deploy-time Integration Catalog; Coworker resolves Worker secrets at render and mounts via `useMcpConnection`.
+- `src/integrations/codex-auth/` — `CodexAuth` Durable Object (one instance, `getByName('default')`) owning the encrypted Codex Credential and pi's locked OAuth refresh. Only access tokens leave it. Exported from `src/cloudflare.ts`.
 - `src/integrations/web-search/` — Exa/Parallel REST adapters + optimistic failover router behind native `web_search` / `web_fetch`.
 - `src/config.ts` — channel→repo map and invoker allowlist. Fail closed when empty.
 - `src/app.ts` — route map. Slack channel only.
 - `src/cloudflare.ts` — Worker-level exports and non-HTTP handlers.
-- `wrangler.jsonc` — Worker config; every agent needs a Durable Object migration entry (`Coworker` → `FlueCoworkerAgent`).
+- `wrangler.jsonc` — Worker config; every agent needs a Durable Object migration entry (`Coworker` → `FlueCoworkerAgent`). Application-owned Durable Objects (`CodexAuth`) also need a hand-declared binding.
 
 ## Commands
 
