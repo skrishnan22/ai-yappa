@@ -22,3 +22,4 @@
 | 0016 Simplify GitHub authorization inside the Worker | Holds (spec D13, D14) for **native** Credential Proxy ops. Direct trusted context policy with bounded checkpoint-token exposure |
 | 0017 Open MCP catalog with deployment secrets | Holds, amended for per-row Basic auth and fixed tool allowlists. Langfuse mounts read-only trace-analysis tools; existing open Bearer mounts are unchanged |
 | 0019 Model-authored Block Kit replies | Holds. Markdown by default; native model-authored blocks validated at the posting boundary. App-callback controls require implemented handlers |
+| 0020 ChatGPT subscription Model Route | Holds. `openai-codex` via a single `CodexAuth` Durable Object; OpenCode Go when no usable credential. Amends spec §4.1 for the admin-only `/coworker openai` slash command |

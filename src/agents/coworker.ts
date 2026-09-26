@@ -32,7 +32,7 @@ import {
 	WORKSPACE_REPO_DIR,
 } from '../sandboxes/hydrate.ts';
 import { githubTools } from './github-tools.ts';
-import { coworkerModelSpecifier, coworkerThinkingLevel } from './model-route.ts';
+import { coworkerThinkingLevel, resolveCoworkerModelSpecifier } from './model-route.ts';
 import { webSearchTools } from './web-search-tools.ts';
 
 observe((event, context) => {
@@ -52,7 +52,8 @@ const initialDataSchema = v.object({
 });
 
 export function Coworker(props: { id: string }) {
-	useModel(coworkerModelSpecifier, { thinkingLevel: coworkerThinkingLevel });
+	const model = resolveCoworkerModelSpecifier();
+	useModel(model, { thinkingLevel: coworkerThinkingLevel });
 
 	const data = useInitialData<v.InferOutput<typeof initialDataSchema> | undefined>();
 
@@ -82,7 +83,7 @@ export function Coworker(props: { id: string }) {
 		threadTs: data.threadTs,
 		token: agentEnv.SLACK_BOT_TOKEN,
 		state: runCard,
-		model: coworkerModelSpecifier,
+		model,
 		thinkingLevel: coworkerThinkingLevel,
 		persist: (state) => {
 			setRunCard(state);

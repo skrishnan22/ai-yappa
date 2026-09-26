@@ -76,7 +76,7 @@ Submissions have a type (D12):
 ### 4.1 Slack ingress (Cloudflare Worker)
 
 - Verifies Slack signatures; drops replays (timestamp window + event id dedup).
-- `app_mention` in a channel → create conversation + thread; message in an existing tracked thread → route to that conversation. No slash command (slash commands don't live in threads, which breaks thread-as-identity).
+- `app_mention` in a channel → create conversation + thread; message in an existing tracked thread → route to that conversation. No slash command for conversations (slash commands don't live in threads, which breaks thread-as-identity). Deployment administration that is not thread-scoped may use one: `/coworker openai` connects the ChatGPT subscription (ADR 0020).
 - **Repo resolution**: channel → default repo mapping, configured when the agent is added to a channel; an explicit `repo:` argument in the invocation overrides it. Invocation without a resolvable repo gets an immediate in-thread setup prompt.
 - **Invoker allowlist**: only allowlisted Slack users can start submissions; others get a polite refusal. Configured per workspace.
 - Responsibilities end at routing; no business logic.
