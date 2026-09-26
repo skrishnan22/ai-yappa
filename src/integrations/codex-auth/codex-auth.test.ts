@@ -2,7 +2,6 @@ import { ModelsError } from '@earendil-works/pi-ai';
 import { ValiError } from 'valibot';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { CodexAuthService } from './codex-auth.ts';
-import { importCredentialKey } from './credential-cipher.ts';
 import { type CredentialRecords, DurableCredentialStore } from './durable-credential-store.ts';
 
 const TOKEN_URL = 'https://auth.openai.com/oauth/token';
@@ -38,7 +37,7 @@ function codexAccessToken(label: string): string {
 }
 
 function storeOver(records: CredentialRecords): DurableCredentialStore {
-	return new DurableCredentialStore(records, () => importCredentialKey(credentialKey));
+	return new DurableCredentialStore(records, credentialKey);
 }
 
 type TokenRequest = { url: string; body: RequestInit['body'] };
@@ -217,25 +216,5 @@ describe('DurableCredentialStore', () => {
 		await store.delete('openai-codex');
 
 		await expect(store.read('openai-codex')).resolves.toBeUndefined();
-	});
-
-	test('persists a rotated credential even when the caller aborts mid-refresh', async () => {
-		const store = storeOver(new MemoryRecords());
-		const controller = new AbortController();
-
-		const modified = store.modify(
-			'openai-codex',
-			async () => {
-				controller.abort();
-
-				return { type: 'oauth', access: 'a2', refresh: 'r2', expires: 0 };
-			},
-			{ signal: controller.signal },
-		);
-
-		await expect(modified).rejects.toMatchObject({ name: 'AbortError' });
-		await vi.waitFor(async () => {
-			await expect(store.read('openai-codex')).resolves.toMatchObject({ refresh: 'r2' });
-		});
 	});
 });

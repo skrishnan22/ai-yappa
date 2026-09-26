@@ -2,7 +2,6 @@ import { createModels, type Models } from '@earendil-works/pi-ai';
 import { registerBunOAuthFlows } from '@earendil-works/pi-ai/bun-oauth';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 import * as v from 'valibot';
-import { type CredentialKey, importCredentialKey } from './credential-cipher.ts';
 import { type CredentialRecords, DurableCredentialStore } from './durable-credential-store.ts';
 
 // pi otherwise loads OAuth flows through a variable-path dynamic import that
@@ -40,14 +39,7 @@ export class CodexAuthService {
 	readonly #models: Models;
 
 	constructor(records: CredentialRecords, credentialKey: string | undefined) {
-		let key: Promise<CredentialKey> | undefined;
-
-		this.#store = new DurableCredentialStore(records, () => {
-			key ??= importCredentialKey(credentialKey);
-
-			return key;
-		});
-
+		this.#store = new DurableCredentialStore(records, credentialKey);
 		const models = createModels({ credentials: this.#store });
 
 		models.setProvider(openaiCodexProvider());
