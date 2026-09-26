@@ -5,11 +5,19 @@ features:
   bot_user:
     display_name: Slack Agent
     always_online: true
+  # Replace the host with your tunnel or Worker host (README "Slack app").
+  slash_commands:
+    - command: /coworker
+      url: https://example.invalid/channels/slack/commands
+      description: Connect, check, or disconnect the ChatGPT subscription
+      usage_hint: openai connect|status|disconnect
+      should_escape: false
 oauth_config:
   scopes:
     bot:
       - app_mentions:read
       - chat:write
+      - commands
       - channels:history
       - groups:history
 settings:

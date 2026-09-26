@@ -69,6 +69,20 @@ export class DurableCredentialStore implements CredentialStore {
 		});
 	}
 
+	// Hands the stored credential to `revoke`, then deletes it, both inside
+	// the lock, so no refresh can rotate the token being revoked.
+	revokeAndDelete(
+		providerId: string,
+		revoke: (stored: Credential) => Promise<void>,
+	): Promise<void> {
+		return this.#withLock(providerId, async () => {
+			const stored = await this.read(providerId);
+
+			if (stored !== undefined) await revoke(stored);
+			this.#records.delete(providerId);
+		});
+	}
+
 	#withLock<T>(providerId: string, task: () => Promise<T>): Promise<T> {
 		const queued = (this.#chains.get(providerId) ?? Promise.resolve()).then(task);
 

@@ -4,6 +4,7 @@ import { Daytona } from '@daytona/sdk';
 import {
 	observe,
 	useAgentFinish,
+	useDelivery,
 	useInitialData,
 	useMcpConnection,
 	useModel,
@@ -32,7 +33,11 @@ import {
 	WORKSPACE_REPO_DIR,
 } from '../sandboxes/hydrate.ts';
 import { githubTools } from './github-tools.ts';
-import { coworkerThinkingLevel, resolveCoworkerModelSpecifier } from './model-route.ts';
+import {
+	coworkerModelSpecifier,
+	coworkerThinkingLevel,
+	deliveredModelRoute,
+} from './model-route.ts';
 import { webSearchTools } from './web-search-tools.ts';
 
 observe((event, context) => {
@@ -52,7 +57,9 @@ const initialDataSchema = v.object({
 });
 
 export function Coworker(props: { id: string }) {
-	const model = resolveCoworkerModelSpecifier();
+	const route = deliveredModelRoute(useDelivery());
+	const model = coworkerModelSpecifier(route);
+
 	useModel(model, { thinkingLevel: coworkerThinkingLevel });
 
 	const data = useInitialData<v.InferOutput<typeof initialDataSchema> | undefined>();
@@ -83,7 +90,9 @@ export function Coworker(props: { id: string }) {
 		threadTs: data.threadTs,
 		token: agentEnv.SLACK_BOT_TOKEN,
 		state: runCard,
-		model,
+		// Mid-submission renders (appended reminders) carry no route; the card
+		// keeps the route the submission latched.
+		model: route === undefined ? undefined : model,
 		thinkingLevel: coworkerThinkingLevel,
 		persist: (state) => {
 			setRunCard(state);
