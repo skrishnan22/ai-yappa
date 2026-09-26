@@ -45,7 +45,7 @@ Today `src/channels/slack.ts` passes the thread **starter** as `initialData.star
 type SignalAttributes = { eventId: string; userId: string; threadContext?: string };
 ```
 
-Coworker code reads the current invoker through Flue's `useDelivery()` cursor. No memory tool accepts a user ID, channel, or scope as a model argument (same trusted-binding rule as D13).
+Coworker code reads the invoker from the delivery in `useAgentStart` and stores it in `usePersistentState('memory-invoker')`; tools read that state. Tools must not call `useDelivery()` directly: the cursor advances to any signal an event hook appends (including the preference-profile signal), so it does not reliably point at the Slack message. No memory tool accepts a user ID, channel, or scope as a model argument (same trusted-binding rule as D13).
 
 ### 2. Person Preferences
 
@@ -90,7 +90,6 @@ CREATE TABLE conversation_digests (
   replies TEXT NOT NULL,                 -- text actually posted by reply_in_slack_thread
   tools_used TEXT NOT NULL,              -- tool names with counts, no args or output
   pr_url TEXT,
-  outcome TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
 CREATE VIRTUAL TABLE conversation_digests_fts USING fts5(
@@ -116,6 +115,7 @@ useAgentFinish (after a successful Slack reply; no append pending)
 - `response.toolCalls` exposes only `{ tool, isError }`, so reply text and PR URL are recorded by our own tools as they run. Tool names and counts come from `response.toolCalls`.
 - Event hooks run at least once; the keyed upsert makes a repeated flush an overwrite.
 - A response that absorbs deliveries from several people produces one row listing every request and invoker.
+- Only responses that end with a successful Slack reply are flushed, so there is no outcome column: every digest describes a response that answered.
 - A failed D1 write is logged; the accumulator is cleared regardless and the Submission settles normally. That conversation is missing from recall.
 
 ### 4. Visibility scope
@@ -124,7 +124,7 @@ useAgentFinish (after a successful Slack reply; no append pending)
 
 - Current channel public: only public-channel digests.
 - Current channel private: public-channel digests plus this channel's own.
-- Current channel externally shared (Slack Connect) or containing guests: this channel's digests only; its own digests are indexed as `private`.
+- Current channel externally shared (Slack Connect) or containing guests: this channel's digests only; its own digests are indexed as `private`. Slack Connect is detected from `conversations.info` (`is_ext_shared`, `is_pending_ext_shared`, `is_shared`). Guest membership is not exposed on the channel object, so channels with guests are listed by the operator in `guestChannelIds` in `src/config.ts`, next to the channel→repo map.
 
 Enforced in owner code on every search and read, never by the model:
 
@@ -156,7 +156,7 @@ Add to `coworkerInstructions`: memory exists and how to use it; save a preferenc
 ### 7. Retention and operations
 
 - A daily scheduled handler in `src/cloudflare.ts` deletes digests older than `MEMORY_DIGEST_RETENTION_DAYS` (default 180). Preferences do not expire.
-- An operator script under `src/scripts/` purges all digests for one conversation ID.
+- README documents the operator purge for one conversation (`wrangler d1 execute MEMORY_DB --remote --command "DELETE FROM conversation_digests WHERE conversation_id = '…'"`); the FTS delete trigger keeps the index in sync.
 - `wrangler.jsonc` gains one D1 binding (`MEMORY_DB`) and one cron trigger; migrations live in `migrations/`.
 
 ### 8. Error handling
@@ -167,7 +167,7 @@ Add to `coworkerInstructions`: memory exists and how to use it; save a preferenc
 | D1 write fails in `remember` / `forget` | Tool returns an error; the agent tells the user |
 | Digest flush fails | Log; clear accumulator; Submission settles normally |
 | Slack visibility lookup fails or is ambiguous | Exclude the result |
-| `MEMORY_DB` binding absent | Memory tools and intake load are not registered; agent runs as today |
+| `MEMORY_DB` binding absent (e.g. `flue run`) | Intake skips the profile; memory tools stay registered but report that memory is unavailable; agent otherwise runs as today |
 
 Memory is best-effort and never blocks work; scoping fails closed.
 
