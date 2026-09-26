@@ -8,12 +8,13 @@ Implementation source of truth: `SLACK_AGENT_SPEC.md`. Milestone scope: `SLACK_A
 
 - `src/agents/` — agent modules. `'use agent'` at the top; every exported capitalized function is an agent. `Coworker` is the conversation owner. Dispatch-only; do not mount `createAgentRouter` for it.
 - `src/channels/slack.ts` — verified Slack ingress. A mention may create a Coworker; an unmentioned thread reply continues only if `getAgentInstance` finds one. Loaded by `app.ts` only, so `flue run` does not need a signing secret.
+- `src/channels/coworker-command.ts` — `/coworker openai connect|status|disconnect`. Connect/disconnect need `codexAdminIds`; status also allows invokers. Device codes appear only in the ephemeral reply.
 - `src/channels/slack-reply.ts` — thread-bound reply tool. Without `SLACK_BOT_TOKEN`, the tool returns the text and does not post.
 - `src/sandboxes/daytona.ts` — Flue `SandboxFactory` over an already-created Daytona container sandbox. Application code owns create/stop/start; stop/start preserves files but not RAM or processes.
 - `src/integrations/mcp-catalog.ts` — deploy-time Integration Catalog; Coworker resolves Worker secrets at render and mounts via `useMcpConnection`.
 - `src/integrations/codex-auth/` — `CodexAuth` Durable Object (one instance, `getByName('default')`) owning the encrypted Codex Credential and pi's locked OAuth refresh. Only access tokens leave it. Exported from `src/cloudflare.ts`.
 - `src/integrations/web-search/` — Exa/Parallel REST adapters + optimistic failover router behind native `web_search` / `web_fetch`.
-- `src/config.ts` — channel→repo map and invoker allowlist. Fail closed when empty.
+- `src/config.ts` — channel→repo map, invoker allowlist, and Codex admin list. Fail closed when empty.
 - `src/app.ts` — route map. Slack channel only.
 - `src/cloudflare.ts` — Worker-level exports and non-HTTP handlers.
 - `wrangler.jsonc` — Worker config; every agent needs a Durable Object migration entry (`Coworker` → `FlueCoworkerAgent`). Application-owned Durable Objects (`CodexAuth`) also need a hand-declared binding.
