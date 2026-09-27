@@ -14,25 +14,21 @@ const pickEffort = (typed: string) => resolveModelChoice({ effort: typed });
 const luna = { provider: 'chatgpt', modelId: 'gpt-5.6-luna' } as const;
 
 describe('matching model names', () => {
-	test('matches alias, model id, and unique prefix without calling it a correction', () => {
+	test('matches an alias case-insensitively, or a unique prefix', () => {
 		expect(pickModel('LUNA')).toEqual({ ok: true, choice: { model: luna } });
-		expect(pickModel('gpt-5.6-luna')).toEqual({ ok: true, choice: { model: luna } });
 		expect(pickModel('ki')).toEqual({
 			ok: true,
 			choice: { model: { provider: 'opencode-go', modelId: 'kimi-k3' } },
 		});
 	});
 
-	test('corrects a typo within the length-scaled edit limit', () => {
-		expect(pickModel('lnua')).toEqual({
-			ok: true,
-			choice: { model: luna, correctedFrom: { model: 'lnua' } },
-		});
+	test('accepts a typo within the length-scaled edit limit', () => {
+		expect(pickModel('lnua')).toEqual({ ok: true, choice: { model: luna } });
 
 		for (const typo of ['deepsek', 'deespeek']) {
 			expect(pickModel(typo)).toMatchObject({
 				ok: true,
-				choice: { model: { modelId: 'deepseek-v4.1-flash' }, correctedFrom: { model: typo } },
+				choice: { model: { modelId: 'deepseek-v4.1-flash' } },
 			});
 		}
 	});
@@ -45,18 +41,11 @@ describe('matching model names', () => {
 });
 
 describe('matching effort', () => {
-	test('matches levels, prefixes, shorthands, and typos', () => {
+	test('matches levels, prefixes, and typos', () => {
 		expect(pickEffort('High')).toEqual({ ok: true, choice: { thinkingLevel: 'high' } });
 		expect(pickEffort('med')).toEqual({ ok: true, choice: { thinkingLevel: 'medium' } });
-		expect(pickEffort('mid')).toEqual({ ok: true, choice: { thinkingLevel: 'medium' } });
-		expect(pickEffort('hgih')).toEqual({
-			ok: true,
-			choice: { thinkingLevel: 'high', correctedFrom: { effort: 'hgih' } },
-		});
-		expect(pickEffort('maximum')).toEqual({
-			ok: false,
-			error: 'Unknown effort `maximum`.',
-		});
+		expect(pickEffort('hgih')).toEqual({ ok: true, choice: { thinkingLevel: 'high' } });
+		expect(pickEffort('maximum')).toEqual({ ok: false, error: 'Unknown effort `maximum`.' });
 	});
 });
 
@@ -69,22 +58,7 @@ describe('resolveModelChoice', () => {
 		});
 		expect(resolveModelChoice({ model: 'lnua', effort: 'hgih' })).toEqual({
 			ok: true,
-			choice: {
-				model: { provider: 'chatgpt', modelId: 'gpt-5.6-luna' },
-				thinkingLevel: 'high',
-				correctedFrom: { model: 'lnua', effort: 'hgih' },
-			},
-		});
-	});
-
-	test('explains unknown values', () => {
-		expect(resolveModelChoice({ model: 'gpt-4o' })).toEqual({
-			ok: false,
-			error: 'Unknown model `gpt-4o`.',
-		});
-		expect(resolveModelChoice({ effort: 'max' })).toEqual({
-			ok: false,
-			error: 'Unknown effort `max`.',
+			choice: { model: luna, thinkingLevel: 'high' },
 		});
 	});
 });
@@ -95,7 +69,6 @@ describe('coworkerModel', () => {
 			specifier: 'openai-codex/gpt-5.6-luna',
 			thinkingLevel: 'high',
 			label: 'openai-codex/gpt-5.6-luna',
-			thinkingLabel: 'high',
 			isDefault: false,
 		});
 	});
@@ -105,7 +78,6 @@ describe('coworkerModel', () => {
 			specifier: openCodeGoModelSpecifier,
 			thinkingLevel: 'high',
 			label: `gpt-5.6-luna unavailable → ${openCodeGoModelSpecifier}`,
-			thinkingLabel: 'high',
 			isDefault: false,
 		});
 	});
@@ -142,18 +114,6 @@ describe('coworkerModel', () => {
 			specifier: openCodeGoModelSpecifier,
 			thinkingLevel: 'low',
 			isDefault: true,
-		});
-	});
-
-	test('labels corrected input', () => {
-		expect(
-			coworkerModel(
-				{ model: luna, thinkingLevel: 'high', correctedFrom: { model: 'lnua', effort: 'hgih' } },
-				true,
-			),
-		).toMatchObject({
-			label: 'openai-codex/gpt-5.6-luna (from "lnua")',
-			thinkingLabel: 'high (from "hgih")',
 		});
 	});
 });

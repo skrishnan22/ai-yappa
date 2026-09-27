@@ -46,24 +46,23 @@ Thinking levels: `low`, `medium`, `high`.
 Case-insensitive. For `$model:` the resolver tries, in order, and stops at the first rule that yields exactly one alias:
 
 1. exact alias
-2. exact model id (e.g. `gpt-5.6-luna`, `kimi-k3`)
-3. unique alias prefix (`ki` → `kimi`)
-4. closest alias by Damerau-Levenshtein distance (adjacent transposition = 1 edit), accepted only if exactly one alias is within the limit: **≤ 1** edit for aliases of 4 letters or fewer, **≤ 2** for longer aliases. `lnua` → `luna`; `gpt` → `glm` is 2 edits from a 3-letter alias and is rejected.
+2. unique alias prefix (`ki` → `kimi`)
+3. closest alias by Damerau-Levenshtein distance (adjacent transposition = 1 edit), accepted only if exactly one alias is within the limit: **≤ 1** edit for aliases of 4 letters or fewer, **≤ 2** for longer aliases. `lnua` → `luna`; `gpt` → `glm` is 2 edits from a 3-letter alias and is rejected.
 
 A rule that matches more than one alias is `ambiguous` and stops resolution. Nothing matched is `unknown`.
 
-For `$effort:` the same order applies over `low | medium | high`, with shorthands checked before the distance step: `lo` → `low`; `med`, `mid` → `medium`; `hi` → `high`.
+For `$effort:` the same order applies over `low | medium | high`: `med` → `medium`, `hgih` → `high`. (Full model ids and a `mid` shorthand were dropped to keep the matcher to one list per setting.)
 
 Distance comes from the `damerau-levenshtein` npm package (zero dependencies, BSD-2-Clause, types from `@types/damerau-levenshtein`). Application code owns only the limits and the "exactly one within the limit" rule.
 
-When a value was corrected by rule 4, the run card shows the correction (shorthands and prefixes are not corrections): `luna (from "lnua") · thinking high`.
+A corrected typo is not called out. The run card shows the model that runs, which is enough to spot a wrong match.
 
 ### First mention (thread start)
 
 1. Parse and resolve arguments. On a parse error, `unknown`, or `ambiguous`, reply in the thread with the help text and do not dispatch.
 2. If a ChatGPT alias was chosen and `CodexAuth` is not connected at this moment, reply in the thread with a refusal and do not dispatch:
    > ChatGPT isn't connected, so `luna` isn't available. Pick one of `deepseek` · `kimi` · `glm`, or ask an admin to run `/aiyappa openai connect`.
-3. Otherwise dispatch with `initialData.modelChoice = { model?: { provider, modelId }, thinkingLevel?, correctedFrom? }`, carrying only what the user gave. No `$model:` and no `$effort:` means `initialData.modelChoice` is absent.
+3. Otherwise dispatch with `initialData.modelChoice = { model?: { provider, modelId }, thinkingLevel? }`, carrying only what the user gave. No `$model:` and no `$effort:` means `initialData.modelChoice` is absent.
 
 Flue records `initialData` once, at instance creation. A `$model:` in a later mention in an existing thread therefore does not change the conversation's model. The run card always shows the model actually in use. Only the mention that creates the conversation is parsed; later mentions are plain text, so a disconnected ChatGPT cannot refuse them and they fall back as below.
 
@@ -91,7 +90,7 @@ Renders with no route (appended reminders, `flue run`) keep the current behavior
   > Pick a model with `$model:<name>` and effort with `$effort:low|medium|high`.
   > ChatGPT: `sol` · `luna` — OpenCode Go: `deepseek` · `kimi` · `glm`
 - **`/aiyappa models`**: ephemeral list of aliases and model ids, marking ChatGPT aliases available or unavailable from `CodexAuth` status (an unreachable `CodexAuth` counts as disconnected). Allowed for invokers and Codex admins (same gate as `status`).
-- **Run card**: shows `model · thinking <level>` (already rendered today), plus the correction or fallback note above. Threads that used the default model get a hint `$model:<name> $effort:<level>` in the context line.
+- **Run card**: shows `model · thinking <level>` (already rendered today), plus the fallback note above. Threads that used the default model get a hint `$model:<name> $effort:<level>` in the context line.
 
 ## Components
 
@@ -104,9 +103,9 @@ Pure. `parseInvocationArgs(text): { ok: true; args: { model?: string; effort?: s
 
 ### New: `src/agents/model-choice.ts`
 
-- `modelChoiceSchema` (valibot): `{ model?: { provider: 'chatgpt' | 'opencode-go'; modelId: string }; thinkingLevel?: 'low' | 'medium' | 'high'; correctedFrom?: { model?: string; effort?: string } }`.
-- `resolveModelAlias(input)` and `resolveThinkingLevel(input)` return a resolved value, `{ corrected: true, from }` when rules 4/shorthand applied, or `unknown` / `ambiguous`.
-- `coworkerModel(choice | undefined, route | undefined): { specifier; thinkingLevel; fallbackFrom?: string; correctedFrom? }` implements the render table.
+- `modelChoiceSchema` (valibot): `{ model?: { provider: 'chatgpt' | 'opencode-go'; modelId: string }; thinkingLevel?: 'low' | 'medium' | 'high' }`.
+- `resolveModelChoice({ model?, effort? })` matches each value with one `lookUp` (exact → prefix → typo) and returns the choice or an error message.
+- `coworkerModel(choice | undefined, chatgptUsable): { specifier; thinkingLevel; label; isDefault }` implements the render table.
 - `modelHelpText(codexConnected?)` builds the help text.
 
 ### Changed
@@ -116,7 +115,7 @@ Pure. `parseInvocationArgs(text): { ok: true; args: { model?: string; effort?: s
 - `src/channels/admit.ts`: a second pure step, `decideInvocation`, runs after `decideAdmit` returns `dispatch` (so dropped replies never ask `CodexAuth`). It returns `bad-args` (parse/resolve failure), `model-unavailable` (ChatGPT alias while disconnected), or `proceed`. Both refusals reply in the thread and emit `slack_admission` with the decision kind, like `no-repo`.
 - `src/channels/slack.ts`: `app_mention` parses arguments, resolves them, passes the result to `decideAdmit`, and dispatches the stripped body with `initialData.modelChoice`. `CodexAuth` status is fetched once per event and used for both the admit decision and the `modelRoute` attribute.
 - `src/agents/coworker.ts`: `initialData` schema gains optional `modelChoice`; render calls `coworkerModel` and passes specifier, thinking level, and notes to `useModel` and `bindRunCard`.
-- `src/channels/run-card.ts`: optional `fallbackFrom` / `correctedFrom` rendering and the default-model hint.
+- `src/channels/run-card.ts`: the default-model hint; the fallback note arrives in the model label.
 - `src/channels/slash-command.ts`: `models` subcommand; `USAGE` updated.
 - `slack-app-manifest.yaml`: `/aiyappa` description and `usage_hint` mention `models`.
 - `package.json`: add `damerau-levenshtein` and `@types/damerau-levenshtein`.
@@ -133,10 +132,10 @@ Pure. `parseInvocationArgs(text): { ok: true; args: { model?: string; effort?: s
 Vitest, colocated:
 
 - `invocation-args.test.ts`: arguments at start, middle, end; unprefixed `model:x` is left alone; dotted ids and a trailing sentence period; line structure kept; conflicting duplicates error; identical duplicates allowed; stripped body.
-- `model-choice.test.ts`: each resolution rule for model and thinking (exact, id, prefix, distance, shorthand); `gpt` rejected; ambiguous prefix; unknown; `coworkerModel` for every render-table row; alias-table invariants: every alias's model id exists in pi's `openai-codex` or `opencode-go` catalog, and no two aliases are within the distance limit of each other.
+- `model-choice.test.ts`: each matching rule for model and effort (exact, prefix, distance); `gpt` rejected; ambiguous prefix; unknown; `coworkerModel` for every render-table row; alias-table invariants: every alias's model id exists in pi's `openai-codex` or `opencode-go` catalog, and no two aliases are within the distance limit of each other.
 - `admit.test.ts`: `bad-args` and `model-unavailable`.
 - `slash-command.test.ts`: `models` for connected and disconnected `CodexAuth`, and the permission gate.
-- `run-card.test.ts`: fallback note, correction note, default-model hint.
+- `run-card.test.ts`: fallback note, default-model hint.
 
 ## Docs
 

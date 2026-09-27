@@ -274,18 +274,18 @@ describe('renderRunCard', () => {
 		expect(JSON.stringify(renderRunCard(working(route), 1_000).blocks)).not.toContain(hint);
 	});
 
-	test('escapes fallback and correction labels', () => {
+	test('shows the fallback label', () => {
 		const rendered = renderRunCard(
 			working({
 				startedAt: 0,
 				model: 'gpt-5.6-luna unavailable → opencode-go/deepseek-v4.1-flash',
-				thinkingLevel: 'high (from "hgih")',
+				thinkingLevel: 'high',
 			}),
 			1_000,
 		);
 
 		expect(JSON.stringify(rendered.blocks)).toContain(
-			'gpt-5.6-luna unavailable → opencode-go/deepseek-v4.1-flash · thinking high (from \\"hgih\\")',
+			'gpt-5.6-luna unavailable → opencode-go/deepseek-v4.1-flash · thinking high',
 		);
 	});
 });

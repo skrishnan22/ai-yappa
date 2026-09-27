@@ -13,83 +13,59 @@ const THINKING_LEVELS = ['low', 'medium', 'high'] as const;
 
 type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
-/**
- * What `initialData` records at thread start: only what the user gave, plus
- * the words they typed when a typo was corrected (shown on the run card).
- */
+/** What `initialData` records at thread start: only what the user gave. */
 export const modelChoiceSchema = v.object({
 	model: v.optional(
 		v.object({ provider: v.picklist(['chatgpt', 'opencode-go']), modelId: v.string() }),
 	),
 	thinkingLevel: v.optional(v.picklist(THINKING_LEVELS)),
-	correctedFrom: v.optional(
-		v.object({ model: v.optional(v.string()), effort: v.optional(v.string()) }),
-	),
 });
 
 export type ModelChoice = v.InferOutput<typeof modelChoiceSchema>;
 
 type Model = NonNullable<ModelChoice['model']>;
 
-/**
- * The words one setting accepts. `names` match loosely (prefix, typo);
- * `exact` spellings, such as full model ids, match only as written.
- */
-type Vocabulary<T> = {
-	what: string;
-	names: ReadonlyMap<string, T>;
-	exact: ReadonlyMap<string, T>;
-};
+const MODELS = new Map<string, Model>(Object.entries(modelAliases));
 
-const MODELS: Vocabulary<Model> = {
-	what: 'model',
-	names: new Map(Object.entries(modelAliases)),
-	exact: new Map(Object.values(modelAliases).map((model) => [model.modelId, model])),
-};
-
-const EFFORT: Vocabulary<ThinkingLevel> = {
-	what: 'effort',
-	names: new Map(THINKING_LEVELS.map((level) => [level, level])),
-	exact: new Map([['mid', 'medium']]),
-};
+const EFFORTS = new Map<string, ThinkingLevel>(THINKING_LEVELS.map((level) => [level, level]));
 
 /** Typos allowed for a name: one edit up to four letters, two beyond. */
 export function typoLimit(name: string): number {
 	return name.length <= 4 ? 1 : 2;
 }
 
-type LookUp<T> = { value: T; corrected: boolean } | { error: string };
+type Found<T> = { value: T } | { error: string };
 
 /**
- * Case-insensitive, in order: an exact name or spelling, then the names the
- * input starts, then names within `typoLimit` edits. Only a typo match counts
- * as a correction. More than one candidate is an error, never a guess.
+ * The one name `input` means, case-insensitively: the exact name, else the
+ * names it starts (`ki` → `kimi`), else names within `typoLimit` edits
+ * (`lnua` → `luna`). None or several is an error, never a guess.
  */
-function lookUp<T>(input: string, vocabulary: Vocabulary<T>): LookUp<T> {
+function lookUp<T>(input: string, names: ReadonlyMap<string, T>, what: string): Found<T> {
 	const typed = input.toLowerCase();
-	const exact = vocabulary.names.get(typed) ?? vocabulary.exact.get(typed);
+	const exact = names.get(typed);
 
-	if (exact !== undefined) return { value: exact, corrected: false };
+	if (exact !== undefined) return { value: exact };
 
-	const entries = [...vocabulary.names];
+	const entries = [...names];
 	const byPrefix = entries.filter(([name]) => name.startsWith(typed));
-	const corrected = byPrefix.length === 0;
 
-	const candidates = corrected
-		? entries.filter(([name]) => levenshtein(typed, name).steps <= typoLimit(name))
-		: byPrefix;
+	const candidates =
+		byPrefix.length > 0
+			? byPrefix
+			: entries.filter(([name]) => levenshtein(typed, name).steps <= typoLimit(name));
 
 	const [only, ...others] = candidates;
 
-	if (only === undefined) return { error: `Unknown ${vocabulary.what} \`${input}\`.` };
+	if (only === undefined) return { error: `Unknown ${what} \`${input}\`.` };
 
 	if (others.length > 0) {
-		const names = candidates.map(([name]) => code(name)).join(', ');
+		const listed = candidates.map(([name]) => `\`${name}\``).join(', ');
 
-		return { error: `\`${input}\` could be any of ${names}.` };
+		return { error: `\`${input}\` could be any of ${listed}.` };
 	}
 
-	return { value: only[1], corrected };
+	return { value: only[1] };
 }
 
 export type ModelChoiceResult = { ok: true; choice?: ModelChoice } | { ok: false; error: string };
@@ -99,21 +75,17 @@ export function resolveModelChoice(args: { model?: string; effort?: string }): M
 	const choice: ModelChoice = {};
 
 	if (args.model !== undefined) {
-		const found = lookUp(args.model, MODELS);
+		const found = lookUp(args.model, MODELS, 'model');
 
 		if ('error' in found) return { ok: false, error: found.error };
 		choice.model = { provider: found.value.provider, modelId: found.value.modelId };
-
-		if (found.corrected) choice.correctedFrom = { model: args.model };
 	}
 
 	if (args.effort !== undefined) {
-		const found = lookUp(args.effort, EFFORT);
+		const found = lookUp(args.effort, EFFORTS, 'effort');
 
 		if ('error' in found) return { ok: false, error: found.error };
 		choice.thinkingLevel = found.value;
-
-		if (found.corrected) choice.correctedFrom = { ...choice.correctedFrom, effort: args.effort };
 	}
 
 	return { ok: true, choice: Object.keys(choice).length > 0 ? choice : undefined };
@@ -132,9 +104,8 @@ export type CoworkerModel = {
 	/** For `useModel`. */
 	specifier: string;
 	thinkingLevel: ThinkingLevel;
-	/** For the run card: the model, plus any fallback or typo correction. */
+	/** For the run card: the model, or why the default runs instead. */
 	label: string;
-	thinkingLabel: string;
 	/** No model was picked, so the card hints at `$model:`. */
 	isDefault: boolean;
 };
@@ -150,26 +121,23 @@ export function coworkerModel(
 	chatgptUsable: boolean,
 ): CoworkerModel {
 	const thinkingLevel = choice?.thinkingLevel ?? 'medium';
-	const thinkingLabel = withTypo(thinkingLevel, choice?.correctedFrom?.effort);
 	const fallback = chatgptUsable ? openAICodexModelSpecifier : openCodeGoModelSpecifier;
 	const picked = choice?.model;
 
 	if (picked === undefined) {
-		return { specifier: fallback, label: fallback, thinkingLevel, thinkingLabel, isDefault: true };
+		return { specifier: fallback, label: fallback, thinkingLevel, isDefault: true };
 	}
 
 	const specifier = modelSpecifier(picked);
 	const runnable = SERVABLE.has(specifier) && (picked.provider !== 'chatgpt' || chatgptUsable);
 
-	return {
-		specifier: runnable ? specifier : fallback,
-		label: runnable
-			? withTypo(specifier, choice?.correctedFrom?.model)
-			: `${picked.modelId} unavailable → ${fallback}`,
-		thinkingLevel,
-		thinkingLabel,
-		isDefault: false,
-	};
+	if (!runnable) {
+		const label = `${picked.modelId} unavailable → ${fallback}`;
+
+		return { specifier: fallback, label, thinkingLevel, isDefault: false };
+	}
+
+	return { specifier, label: specifier, thinkingLevel, isDefault: false };
 }
 
 export function modelSpecifier(model: Model): string {
@@ -181,24 +149,16 @@ export function modelSpecifier(model: Model): string {
 	return `opencode-go/${model.modelId}`;
 }
 
-function withTypo(value: string, typed: string | undefined): string {
-	return typed === undefined ? value : `${value} (from "${typed}")`;
-}
-
 /** Slack mrkdwn shared by argument errors and the ChatGPT refusal. */
 export function modelHelpText(): string {
 	const aliases = (provider: Model['provider']) =>
 		Object.entries(modelAliases)
 			.filter(([, model]) => model.provider === provider)
-			.map(([alias]) => code(alias))
+			.map(([alias]) => `\`${alias}\``)
 			.join(' · ');
 
 	return [
 		`Pick a model with \`$model:&lt;name&gt;\` and effort with \`$effort:${THINKING_LEVELS.join('|')}\`.`,
 		`ChatGPT: ${aliases('chatgpt')} — OpenCode Go: ${aliases('opencode-go')}`,
 	].join('\n');
-}
-
-function code(text: string): string {
-	return `\`${text}\``;
 }
