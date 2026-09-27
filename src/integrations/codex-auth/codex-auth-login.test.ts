@@ -64,6 +64,7 @@ function pendingLogin(overrides: Partial<PendingLogin> = {}): PendingLogin {
 		userCode: 'ABCD-EFGH',
 		intervalMs: 5000,
 		deadline: Date.now() + 10 * 60 * 1000,
+		pollAt: Date.now(),
 		responseUrl: RESPONSE_URL,
 		...overrides,
 	};
@@ -126,6 +127,7 @@ describe('CodexAuthService device-code login', () => {
 			userCode: 'ABCD-EFGH',
 			intervalMs: 3000,
 			deadline: result.expires,
+			pollAt: storage.alarm.at,
 			responseUrl: RESPONSE_URL,
 		});
 		expect(storage.alarm.at).toBeGreaterThanOrEqual(before + 3000);

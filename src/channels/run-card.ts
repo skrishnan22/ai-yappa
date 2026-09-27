@@ -16,6 +16,8 @@ export type RunCardState = {
 	notifyPosted?: boolean;
 	/** Deployment model specifier (`provider/model`), stamped from bindRunCard. */
 	model?: string;
+	/** Why the route fell back to OpenCode Go, stamped with `model`. */
+	modelNote?: string;
 	/** Reasoning effort from useModel options, stamped from bindRunCard. */
 	thinkingLevel?: string;
 };
@@ -77,6 +79,7 @@ type CardHandle = {
 	port?: SlackCardPort;
 	chain: Promise<void>;
 	model?: string;
+	modelNote?: string;
 	thinkingLevel?: string;
 };
 
@@ -104,6 +107,7 @@ export function bindRunCard(args: {
 	persist: (state: RunCardState) => void;
 	port?: SlackCardPort;
 	model?: string;
+	modelNote?: string;
 	thinkingLevel?: string;
 }): void {
 	let handle = handles.get(args.instanceId);
@@ -130,6 +134,7 @@ export function bindRunCard(args: {
 	handle.persist = args.persist;
 	handle.port = args.port;
 	handle.model = args.model;
+	handle.modelNote = args.modelNote;
 	handle.thinkingLevel = args.thinkingLevel;
 
 	if (handle.state === null && args.state !== null) {
@@ -393,18 +398,21 @@ function withModelRoute(state: RunCardState, handle: CardHandle): RunCardState {
 	return {
 		...state,
 		model: handle.model ?? state.model,
+		// The note belongs to the route: a new route replaces it, even with none.
+		modelNote: handle.model === undefined ? state.modelNote : handle.modelNote,
 		thinkingLevel: handle.thinkingLevel ?? state.thinkingLevel,
 	};
 }
 
 export function formatModelRoute(
-	state: Pick<RunCardState, 'model' | 'thinkingLevel'>,
+	state: Pick<RunCardState, 'model' | 'modelNote' | 'thinkingLevel'>,
 ): string | undefined {
 	if (state.model === undefined) return undefined;
+	const model = state.modelNote === undefined ? state.model : `${state.model} (${state.modelNote})`;
 
-	if (state.thinkingLevel === undefined) return state.model;
+	if (state.thinkingLevel === undefined) return model;
 
-	return `${state.model} · thinking ${state.thinkingLevel}`;
+	return `${model} · thinking ${state.thinkingLevel}`;
 }
 
 export function formatElapsed(ms: number): string {
@@ -578,6 +586,7 @@ function cardChanged(prev: RunCardState | null, next: RunCardState): boolean {
 		prev.branchUrl !== next.branchUrl ||
 		prev.prUrl !== next.prUrl ||
 		prev.model !== next.model ||
+		prev.modelNote !== next.modelNote ||
 		prev.thinkingLevel !== next.thinkingLevel
 	);
 }

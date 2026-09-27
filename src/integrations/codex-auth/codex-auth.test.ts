@@ -143,12 +143,10 @@ describe('CodexAuthService', () => {
 		expect(requests).toHaveLength(1);
 	});
 
-	test('a failed refresh keeps the stored credential and throws an oauth ModelsError', async () => {
+	test('a transient refresh failure keeps the stored credential and throws an oauth ModelsError', async () => {
 		const records = new MemoryRecords();
 
-		stubTokenEndpoint(() =>
-			Response.json({ error: { code: 'refresh_token_reused' } }, { status: 401 }),
-		);
+		stubTokenEndpoint(() => new Response('upstream unavailable', { status: 503 }));
 		const service = await seededService(records, 60 * 1000);
 		const failure = await service.accessToken().catch((error: Error) => error);
 

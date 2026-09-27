@@ -1,6 +1,7 @@
 import type { Credential, CredentialInfo } from '@earendil-works/pi-ai';
-import type { CodexAuthStorage, LoginAlarm } from './codex-auth.ts';
+import type { CodexAuthAlarm, CodexAuthStorage } from './codex-auth.ts';
 import type { CredentialRecords } from './durable-credential-store.ts';
+import type { NeedsLogin, NeedsLoginRecord } from './needs-login.ts';
 import type { PendingLogin, PendingLoginRecord } from './pending-login.ts';
 
 // Test support: `CodexAuthService` storage in memory.
@@ -41,7 +42,23 @@ export class MemoryPendingLogin implements PendingLoginRecord {
 	}
 }
 
-export class MemoryAlarm implements LoginAlarm {
+export class MemoryNeedsLogin implements NeedsLoginRecord {
+	needsLogin: NeedsLogin | undefined;
+
+	get(): NeedsLogin | undefined {
+		return this.needsLogin;
+	}
+
+	set(needsLogin: NeedsLogin): void {
+		this.needsLogin = needsLogin;
+	}
+
+	clear(): void {
+		this.needsLogin = undefined;
+	}
+}
+
+export class MemoryAlarm implements CodexAuthAlarm {
 	at: number | undefined;
 
 	async set(at: number): Promise<void> {
@@ -56,9 +73,15 @@ export class MemoryAlarm implements LoginAlarm {
 export type MemoryStorage = CodexAuthStorage & {
 	credentials: MemoryRecords;
 	pendingLogin: MemoryPendingLogin;
+	needsLogin: MemoryNeedsLogin;
 	alarm: MemoryAlarm;
 };
 
 export function memoryStorage(credentials = new MemoryRecords()): MemoryStorage {
-	return { credentials, pendingLogin: new MemoryPendingLogin(), alarm: new MemoryAlarm() };
+	return {
+		credentials,
+		pendingLogin: new MemoryPendingLogin(),
+		needsLogin: new MemoryNeedsLogin(),
+		alarm: new MemoryAlarm(),
+	};
 }

@@ -96,6 +96,8 @@ Coworker runs on `openai-codex/gpt-5.6-sol` through a ChatGPT Plus/Pro subscript
 
 Admins are `codexAdminIds` in `src/config.ts`, separate from the invoker allowlist. An empty list lets nobody connect or disconnect. Slack ingress picks the route when each event arrives, so a change applies from the next message. `flue run` always uses OpenCode Go because it has no Durable Objects.
 
+`CodexAuth` refreshes the access token about a day before it expires, so requests rarely wait on a refresh. If OpenAI rejects the refresh token for good (`refresh_token_expired`, `refresh_token_reused`, or `refresh_token_invalidated`), the connection moves to `needs_login`: Coworker falls back to OpenCode Go, the Live Run Card notes why, and every Codex admin gets a DM from the bot asking them to run `/coworker openai connect`. Network errors and OpenAI 5xx keep the connection and retry. The DM needs `SLACK_BOT_TOKEN` and the app's Messages tab (in the manifest).
+
 Never seed the bot from a personal `~/.codex/auth.json`: refresh tokens are single-use, and two clients refreshing one login break each other.
 
 ## What "local" covers

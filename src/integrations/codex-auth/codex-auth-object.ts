@@ -1,4 +1,5 @@
 import { DurableObject, type DurableObjectState } from 'cloudflare:workers';
+import { errorMessage } from '../../json.ts';
 import {
 	type CodexAuthStatus,
 	type CodexConnectResult,
@@ -6,10 +7,12 @@ import {
 	type CodexDisconnectResult,
 	CodexAuthService,
 } from './codex-auth.ts';
+import { sqlNeedsLogin } from './needs-login.ts';
 import { sqlPendingLogin } from './pending-login.ts';
 import { sqlCredentialRecords } from './sql-credential-records.ts';
 
-type CodexAuthEnv = { CODEX_CREDENTIAL_KEY?: string };
+// Worker secrets reach every Durable Object class in the Worker through `env`.
+type CodexAuthEnv = { CODEX_CREDENTIAL_KEY?: string; SLACK_BOT_TOKEN?: string };
 
 // Owns the deployment's single Codex Credential (ADR 0020). Address the one
 // instance through `codexAuth(env)` in codex-auth-binding.ts.
@@ -23,13 +26,24 @@ export class CodexAuth extends DurableObject<CodexAuthEnv> {
 			{
 				credentials: sqlCredentialRecords(ctx.storage.sql),
 				pendingLogin: sqlPendingLogin(ctx.storage.sql),
+				needsLogin: sqlNeedsLogin(ctx.storage.sql),
 				alarm: {
 					set: (at) => ctx.storage.setAlarm(at),
 					clear: () => ctx.storage.deleteAlarm(),
 				},
 			},
 			env.CODEX_CREDENTIAL_KEY,
+			env.SLACK_BOT_TOKEN,
 		);
+
+		// A credential stored before proactive refresh existed has no alarm.
+		void ctx.blockConcurrencyWhile(async () => {
+			try {
+				if ((await ctx.storage.getAlarm()) === null) await this.#service.scheduleAlarm();
+			} catch (error) {
+				console.warn(`[codex-auth] Could not schedule the alarm: ${errorMessage(error)}`);
+			}
+		});
 	}
 
 	accessToken(): Promise<string | undefined> {
@@ -55,6 +69,6 @@ export class CodexAuth extends DurableObject<CodexAuthEnv> {
 	}
 
 	override alarm(): Promise<void> {
-		return this.#service.pollLogin();
+		return this.#service.alarm();
 	}
 }
