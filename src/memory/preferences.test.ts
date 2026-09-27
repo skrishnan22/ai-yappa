@@ -17,22 +17,32 @@ describe('PreferenceStore', () => {
 		const store = createPreferenceStore(openMigratedSqlite(), testClock());
 
 		const saved = await store.add('U_A', 'Prefers small PRs', 'conv-1');
+		const subjectPreferences = await store.list('U_A');
+		const otherSubjectPreferences = await store.list('U_B');
 
 		expect(saved).toEqual({ ok: true, id: 'mem_1' });
-		expect(await store.list('U_A')).toEqual([{ id: 'mem_1', content: 'Prefers small PRs' }]);
-		expect(await store.list('U_B')).toEqual([]);
+		expect(subjectPreferences).toEqual([{ id: 'mem_1', content: 'Prefers small PRs' }]);
+		expect(otherSubjectPreferences).toEqual([]);
 
-		expect(await store.forget('U_B', 'mem_1')).toBe(false);
-		expect(await store.forget('U_A', 'mem_1')).toBe(true);
-		expect(await store.forget('U_A', 'mem_1')).toBe(false);
-		expect(await store.list('U_A')).toEqual([]);
+		const forgottenByOtherSubject = await store.forget('U_B', 'mem_1');
+		const forgottenBySubject = await store.forget('U_A', 'mem_1');
+		const forgottenAgain = await store.forget('U_A', 'mem_1');
+		const remainingPreferences = await store.list('U_A');
+
+		expect(forgottenByOtherSubject).toBe(false);
+		expect(forgottenBySubject).toBe(true);
+		expect(forgottenAgain).toBe(false);
+		expect(remainingPreferences).toEqual([]);
 	});
 
 	test('rejects empty and oversized content', async () => {
 		const store = createPreferenceStore(openMigratedSqlite(), testClock());
 
-		expect(await store.add('U_A', '   ', 'conv-1')).toEqual({ ok: false, reason: 'empty' });
-		expect(await store.add('U_A', 'x'.repeat(PREFERENCE_MAX_CHARS + 1), 'conv-1')).toEqual({
+		const emptyResult = await store.add('U_A', '   ', 'conv-1');
+		const oversizedResult = await store.add('U_A', 'x'.repeat(PREFERENCE_MAX_CHARS + 1), 'conv-1');
+
+		expect(emptyResult).toEqual({ ok: false, reason: 'empty' });
+		expect(oversizedResult).toEqual({
 			ok: false,
 			reason: 'too_long',
 		});
@@ -42,14 +52,19 @@ describe('PreferenceStore', () => {
 		const store = createPreferenceStore(openMigratedSqlite(), testClock());
 
 		for (let i = 0; i < PREFERENCE_LIMIT; i++) {
-			expect((await store.add('U_A', `pref ${i}`, 'conv-1')).ok).toBe(true);
+			const result = await store.add('U_A', `pref ${i}`, 'conv-1');
+
+			expect(result.ok).toBe(true);
 		}
 
-		expect(await store.add('U_A', 'one too many', 'conv-1')).toEqual({
+		const overLimitResult = await store.add('U_A', 'one too many', 'conv-1');
+		const otherSubjectResult = await store.add('U_B', 'someone else', 'conv-1');
+
+		expect(overLimitResult).toEqual({
 			ok: false,
 			reason: 'limit',
 		});
-		expect((await store.add('U_B', 'someone else', 'conv-1')).ok).toBe(true);
+		expect(otherSubjectResult.ok).toBe(true);
 	});
 
 	test('saving the same preference twice returns the existing id', async () => {
@@ -57,9 +72,10 @@ describe('PreferenceStore', () => {
 
 		const first = await store.add('U_A', 'Prefers small PRs', 'conv-1');
 		const second = await store.add('U_A', '  Prefers small PRs ', 'conv-2');
+		const preferences = await store.list('U_A');
 
 		expect(second).toEqual(first);
-		expect(await store.list('U_A')).toHaveLength(1);
+		expect(preferences).toHaveLength(1);
 	});
 
 	test('re-saving an existing preference at the cap returns the existing id', async () => {
@@ -76,9 +92,10 @@ describe('PreferenceStore', () => {
 		}
 
 		const result = await store.add('U_A', `  pref 0 `, 'conv-1');
+		const preferences = await store.list('U_A');
 
 		expect(result).toEqual({ ok: true, id: firstId });
-		expect(await store.list('U_A')).toHaveLength(PREFERENCE_LIMIT);
+		expect(preferences).toHaveLength(PREFERENCE_LIMIT);
 	});
 
 	test('forgetting erases the content but keeps a tombstone', async () => {
