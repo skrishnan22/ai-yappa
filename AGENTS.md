@@ -9,7 +9,7 @@ Implementation source of truth: `SLACK_AGENT_SPEC.md`. Milestone scope: `SLACK_A
 - `src/agents/` — agent modules. `'use agent'` at the top; every exported capitalized function is an agent. `Coworker` is the conversation owner. Dispatch-only; do not mount `createAgentRouter` for it.
 - `src/channels/slack.ts` — verified Slack ingress. A mention may create a Coworker; an unmentioned thread reply continues only if `getAgentInstance` finds one. Loaded by `app.ts` only, so `flue run` does not need a signing secret.
 - `src/channels/slash-command.ts` — `/aiyappa openai connect|status|disconnect` and `/aiyappa models`. Connect/disconnect need `codexAdminIds`; status and models also allow invokers. Device codes appear only in the ephemeral reply.
-- `src/channels/invocation-args.ts` + `src/agents/model-choice.ts` — `model:` / `think:` in the first mention pick from `modelAliases` in `src/config.ts` (ADR 0021); the choice lives in `initialData.modelChoice`.
+- `src/channels/invocation-args.ts` + `src/agents/model-choice.ts` — `$model:` / `$effort:` in the first mention pick from `modelAliases` in `src/config.ts` (ADR 0021); the choice lives in `initialData.modelChoice`.
 - `src/channels/slack-reply.ts` — thread-bound reply tool. Without `SLACK_BOT_TOKEN`, the tool returns the text and does not post.
 - `src/sandboxes/daytona.ts` — Flue `SandboxFactory` over an already-created Daytona container sandbox. Application code owns create/stop/start; stop/start preserves files but not RAM or processes.
 - `src/integrations/mcp-catalog.ts` — deploy-time Integration Catalog; Coworker resolves Worker secrets at render and mounts via `useMcpConnection`.

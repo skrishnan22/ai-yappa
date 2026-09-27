@@ -23,7 +23,7 @@ export const modelChoiceSchema = v.object({
 	),
 	thinkingLevel: v.optional(v.picklist(THINKING_LEVELS)),
 	correctedFrom: v.optional(
-		v.object({ model: v.optional(v.string()), think: v.optional(v.string()) }),
+		v.object({ model: v.optional(v.string()), effort: v.optional(v.string()) }),
 	),
 });
 
@@ -47,8 +47,8 @@ const MODELS: Vocabulary<Model> = {
 	exact: new Map(Object.values(modelAliases).map((model) => [model.modelId, model])),
 };
 
-const THINKING: Vocabulary<ThinkingLevel> = {
-	what: 'thinking level',
+const EFFORT: Vocabulary<ThinkingLevel> = {
+	what: 'effort',
 	names: new Map(THINKING_LEVELS.map((level) => [level, level])),
 	exact: new Map([['mid', 'medium']]),
 };
@@ -94,8 +94,8 @@ function lookUp<T>(input: string, vocabulary: Vocabulary<T>): LookUp<T> {
 
 export type ModelChoiceResult = { ok: true; choice?: ModelChoice } | { ok: false; error: string };
 
-/** Turns raw `model:` / `think:` values into the choice `initialData` records. */
-export function resolveModelChoice(args: { model?: string; think?: string }): ModelChoiceResult {
+/** Turns raw `$model:` / `$effort:` values into the choice `initialData` records. */
+export function resolveModelChoice(args: { model?: string; effort?: string }): ModelChoiceResult {
 	const choice: ModelChoice = {};
 
 	if (args.model !== undefined) {
@@ -107,13 +107,13 @@ export function resolveModelChoice(args: { model?: string; think?: string }): Mo
 		if (found.corrected) choice.correctedFrom = { model: args.model };
 	}
 
-	if (args.think !== undefined) {
-		const found = lookUp(args.think, THINKING);
+	if (args.effort !== undefined) {
+		const found = lookUp(args.effort, EFFORT);
 
 		if ('error' in found) return { ok: false, error: found.error };
 		choice.thinkingLevel = found.value;
 
-		if (found.corrected) choice.correctedFrom = { ...choice.correctedFrom, think: args.think };
+		if (found.corrected) choice.correctedFrom = { ...choice.correctedFrom, effort: args.effort };
 	}
 
 	return { ok: true, choice: Object.keys(choice).length > 0 ? choice : undefined };
@@ -135,7 +135,7 @@ export type CoworkerModel = {
 	/** For the run card: the model, plus any fallback or typo correction. */
 	label: string;
 	thinkingLabel: string;
-	/** No model was picked, so the card hints at `model:`. */
+	/** No model was picked, so the card hints at `$model:`. */
 	isDefault: boolean;
 };
 
@@ -150,7 +150,7 @@ export function coworkerModel(
 	chatgptUsable: boolean,
 ): CoworkerModel {
 	const thinkingLevel = choice?.thinkingLevel ?? 'medium';
-	const thinkingLabel = withTypo(thinkingLevel, choice?.correctedFrom?.think);
+	const thinkingLabel = withTypo(thinkingLevel, choice?.correctedFrom?.effort);
 	const fallback = chatgptUsable ? openAICodexModelSpecifier : openCodeGoModelSpecifier;
 	const picked = choice?.model;
 
@@ -194,7 +194,7 @@ export function modelHelpText(): string {
 			.join(' · ');
 
 	return [
-		`Pick a model with \`model:&lt;name&gt;\` and effort with \`think:${THINKING_LEVELS.join('|')}\`.`,
+		`Pick a model with \`$model:&lt;name&gt;\` and effort with \`$effort:${THINKING_LEVELS.join('|')}\`.`,
 		`ChatGPT: ${aliases('chatgpt')} — OpenCode Go: ${aliases('opencode-go')}`,
 	].join('\n');
 }

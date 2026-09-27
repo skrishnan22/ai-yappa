@@ -83,7 +83,7 @@ The provider and model used by Flue for an Agent Conversation. By default it is 
 _Avoid_: Automatic model routing
 
 **Model Choice**:
-The model and thinking level the invoker picks for an Agent Conversation with `model:` and `think:` in the first mention, from the deployment's alias allowlist. Recorded once at creation; later mentions cannot change it.
+The model and thinking level the invoker picks for an Agent Conversation with `$model:` and `$effort:` in the first mention, from the deployment's alias allowlist. Recorded once at creation; later mentions cannot change it.
 _Avoid_: Model switching, per-user default
 
 **Codex Credential**:

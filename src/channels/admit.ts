@@ -37,7 +37,7 @@ export type InvocationDecision =
 	| { kind: 'proceed'; body: string; modelChoice?: ModelChoice };
 
 /**
- * Inline `model:` / `think:` arguments on a mention that creates a
+ * Inline `$model:` / `$effort:` arguments on a mention that creates a
  * conversation. Replies and later mentions are plain text: the thread's
  * choice is already recorded and they could not change it. A ChatGPT model
  * is refused while ChatGPT is not usable, so asking for Luna never silently

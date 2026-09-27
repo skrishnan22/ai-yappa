@@ -132,7 +132,7 @@ async function admitThread({
 	const repo = repoForChannel(thread.channelId);
 
 	// Mentions check too: only the mention that creates a conversation reads
-	// `model:` / `think:`.
+	// `$model:` / `$effort:`.
 	const conversationExists = await conversationExistsInThread(id);
 
 	async function refuse(

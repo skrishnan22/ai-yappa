@@ -9,7 +9,7 @@ export const allowedInvokerIds = new Set<string>(['U0BGR738WMC']);
 // from the invoker allowlist; empty means nobody.
 export const codexAdminIds = new Set<string>(['U0BGR738WMC']);
 
-// Models a user may pick with `model:<alias>` when starting a thread
+// Models a user may pick with `$model:<alias>` when starting a thread
 // (docs/superpowers/specs/2026-09-27-per-conversation-model-choice-design.md).
 // Keep aliases more than two edits apart: typo correction depends on it.
 export const modelAliases = {

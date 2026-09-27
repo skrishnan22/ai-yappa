@@ -150,11 +150,11 @@ function modelsText(chatgptConnected: boolean): string {
 	});
 
 	const fallback = chatgptConnected
-		? `Without \`model:\`, Coworker uses \`${openAICodexModelSpecifier}\`.`
-		: `ChatGPT is not connected, so ChatGPT models are unavailable. Without \`model:\`, Coworker uses \`${openCodeGoModelSpecifier}\`.`;
+		? `Without \`$model:\`, Coworker uses \`${openAICodexModelSpecifier}\`.`
+		: `ChatGPT is not connected, so ChatGPT models are unavailable. Without \`$model:\`, Coworker uses \`${openCodeGoModelSpecifier}\`.`;
 
 	return [
-		'Start a thread with `model:&lt;name&gt;` and `think:low|medium|high` anywhere in the mention:',
+		'Start a thread with `$model:&lt;name&gt;` and `$effort:low|medium|high` anywhere in the mention:',
 		...lines,
 		fallback,
 	].join('\n');

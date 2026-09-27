@@ -90,7 +90,7 @@ describe('decideInvocation', () => {
 		});
 
 	test('records the model choice and strips the arguments', () => {
-		expect(mention('<@U1> model:luna think:high fix it')).toEqual({
+		expect(mention('<@U1> $model:luna $effort:high fix it')).toEqual({
 			kind: 'proceed',
 			body: '<@U1> fix it',
 			modelChoice: {
@@ -102,8 +102,8 @@ describe('decideInvocation', () => {
 	});
 
 	test('refuses bad arguments with the help text', () => {
-		const unknown = mention('<@U1> model:gpt-4o fix it');
-		const conflict = mention('<@U1> model:luna fix it model:kimi');
+		const unknown = mention('<@U1> $model:gpt-4o fix it');
+		const conflict = mention('<@U1> $model:luna fix it $model:kimi');
 
 		expect(unknown.kind).toBe('bad-args');
 		expect(unknown).toHaveProperty('reply', expect.stringContaining('Unknown model `gpt-4o`.'));
@@ -112,32 +112,32 @@ describe('decideInvocation', () => {
 	});
 
 	test('refuses a ChatGPT model while ChatGPT is not usable', () => {
-		const refused = mention('<@U1> model:luna fix it', false);
+		const refused = mention('<@U1> $model:luna fix it', false);
 
 		expect(refused.kind).toBe('model-unavailable');
 		expect(refused).toHaveProperty('reply', expect.stringContaining('`gpt-5.6-luna`'));
-		expect(mention('<@U1> model:kimi fix it', false).kind).toBe('proceed');
+		expect(mention('<@U1> $model:kimi fix it', false).kind).toBe('proceed');
 	});
 
 	test('leaves unmentioned replies and later mentions as plain text', () => {
 		expect(
 			decideInvocation({
 				signalType: 'slack.message',
-				text: 'model:nonsense please',
+				text: '$model:nonsense please',
 				chatgptConnected: false,
 				conversationExists: true,
 			}),
-		).toEqual({ kind: 'proceed', body: 'model:nonsense please' });
+		).toEqual({ kind: 'proceed', body: '$model:nonsense please' });
 		// The thread's choice is recorded; a disconnected ChatGPT must not block
 		// the mid-thread fallback.
 		expect(
 			decideInvocation({
 				signalType: 'slack.app_mention',
-				text: '<@U1> model:luna continue',
+				text: '<@U1> $model:luna continue',
 				chatgptConnected: false,
 				conversationExists: true,
 			}),
-		).toEqual({ kind: 'proceed', body: '<@U1> model:luna continue' });
+		).toEqual({ kind: 'proceed', body: '<@U1> $model:luna continue' });
 	});
 });
 

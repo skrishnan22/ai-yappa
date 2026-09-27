@@ -9,7 +9,7 @@ import { openCodeGoModelSpecifier } from './opencode-go-catalog.ts';
 
 const pickModel = (typed: string) => resolveModelChoice({ model: typed });
 
-const pickThinking = (typed: string) => resolveModelChoice({ think: typed });
+const pickEffort = (typed: string) => resolveModelChoice({ effort: typed });
 
 const luna = { provider: 'chatgpt', modelId: 'gpt-5.6-luna' } as const;
 
@@ -44,18 +44,18 @@ describe('matching model names', () => {
 	});
 });
 
-describe('matching thinking levels', () => {
+describe('matching effort', () => {
 	test('matches levels, prefixes, shorthands, and typos', () => {
-		expect(pickThinking('High')).toEqual({ ok: true, choice: { thinkingLevel: 'high' } });
-		expect(pickThinking('med')).toEqual({ ok: true, choice: { thinkingLevel: 'medium' } });
-		expect(pickThinking('mid')).toEqual({ ok: true, choice: { thinkingLevel: 'medium' } });
-		expect(pickThinking('hgih')).toEqual({
+		expect(pickEffort('High')).toEqual({ ok: true, choice: { thinkingLevel: 'high' } });
+		expect(pickEffort('med')).toEqual({ ok: true, choice: { thinkingLevel: 'medium' } });
+		expect(pickEffort('mid')).toEqual({ ok: true, choice: { thinkingLevel: 'medium' } });
+		expect(pickEffort('hgih')).toEqual({
 			ok: true,
-			choice: { thinkingLevel: 'high', correctedFrom: { think: 'hgih' } },
+			choice: { thinkingLevel: 'high', correctedFrom: { effort: 'hgih' } },
 		});
-		expect(pickThinking('maximum')).toEqual({
+		expect(pickEffort('maximum')).toEqual({
 			ok: false,
-			error: 'Unknown thinking level `maximum`.',
+			error: 'Unknown effort `maximum`.',
 		});
 	});
 });
@@ -63,16 +63,16 @@ describe('matching thinking levels', () => {
 describe('resolveModelChoice', () => {
 	test('records only what the user gave', () => {
 		expect(resolveModelChoice({})).toEqual({ ok: true, choice: undefined });
-		expect(resolveModelChoice({ think: 'hi' })).toEqual({
+		expect(resolveModelChoice({ effort: 'hi' })).toEqual({
 			ok: true,
 			choice: { thinkingLevel: 'high' },
 		});
-		expect(resolveModelChoice({ model: 'lnua', think: 'hgih' })).toEqual({
+		expect(resolveModelChoice({ model: 'lnua', effort: 'hgih' })).toEqual({
 			ok: true,
 			choice: {
 				model: { provider: 'chatgpt', modelId: 'gpt-5.6-luna' },
 				thinkingLevel: 'high',
-				correctedFrom: { model: 'lnua', think: 'hgih' },
+				correctedFrom: { model: 'lnua', effort: 'hgih' },
 			},
 		});
 	});
@@ -82,9 +82,9 @@ describe('resolveModelChoice', () => {
 			ok: false,
 			error: 'Unknown model `gpt-4o`.',
 		});
-		expect(resolveModelChoice({ think: 'max' })).toEqual({
+		expect(resolveModelChoice({ effort: 'max' })).toEqual({
 			ok: false,
-			error: 'Unknown thinking level `max`.',
+			error: 'Unknown effort `max`.',
 		});
 	});
 });
@@ -148,7 +148,7 @@ describe('coworkerModel', () => {
 	test('labels corrected input', () => {
 		expect(
 			coworkerModel(
-				{ model: luna, thinkingLevel: 'high', correctedFrom: { model: 'lnua', think: 'hgih' } },
+				{ model: luna, thinkingLevel: 'high', correctedFrom: { model: 'lnua', effort: 'hgih' } },
 				true,
 			),
 		).toMatchObject({

@@ -16,16 +16,15 @@ This reverses ADR 0020 decision 6 ("not per-user model selection") and the `CONT
 Inline arguments anywhere in the mention text:
 
 ```
-@aiyappa model:luna think:high fix the flaky test
-@aiyappa why is CI red on main? think:low
+@aiyappa $model:luna $effort:high fix the flaky test
+@aiyappa why is CI red on main? $effort:low
 ```
 
-- `model:<value>` and `think:<value>`, key and value joined by `:` with no space. `model: foo` does not match.
-- Arguments inside inline code, code blocks, and `>` quotes are ignored.
+- `$model:<value>` and `$effort:<value>`, key and value joined by `:` with no space. The `$` keeps ordinary text, code, and logs from matching, so code and quotes need no special handling. (The first version used unprefixed `$model:` / `$effort:` and had to skip code and quotes.)
 - Only the mention's own text is parsed. Thread Context loaded at dispatch is never parsed.
 - The same key twice with different values is an error. Repeating the same value is allowed.
-- Matched arguments are removed from the text before it reaches the model; whitespace is collapsed.
-- Either argument may appear without the other. A missing model uses the default model; a missing `think:` uses `medium`.
+- Matched arguments are removed, with the spaces before them, before the text reaches the model.
+- Either argument may appear without the other. A missing model uses the default model; a missing `$effort:` uses `medium`. Effort becomes Flue's `thinkingLevel`.
 - Arguments are parsed only on the `app_mention` that creates the conversation. Replies and later mentions are plain text.
 
 ### Alias table
@@ -44,7 +43,7 @@ Thinking levels: `low`, `medium`, `high`.
 
 ### Matching (typo tolerance)
 
-Case-insensitive. For `model:` the resolver tries, in order, and stops at the first rule that yields exactly one alias:
+Case-insensitive. For `$model:` the resolver tries, in order, and stops at the first rule that yields exactly one alias:
 
 1. exact alias
 2. exact model id (e.g. `gpt-5.6-luna`, `kimi-k3`)
@@ -53,7 +52,7 @@ Case-insensitive. For `model:` the resolver tries, in order, and stops at the fi
 
 A rule that matches more than one alias is `ambiguous` and stops resolution. Nothing matched is `unknown`.
 
-For `think:` the same order applies over `low | medium | high`, with shorthands checked before the distance step: `lo` → `low`; `med`, `mid` → `medium`; `hi` → `high`.
+For `$effort:` the same order applies over `low | medium | high`, with shorthands checked before the distance step: `lo` → `low`; `med`, `mid` → `medium`; `hi` → `high`.
 
 Distance comes from the `damerau-levenshtein` npm package (zero dependencies, BSD-2-Clause, types from `@types/damerau-levenshtein`). Application code owns only the limits and the "exactly one within the limit" rule.
 
@@ -64,9 +63,9 @@ When a value was corrected by rule 4, the run card shows the correction (shortha
 1. Parse and resolve arguments. On a parse error, `unknown`, or `ambiguous`, reply in the thread with the help text and do not dispatch.
 2. If a ChatGPT alias was chosen and `CodexAuth` is not connected at this moment, reply in the thread with a refusal and do not dispatch:
    > ChatGPT isn't connected, so `luna` isn't available. Pick one of `deepseek` · `kimi` · `glm`, or ask an admin to run `/aiyappa openai connect`.
-3. Otherwise dispatch with `initialData.modelChoice = { model?: { provider, modelId }, thinkingLevel?, correctedFrom? }`, carrying only what the user gave. No `model:` and no `think:` means `initialData.modelChoice` is absent.
+3. Otherwise dispatch with `initialData.modelChoice = { model?: { provider, modelId }, thinkingLevel?, correctedFrom? }`, carrying only what the user gave. No `$model:` and no `$effort:` means `initialData.modelChoice` is absent.
 
-Flue records `initialData` once, at instance creation. A `model:` in a later mention in an existing thread therefore does not change the conversation's model. The run card always shows the model actually in use. Only the mention that creates the conversation is parsed; later mentions are plain text, so a disconnected ChatGPT cannot refuse them and they fall back as below.
+Flue records `initialData` once, at instance creation. A `$model:` in a later mention in an existing thread therefore does not change the conversation's model. The run card always shows the model actually in use. Only the mention that creates the conversation is parsed; later mentions are plain text, so a disconnected ChatGPT cannot refuse them and they fall back as below.
 
 ### Every event
 
@@ -89,24 +88,23 @@ Renders with no route (appended reminders, `flue run`) keep the current behavior
 ### Discoverability
 
 - **Help text** (shared by every error reply and `/aiyappa models`):
-  > Pick a model with `model:<name>` and effort with `think:low|medium|high`.
+  > Pick a model with `$model:<name>` and effort with `$effort:low|medium|high`.
   > ChatGPT: `sol` · `luna` — OpenCode Go: `deepseek` · `kimi` · `glm`
 - **`/aiyappa models`**: ephemeral list of aliases and model ids, marking ChatGPT aliases available or unavailable from `CodexAuth` status (an unreachable `CodexAuth` counts as disconnected). Allowed for invokers and Codex admins (same gate as `status`).
-- **Run card**: shows `model · thinking <level>` (already rendered today), plus the correction or fallback note above. Threads that used the default model get a hint `model:<name> think:<level>` in the context line.
+- **Run card**: shows `model · thinking <level>` (already rendered today), plus the correction or fallback note above. Threads that used the default model get a hint `$model:<name> $effort:<level>` in the context line.
 
 ## Components
 
 ### New: `src/channels/invocation-args.ts`
 
-Pure. `parseInvocationArgs(text): { ok: true; model?: string; think?: string; body: string } | { ok: false; error }`.
+Pure. `parseInvocationArgs(text): { ok: true; args: { model?: string; effort?: string; body: string } } | { ok: false; error }`.
 
-- Masks inline code, code blocks, and `>` quote lines before scanning.
-- Matches `(?<![\w:/])(model|think):([^\s`*_~]+)` outside masked regions.
-- Returns raw values; resolution happens elsewhere. Written so a future `repo:` argument (spec §3) reuses it.
+- One pattern, `$model:<value>` / `$effort:<value>`, matched anywhere; removing a match takes the spaces before it.
+- Returns raw values; resolution happens elsewhere. A future `$repo:` argument (spec §3) fits the same pattern.
 
 ### New: `src/agents/model-choice.ts`
 
-- `modelChoiceSchema` (valibot): `{ model?: { provider: 'chatgpt' | 'opencode-go'; modelId: string }; thinkingLevel?: 'low' | 'medium' | 'high'; correctedFrom?: { model?: string; think?: string } }`.
+- `modelChoiceSchema` (valibot): `{ model?: { provider: 'chatgpt' | 'opencode-go'; modelId: string }; thinkingLevel?: 'low' | 'medium' | 'high'; correctedFrom?: { model?: string; effort?: string } }`.
 - `resolveModelAlias(input)` and `resolveThinkingLevel(input)` return a resolved value, `{ corrected: true, from }` when rules 4/shorthand applied, or `unknown` / `ambiguous`.
 - `coworkerModel(choice | undefined, route | undefined): { specifier; thinkingLevel; fallbackFrom?: string; correctedFrom? }` implements the render table.
 - `modelHelpText(codexConnected?)` builds the help text.
@@ -134,7 +132,7 @@ Pure. `parseInvocationArgs(text): { ok: true; model?: string; think?: string; bo
 
 Vitest, colocated:
 
-- `invocation-args.test.ts`: arguments at start, middle, end; ignored inside inline code, code blocks, and quotes; `model: foo` does not match; `url:model:x`-style and path-embedded text does not match; conflicting duplicates error; identical duplicates allowed; stripped body.
+- `invocation-args.test.ts`: arguments at start, middle, end; unprefixed `model:x` is left alone; dotted ids and a trailing sentence period; line structure kept; conflicting duplicates error; identical duplicates allowed; stripped body.
 - `model-choice.test.ts`: each resolution rule for model and thinking (exact, id, prefix, distance, shorthand); `gpt` rejected; ambiguous prefix; unknown; `coworkerModel` for every render-table row; alias-table invariants: every alias's model id exists in pi's `openai-codex` or `opencode-go` catalog, and no two aliases are within the distance limit of each other.
 - `admit.test.ts`: `bad-args` and `model-unavailable`.
 - `slash-command.test.ts`: `models` for connected and disconnected `CodexAuth`, and the permission gate.
