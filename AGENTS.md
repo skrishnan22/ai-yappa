@@ -24,7 +24,7 @@ Implementation source of truth: `SLACK_AGENT_SPEC.md`. Milestone scope: `SLACK_A
 
 - `pnpm flue run src/agents/coworker.ts --message "Hi"` — run the agent locally, no server. Slack dispatch will not fire.
 - `pnpm run dev` — start the dev server. Slack Events URL is `/channels/slack/events`.
-- `pnpm run deploy` — build and deploy the Worker.
+- `pnpm run deploy` — build and deploy the Worker. Merges to `main` run this from `.github/workflows/deploy.yml`.
 - `pnpm run check:types` — typecheck.
 - `pnpm test` — Vitest (`src/**/*.test.ts`).
 - `pnpm run lint` / `pnpm run fmt:check` — Oxlint and Oxfmt (also CI).

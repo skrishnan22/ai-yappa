@@ -145,6 +145,15 @@ A threaded reply that reflects work in the already-cloned repo (not clone/`ls` a
 
 ## Deploy
 
+Merges to `main` deploy the Worker with GitHub Actions (`.github/workflows/deploy.yml`) after tests, lint, and format check pass. The deploy job uses the protected `production` environment, limited to `main`. Add these environment secrets (Settings → Environments → production):
+
+- `CLOUDFLARE_API_TOKEN` — API token for the Slack Agent Cloudflare account, with **Workers Scripts: Edit**. This is a deploy token. Do not reuse the Codevil token or the MCP-scoped `CLOUDFLARE_MCP_API_TOKEN`.
+- `CLOUDFLARE_ACCOUNT_ID` — that account's ID.
+
+Worker secrets stay on the Worker across deploys. Set or rotate them with `pnpm wrangler secret put` below; do not copy them into GitHub.
+
+Manual deploy, from a machine logged into that same account:
+
 ```sh
 pnpm run deploy
 ```
