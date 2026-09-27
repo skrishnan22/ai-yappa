@@ -263,6 +263,31 @@ describe('renderRunCard', () => {
 			'opencode-go/deepseek-v4-flash · thinking medium',
 		);
 	});
+
+	test('hints at model: only when the thread uses the default model', () => {
+		const hint = 'pick with `model:&lt;name&gt; think:&lt;level&gt;`';
+		const route = { startedAt: 0, model: 'opencode-go/kimi-k3', thinkingLevel: 'high' };
+
+		expect(
+			JSON.stringify(renderRunCard(working({ ...route, modelIsDefault: true }), 1_000).blocks),
+		).toContain(hint);
+		expect(JSON.stringify(renderRunCard(working(route), 1_000).blocks)).not.toContain(hint);
+	});
+
+	test('escapes fallback and correction labels', () => {
+		const rendered = renderRunCard(
+			working({
+				startedAt: 0,
+				model: 'gpt-5.6-luna unavailable → opencode-go/deepseek-v4.1-flash',
+				thinkingLevel: 'high (from "hgih")',
+			}),
+			1_000,
+		);
+
+		expect(JSON.stringify(rendered.blocks)).toContain(
+			'gpt-5.6-luna unavailable → opencode-go/deepseek-v4.1-flash · thinking high (from \\"hgih\\")',
+		);
+	});
 });
 
 describe('formatModelRoute', () => {

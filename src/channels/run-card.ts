@@ -14,10 +14,12 @@ export type RunCardState = {
 	branchUrl?: string;
 	prUrl?: string;
 	notifyPosted?: boolean;
-	/** Deployment model specifier (`provider/model`), stamped from bindRunCard. */
+	/** Model label (`provider/model`, plus any fallback or correction), stamped from bindRunCard. */
 	model?: string;
 	/** Reasoning effort from useModel options, stamped from bindRunCard. */
 	thinkingLevel?: string;
+	/** No model was picked at thread start; the card hints at `model:`. */
+	modelIsDefault?: boolean;
 };
 
 export type CardEvent =
@@ -78,6 +80,7 @@ type CardHandle = {
 	chain: Promise<void>;
 	model?: string;
 	thinkingLevel?: string;
+	modelIsDefault?: boolean;
 };
 
 const handles = new Map<string, CardHandle>();
@@ -105,6 +108,7 @@ export function bindRunCard(args: {
 	port?: SlackCardPort;
 	model?: string;
 	thinkingLevel?: string;
+	modelIsDefault?: boolean;
 }): void {
 	let handle = handles.get(args.instanceId);
 
@@ -131,6 +135,7 @@ export function bindRunCard(args: {
 	handle.port = args.port;
 	handle.model = args.model;
 	handle.thinkingLevel = args.thinkingLevel;
+	handle.modelIsDefault = args.modelIsDefault;
 
 	if (handle.state === null && args.state !== null) {
 		handle.state = args.state;
@@ -341,6 +346,8 @@ function isSubmissionBoundary(event: RoutedCardEvent): event is SubmissionBounda
 	return event.type === 'submission_queued' || event.type === 'submission_running';
 }
 
+const MODEL_HINT = 'pick with `model:&lt;name&gt; think:&lt;level&gt;`';
+
 export type CardRender = {
 	text: string;
 	blocks: SlackBlock[];
@@ -375,6 +382,8 @@ export function renderRunCard(state: RunCardState, now: number): CardRender {
 
 	if (route) contextBits.push(escapeMrkdwn(route));
 
+	if (state.modelIsDefault) contextBits.push(MODEL_HINT);
+
 	if (links.length > 0) contextBits.push(links.join('  ·  '));
 
 	if (contextBits.length > 0) {
@@ -394,6 +403,7 @@ function withModelRoute(state: RunCardState, handle: CardHandle): RunCardState {
 		...state,
 		model: handle.model ?? state.model,
 		thinkingLevel: handle.thinkingLevel ?? state.thinkingLevel,
+		modelIsDefault: handle.model === undefined ? state.modelIsDefault : handle.modelIsDefault,
 	};
 }
 
@@ -578,7 +588,8 @@ function cardChanged(prev: RunCardState | null, next: RunCardState): boolean {
 		prev.branchUrl !== next.branchUrl ||
 		prev.prUrl !== next.prUrl ||
 		prev.model !== next.model ||
-		prev.thinkingLevel !== next.thinkingLevel
+		prev.thinkingLevel !== next.thinkingLevel ||
+		prev.modelIsDefault !== next.modelIsDefault
 	);
 }
 

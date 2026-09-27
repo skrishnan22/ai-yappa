@@ -33,11 +33,8 @@ import {
 	WORKSPACE_REPO_DIR,
 } from '../sandboxes/hydrate.ts';
 import { githubTools } from './github-tools.ts';
-import {
-	coworkerModelSpecifier,
-	coworkerThinkingLevel,
-	deliveredModelRoute,
-} from './model-route.ts';
+import { coworkerModel, modelChoiceSchema } from './model-choice.ts';
+import { deliveredModelRoute } from './model-route.ts';
 import { webSearchTools } from './web-search-tools.ts';
 
 observe((event, context) => {
@@ -54,19 +51,23 @@ const initialDataSchema = v.object({
 	startedBy: v.optional(v.string()),
 	startedAt: v.pipe(v.string(), v.isoTimestamp()),
 	repo: v.pipe(v.string(), v.url()),
+	modelChoice: v.optional(modelChoiceSchema),
 });
 
 export function Coworker(props: { id: string }) {
-	const route = deliveredModelRoute(useDelivery());
-	const model = coworkerModelSpecifier(route);
-
-	useModel(model, { thinkingLevel: coworkerThinkingLevel });
-
 	const data = useInitialData<v.InferOutput<typeof initialDataSchema> | undefined>();
 
 	if (!data) {
 		throw new Error('This agent is created by the Slack channel dispatch.');
 	}
+
+	const route = deliveredModelRoute(useDelivery());
+	// A choice recorded by an older deploy that no longer validates falls back
+	// to the default route instead of breaking the thread.
+	const choice = v.is(modelChoiceSchema, data.modelChoice) ? data.modelChoice : undefined;
+	const model = coworkerModel(choice, route);
+
+	useModel(model.specifier, { thinkingLevel: model.thinkingLevel });
 
 	// Fail fast with the full missing-secret list (Slack optional here — the
 	// reply tool degrades to `posted: false` without a token).
@@ -92,8 +93,9 @@ export function Coworker(props: { id: string }) {
 		state: runCard,
 		// Mid-submission renders (appended reminders) carry no route; the card
 		// keeps the route the submission latched.
-		model: route === undefined ? undefined : model,
-		thinkingLevel: coworkerThinkingLevel,
+		model: route === undefined ? undefined : model.label,
+		thinkingLevel: route === undefined ? undefined : model.thinkingLabel,
+		modelIsDefault: model.isDefault,
 		persist: (state) => {
 			setRunCard(state);
 		},

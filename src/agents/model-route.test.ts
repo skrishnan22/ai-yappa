@@ -1,7 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { coworkerModelSpecifier, deliveredModelRoute, modelRouteFor } from './model-route.ts';
-import { openAICodexModelSpecifier } from './openai-codex-route.ts';
-import { openCodeGoModelSpecifier } from './opencode-go-catalog.ts';
+import { deliveredModelRoute, modelRouteFor } from './model-route.ts';
 
 describe('Model Route', () => {
 	test('routes to the ChatGPT subscription only while CodexAuth is connected', () => {
@@ -24,11 +22,5 @@ describe('Model Route', () => {
 		expect(deliveredModelRoute({ ...signal, attributes: { modelRoute: 'gpt-9' } })).toBeUndefined();
 		expect(deliveredModelRoute(signal)).toBeUndefined();
 		expect(deliveredModelRoute({ kind: 'user', body: 'Hi' })).toBeUndefined();
-	});
-
-	test('uses OpenCode Go without a ChatGPT route', () => {
-		expect(coworkerModelSpecifier('chatgpt')).toBe(openAICodexModelSpecifier);
-		expect(coworkerModelSpecifier('opencode-go')).toBe(openCodeGoModelSpecifier);
-		expect(coworkerModelSpecifier(undefined)).toBe(openCodeGoModelSpecifier);
 	});
 });

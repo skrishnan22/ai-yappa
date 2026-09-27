@@ -57,7 +57,7 @@ For `think:` the same order applies over `low | medium | high`, with shorthands 
 
 Distance comes from the `damerau-levenshtein` npm package (zero dependencies, BSD-2-Clause, types from `@types/damerau-levenshtein`). Application code owns only the limits and the "exactly one within the limit" rule.
 
-When a value was corrected by rule 4 or a shorthand, the run card shows the correction: `luna (from "lnua") · thinking high`.
+When a value was corrected by rule 4, the run card shows the correction (shorthands and prefixes are not corrections): `luna (from "lnua") · thinking high`.
 
 ### First mention (thread start)
 
@@ -91,7 +91,7 @@ Renders with no route (appended reminders, `flue run`) keep the current behavior
 - **Help text** (shared by every error reply and `/aiyappa models`):
   > Pick a model with `model:<name>` and effort with `think:low|medium|high`.
   > ChatGPT: `sol` · `luna` — OpenCode Go: `deepseek` · `kimi` · `glm`
-- **`/aiyappa models`**: ephemeral list of aliases and model ids, marking ChatGPT aliases available or unavailable from `CodexAuth` status. Allowed for invokers and Codex admins (same gate as `status`).
+- **`/aiyappa models`**: ephemeral list of aliases and model ids, marking ChatGPT aliases available or unavailable from `CodexAuth` status (an unreachable `CodexAuth` counts as disconnected). Allowed for invokers and Codex admins (same gate as `status`).
 - **Run card**: shows `model · thinking <level>` (already rendered today), plus the correction or fallback note above. Threads that used the default model get a hint `model:<name> think:<level>` in the context line.
 
 ## Components
@@ -115,7 +115,7 @@ Pure. `parseInvocationArgs(text): { ok: true; model?: string; think?: string; bo
 
 - `src/config.ts`: `modelAliases` table.
 - `src/agents/model-route.ts`: `coworkerModelSpecifier` and the fixed `coworkerThinkingLevel` are replaced by `coworkerModel`. `modelRouteFor` and `deliveredModelRoute` stay.
-- `src/channels/admit.ts`: `decideAdmit` gains `bad-args` (parse/resolve failure) and `model-unavailable` (ChatGPT alias while disconnected). Both are refusals that reply in the thread and emit `slack_admission` with the decision kind, like `no-repo`.
+- `src/channels/admit.ts`: a second pure step, `decideInvocation`, runs after `decideAdmit` returns `dispatch` (so dropped replies never ask `CodexAuth`). It returns `bad-args` (parse/resolve failure), `model-unavailable` (ChatGPT alias while disconnected), or `proceed`. Both refusals reply in the thread and emit `slack_admission` with the decision kind, like `no-repo`.
 - `src/channels/slack.ts`: `app_mention` parses arguments, resolves them, passes the result to `decideAdmit`, and dispatches the stripped body with `initialData.modelChoice`. `CodexAuth` status is fetched once per event and used for both the admit decision and the `modelRoute` attribute.
 - `src/agents/coworker.ts`: `initialData` schema gains optional `modelChoice`; render calls `coworkerModel` and passes specifier, thinking level, and notes to `useModel` and `bindRunCard`.
 - `src/channels/run-card.ts`: optional `fallbackFrom` / `correctedFrom` rendering and the default-model hint.

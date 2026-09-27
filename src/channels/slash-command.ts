@@ -1,8 +1,9 @@
 import type { SlackSlashCommandPayload } from '@flue/slack';
 import * as v from 'valibot';
+import { modelSpecifier } from '../agents/model-choice.ts';
 import { openAICodexModelSpecifier } from '../agents/openai-codex-route.ts';
 import { openCodeGoModelSpecifier } from '../agents/opencode-go-catalog.ts';
-import { isAllowedInvoker, isCodexAdmin } from '../config.ts';
+import { isAllowedInvoker, isCodexAdmin, modelAliases } from '../config.ts';
 import type {
 	CodexAuthControl,
 	CodexAuthStatus,
@@ -13,7 +14,7 @@ import { errorMessage } from '../json.ts';
 
 export const SLASH_COMMAND = '/aiyappa';
 
-const USAGE = 'Usage: `/aiyappa openai connect|status|disconnect`';
+const USAGE = 'Usage: `/aiyappa openai connect|status|disconnect` or `/aiyappa models`';
 
 const subcommandSchema = v.picklist(['connect', 'status', 'disconnect']);
 
@@ -24,6 +25,8 @@ const responseUrlSchema = v.pipe(v.string(), v.url(), v.startsWith('https://hook
 export type SlashCommandReply = { response_type: 'ephemeral'; text: string };
 
 /**
+ * `/aiyappa models` lists the Model Choice aliases (ADR 0021).
+ *
  * `/aiyappa openai connect|status|disconnect` (ADR 0020). Every reply is
  * ephemeral, and only the connect reply carries the device code: whoever
  * enters it binds the deployment to their ChatGPT account.
@@ -38,6 +41,20 @@ export async function handleSlashCommand(
 ): Promise<SlashCommandReply> {
 	if (payload.command !== SLASH_COMMAND) return reply(`Unknown command ${payload.command}.`);
 	const [provider, action, ...extra] = payload.text.trim().split(/\s+/);
+
+	if (provider === 'models' && action === undefined) {
+		if (!isCodexAdmin(payload.user_id) && !isAllowedInvoker(payload.user_id)) {
+			return reply('You are not on the invoker allowlist for this deployment.');
+		}
+
+		// An unreachable CodexAuth routes like a disconnected one.
+		const status = await codexAuth()
+			.status()
+			.catch(() => undefined);
+
+		return reply(modelsText(status?.state === 'connected'));
+	}
+
 	const subcommand = v.safeParse(subcommandSchema, action);
 
 	if (provider !== 'openai' || !subcommand.success || extra.length > 0) return reply(USAGE);
@@ -112,17 +129,35 @@ async function replyOrError(
 function statusText(status: CodexAuthStatus): string {
 	switch (status.state) {
 		case 'connected':
-			return `ChatGPT is connected as account \`${status.accountId}\`; Coworker uses \`${openAICodexModelSpecifier}\`. The current access token expires ${slackDate(status.expires)} and refreshes automatically.`;
+			return `ChatGPT is connected as account \`${status.accountId}\`; Coworker uses \`${openAICodexModelSpecifier}\` unless a thread picks another model. The current access token expires ${slackDate(status.expires)} and refreshes automatically.`;
 		case 'pending_login':
-			return `A ChatGPT login is waiting for approval until ${slackDate(status.expires)}. Until then Coworker uses \`${openCodeGoModelSpecifier}\`.`;
+			return `A ChatGPT login is waiting for approval until ${slackDate(status.expires)}. Until then Coworker uses \`${openCodeGoModelSpecifier}\` by default.`;
 		case 'disconnected':
-			return `ChatGPT is not connected; Coworker uses \`${openCodeGoModelSpecifier}\`. A Codex admin can run \`/aiyappa openai connect\`.`;
+			return `ChatGPT is not connected; Coworker uses \`${openCodeGoModelSpecifier}\` by default. A Codex admin can run \`/aiyappa openai connect\`.`;
 		default: {
 			const _exhaustive: never = status;
 
 			return _exhaustive;
 		}
 	}
+}
+
+function modelsText(chatgptConnected: boolean): string {
+	const lines = Object.entries(modelAliases).map(([alias, model]) => {
+		const unavailable = model.provider === 'chatgpt' && !chatgptConnected ? ' (unavailable)' : '';
+
+		return `• \`${alias}\` — \`${modelSpecifier(model)}\`${unavailable}`;
+	});
+
+	const fallback = chatgptConnected
+		? `Without \`model:\`, Coworker uses \`${openAICodexModelSpecifier}\`.`
+		: `ChatGPT is not connected, so ChatGPT models are unavailable. Without \`model:\`, Coworker uses \`${openCodeGoModelSpecifier}\`.`;
+
+	return [
+		'Start a thread with `model:&lt;name&gt;` and `think:low|medium|high` anywhere in the mention:',
+		...lines,
+		fallback,
+	].join('\n');
 }
 
 function connectText(result: CodexConnectResult): string {
@@ -139,7 +174,7 @@ function connectText(result: CodexConnectResult): string {
 }
 
 function disconnectText(result: CodexDisconnectResult): string {
-	const route = `Coworker uses \`${openCodeGoModelSpecifier}\`.`;
+	const route = `Coworker uses \`${openCodeGoModelSpecifier}\` by default.`;
 
 	switch (result.revocation) {
 		case 'revoked':

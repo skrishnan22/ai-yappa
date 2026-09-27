@@ -79,8 +79,12 @@ A durable record that a remote tool operation may have run but its completion an
 _Avoid_: Tool failure, timeout, retryable error
 
 **Model Route**:
-The deployment-configured provider and model used by Flue for an Agent Conversation. V1 uses the ChatGPT subscription (`openai-codex`) when the Codex Credential is usable and OpenCode Go otherwise. It exposes no per-user model selection.
-_Avoid_: Model picker, automatic model routing
+The provider and model used by Flue for an Agent Conversation. By default it is the ChatGPT subscription (`openai-codex`) when the Codex Credential is usable and OpenCode Go otherwise; a Model Choice overrides it.
+_Avoid_: Automatic model routing
+
+**Model Choice**:
+The model and thinking level the invoker picks for an Agent Conversation with `model:` and `think:` in the first mention, from the deployment's alias allowlist. Recorded once at creation; later mentions cannot change it.
+_Avoid_: Model switching, per-user default
 
 **Codex Credential**:
 The deployment's single ChatGPT subscription login (OAuth access and refresh token) that the ChatGPT Model Route bills against. One `CodexAuth` Durable Object owns it; only access tokens leave that object.

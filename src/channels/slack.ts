@@ -7,7 +7,7 @@ import { isAllowedInvoker, repoForChannel } from '../config.ts';
 import type { CodexAuthControl } from '../integrations/codex-auth/codex-auth.ts';
 import { errorMessage } from '../json.ts';
 import { emitSemanticEvent } from '../observability.ts';
-import { decideAdmit, mentionsAuthorizedBot } from './admit.ts';
+import { decideAdmit, decideInvocation, mentionsAuthorizedBot } from './admit.ts';
 import type { SlackSignal } from './admit.ts';
 import { handleSlashCommand } from './slash-command.ts';
 import { getSlackClient } from './slack-reply.ts';
@@ -181,6 +181,27 @@ async function admitThread({
 
 			return;
 		case 'dispatch': {
+			const modelRoute = await modelRouteForDispatch(codexAuth);
+			const invocation = decideInvocation({ signalType, text, modelRoute });
+
+			if (invocation.kind !== 'proceed') {
+				emitSemanticEvent({
+					event_name: 'slack_admission',
+					outcome: 'refused',
+					conversation_id: id,
+					slack_event_id: eventId,
+					signal_type: signalType,
+					decision: invocation.kind,
+				});
+				await getSlackClient(env.SLACK_BOT_TOKEN).chat.postMessage({
+					channel: thread.channelId,
+					thread_ts: thread.threadTs,
+					text: invocation.reply,
+				});
+
+				return;
+			}
+
 			let threadContext: string | undefined;
 
 			try {
@@ -191,7 +212,6 @@ async function admitThread({
 
 			type SignalAttributes = { eventId: string; modelRoute: ModelRoute; threadContext?: string };
 
-			const modelRoute = await modelRouteForDispatch(codexAuth);
 			const attributes: SignalAttributes = { eventId, modelRoute };
 
 			if (threadContext !== undefined) attributes.threadContext = threadContext;
@@ -206,11 +226,13 @@ async function admitThread({
 						startedBy: userId,
 						startedAt: new Date().toISOString(),
 						repo: decision.repo,
+						// Flue records this only when the dispatch creates the conversation.
+						modelChoice: invocation.modelChoice,
 					},
 					message: {
 						kind: 'signal',
 						type: signalType,
-						body: text,
+						body: invocation.body,
 						attributes,
 					},
 				});
