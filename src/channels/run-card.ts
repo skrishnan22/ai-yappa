@@ -403,7 +403,7 @@ function withModelRoute(state: RunCardState, handle: CardHandle): RunCardState {
 		...state,
 		model: handle.model ?? state.model,
 		thinkingLevel: handle.thinkingLevel ?? state.thinkingLevel,
-		modelIsDefault: handle.model === undefined ? state.modelIsDefault : handle.modelIsDefault,
+		modelIsDefault: handle.model ? handle.modelIsDefault : state.modelIsDefault,
 	};
 }
 

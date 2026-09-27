@@ -42,7 +42,7 @@ export async function handleSlashCommand(
 	if (payload.command !== SLASH_COMMAND) return reply(`Unknown command ${payload.command}.`);
 	const [provider, action, ...extra] = payload.text.trim().split(/\s+/);
 
-	if (provider === 'models' && action === undefined) {
+	if (provider === 'models' && !action) {
 		if (!isCodexAdmin(payload.user_id) && !isAllowedInvoker(payload.user_id)) {
 			return reply('You are not on the invoker allowlist for this deployment.');
 		}

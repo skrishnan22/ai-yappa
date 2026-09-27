@@ -32,6 +32,10 @@ Implementation source of truth: `SLACK_AGENT_SPEC.md`. Milestone scope: `SLACK_A
 - `npx flue docs search <query>` — search the Flue docs from the terminal (then `flue docs read <path>`).
 - `npx flue add` — list blueprints for adding channels, sandboxes, and databases.
 
+## Conventions
+
+- Check optional values by truthiness (`if (x)`, `if (!x)`, `x ? a : b`), not `x !== undefined`, when no falsy value is meaningful: objects, arrays, functions, non-empty string-literal unions, and strings or numbers where `''` or `0` would also mean "absent". Keep `=== undefined` where `''`, `0`, or `false` is a real value, and in generics whose type parameter could be falsy. Oxlint cannot enforce this (the anti-slop rules have no type information), so review does.
+
 ## Domain docs
 
 Issues and specs as local Markdown: `docs/agents/issue-tracker.md`. Domain context: `docs/agents/domain.md`.

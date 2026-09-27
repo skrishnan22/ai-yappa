@@ -21,7 +21,7 @@ export function parseInvocationArgs(text: string): InvocationArgsResult {
 		const key = name.toLowerCase() === 'effort' ? 'effort' : 'model';
 		const first = values[key];
 
-		if (first !== undefined && first.toLowerCase() !== value.toLowerCase()) {
+		if (first && first.toLowerCase() !== value.toLowerCase()) {
 			return {
 				ok: false,
 				error: `Conflicting \`$${key}:\` values: \`${first}\` and \`${value}\`.`,

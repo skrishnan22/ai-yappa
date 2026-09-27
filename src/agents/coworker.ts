@@ -93,8 +93,8 @@ export function Coworker(props: { id: string }) {
 		state: runCard,
 		// Mid-submission renders (appended reminders) carry no route; the card
 		// keeps the route the submission latched.
-		model: route === undefined ? undefined : model.label,
-		thinkingLevel: route === undefined ? undefined : model.thinkingLevel,
+		model: route ? model.label : undefined,
+		thinkingLevel: route ? model.thinkingLevel : undefined,
 		modelIsDefault: model.isDefault,
 		persist: (state) => {
 			setRunCard(state);

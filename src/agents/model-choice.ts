@@ -57,7 +57,7 @@ function lookUp<T>(input: string, names: ReadonlyMap<string, T>, what: string): 
 
 	const [only, ...others] = candidates;
 
-	if (only === undefined) return { error: `Unknown ${what} \`${input}\`.` };
+	if (!only) return { error: `Unknown ${what} \`${input}\`.` };
 
 	if (others.length > 0) {
 		const listed = candidates.map(([name]) => `\`${name}\``).join(', ');
@@ -74,14 +74,14 @@ export type ModelChoiceResult = { ok: true; choice?: ModelChoice } | { ok: false
 export function resolveModelChoice(args: { model?: string; effort?: string }): ModelChoiceResult {
 	const choice: ModelChoice = {};
 
-	if (args.model !== undefined) {
+	if (args.model) {
 		const found = lookUp(args.model, MODELS, 'model');
 
 		if ('error' in found) return { ok: false, error: found.error };
 		choice.model = { provider: found.value.provider, modelId: found.value.modelId };
 	}
 
-	if (args.effort !== undefined) {
+	if (args.effort) {
 		const found = lookUp(args.effort, EFFORTS, 'effort');
 
 		if ('error' in found) return { ok: false, error: found.error };
@@ -124,7 +124,7 @@ export function coworkerModel(
 	const fallback = chatgptUsable ? openAICodexModelSpecifier : openCodeGoModelSpecifier;
 	const picked = choice?.model;
 
-	if (picked === undefined) {
+	if (!picked) {
 		return { specifier: fallback, label: fallback, thinkingLevel, isDefault: true };
 	}
 
