@@ -2,12 +2,12 @@ export type ChannelConfig = {
 	defaultRepo: string;
 };
 
-export const allowedInvokerIds = new Set<string>(['U0BGR738WMC']);
+export const allowedInvokerIds = new Set<string>(['U0BGR738WMC', 'U07DF242XU6']);
 
 // Slack users who may run `/aiyappa openai connect` and `disconnect`, which
 // bind the whole deployment to one ChatGPT subscription (ADR 0020). Separate
 // from the invoker allowlist; empty means nobody.
-export const codexAdminIds = new Set<string>(['U0BGR738WMC']);
+export const codexAdminIds = new Set<string>(['U0BGR738WMC', 'U07DF242XU6']);
 
 export const channelRepos = {
 	// C0123ABCD: { defaultRepo: 'https://github.com/org/pilot' },
