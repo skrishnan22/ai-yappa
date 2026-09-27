@@ -81,11 +81,11 @@ describe('decideAdmit', () => {
 });
 
 describe('decideInvocation', () => {
-	const mention = (text: string, modelRoute: 'chatgpt' | 'opencode-go' = 'chatgpt') =>
+	const mention = (text: string, chatgptConnected = true) =>
 		decideInvocation({
 			signalType: 'slack.app_mention',
 			text,
-			modelRoute,
+			chatgptConnected,
 			conversationExists: false,
 		});
 
@@ -112,11 +112,11 @@ describe('decideInvocation', () => {
 	});
 
 	test('refuses a ChatGPT model while ChatGPT is not usable', () => {
-		const refused = mention('<@U1> model:luna fix it', 'opencode-go');
+		const refused = mention('<@U1> model:luna fix it', false);
 
 		expect(refused.kind).toBe('model-unavailable');
 		expect(refused).toHaveProperty('reply', expect.stringContaining('`gpt-5.6-luna`'));
-		expect(mention('<@U1> model:kimi fix it', 'opencode-go').kind).toBe('proceed');
+		expect(mention('<@U1> model:kimi fix it', false).kind).toBe('proceed');
 	});
 
 	test('leaves unmentioned replies and later mentions as plain text', () => {
@@ -124,7 +124,7 @@ describe('decideInvocation', () => {
 			decideInvocation({
 				signalType: 'slack.message',
 				text: 'model:nonsense please',
-				modelRoute: 'opencode-go',
+				chatgptConnected: false,
 				conversationExists: true,
 			}),
 		).toEqual({ kind: 'proceed', body: 'model:nonsense please' });
@@ -134,7 +134,7 @@ describe('decideInvocation', () => {
 			decideInvocation({
 				signalType: 'slack.app_mention',
 				text: '<@U1> model:luna continue',
-				modelRoute: 'opencode-go',
+				chatgptConnected: false,
 				conversationExists: true,
 			}),
 		).toEqual({ kind: 'proceed', body: '<@U1> model:luna continue' });

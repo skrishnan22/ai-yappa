@@ -1,5 +1,4 @@
 import { type ModelChoice, modelHelpText, resolveModelChoice } from '../agents/model-choice.ts';
-import type { ModelRoute } from '../agents/model-route.ts';
 import { parseInvocationArgs } from './invocation-args.ts';
 
 export type SlackSignal = 'slack.app_mention' | 'slack.message';
@@ -47,7 +46,7 @@ export type InvocationDecision =
 export function decideInvocation(args: {
 	signalType: SlackSignal;
 	text: string;
-	modelRoute: ModelRoute;
+	chatgptConnected: boolean;
 	conversationExists: boolean;
 }): InvocationDecision {
 	if (args.signalType !== 'slack.app_mention' || args.conversationExists) {
@@ -64,7 +63,7 @@ export function decideInvocation(args: {
 
 	const { choice } = resolved;
 
-	if (choice?.model?.provider === 'chatgpt' && args.modelRoute !== 'chatgpt') {
+	if (choice?.model?.provider === 'chatgpt' && !args.chatgptConnected) {
 		return {
 			kind: 'model-unavailable',
 			reply: `ChatGPT isn't connected, so \`${choice.model.modelId}\` isn't available. Pick an OpenCode Go model, or ask a Codex admin to run \`/aiyappa openai connect\`.\n${modelHelpText()}`,

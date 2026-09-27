@@ -188,7 +188,13 @@ async function admitThread({
 			return;
 		case 'dispatch': {
 			const modelRoute = await modelRouteForDispatch(codexAuth);
-			const invocation = decideInvocation({ signalType, text, modelRoute, conversationExists });
+
+			const invocation = decideInvocation({
+				signalType,
+				text,
+				chatgptConnected: modelRoute === 'chatgpt',
+				conversationExists,
+			});
 
 			if (invocation.kind !== 'proceed') {
 				await refuse(invocation.kind, invocation.reply);

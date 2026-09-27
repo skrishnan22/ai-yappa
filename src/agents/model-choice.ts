@@ -2,7 +2,6 @@ import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-code
 import levenshtein from 'damerau-levenshtein';
 import * as v from 'valibot';
 import { modelAliases } from '../config.ts';
-import type { ModelRoute } from './model-route.ts';
 import { openAICodexModelSpecifier } from './openai-codex-route.ts';
 import {
 	OPENCODE_GO_PREFERRED_ID,
@@ -10,36 +9,19 @@ import {
 	openCodeGoModels,
 } from './opencode-go-catalog.ts';
 
-export type ModelAlias = keyof typeof modelAliases;
+const THINKING_LEVELS = ['low', 'medium', 'high'] as const;
 
-function isModelAlias(name: string): name is ModelAlias {
-	return Object.hasOwn(modelAliases, name);
-}
-
-const MODEL_ALIAS_NAMES = Object.keys(modelAliases).filter(isModelAlias);
-
-const ALIAS_BY_MODEL_ID = new Map(
-	MODEL_ALIAS_NAMES.map((alias) => [modelAliases[alias].modelId, alias] as const),
-);
-
-const thinkingLevels = ['low', 'medium', 'high'] as const;
-
-export type ThinkingLevel = (typeof thinkingLevels)[number];
-
-const DEFAULT_THINKING_LEVEL: ThinkingLevel = 'medium';
-
-// Shorthands prefix matching does not already cover (`lo`, `med`, `hi` do).
-const THINKING_SHORTHANDS = new Map<string, ThinkingLevel>([['mid', 'medium']]);
+type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 /**
- * Model Choice recorded in `initialData` at thread start. Holds only what the
- * user gave; a missing model keeps the deployment default route.
+ * What `initialData` records at thread start: only what the user gave, plus
+ * the words they typed when a typo was corrected (shown on the run card).
  */
 export const modelChoiceSchema = v.object({
 	model: v.optional(
 		v.object({ provider: v.picklist(['chatgpt', 'opencode-go']), modelId: v.string() }),
 	),
-	thinkingLevel: v.optional(v.picklist(thinkingLevels)),
+	thinkingLevel: v.optional(v.picklist(THINKING_LEVELS)),
 	correctedFrom: v.optional(
 		v.object({ model: v.optional(v.string()), think: v.optional(v.string()) }),
 	),
@@ -47,177 +29,150 @@ export const modelChoiceSchema = v.object({
 
 export type ModelChoice = v.InferOutput<typeof modelChoiceSchema>;
 
-export type Resolution<T extends string> =
-	| { kind: 'match'; value: T; corrected: boolean }
-	| { kind: 'unknown' }
-	| { kind: 'ambiguous'; candidates: T[] };
+type Model = NonNullable<ModelChoice['model']>;
+
+/**
+ * The words one setting accepts. `names` match loosely (prefix, typo);
+ * `exact` spellings, such as full model ids, match only as written.
+ */
+type Vocabulary<T> = {
+	what: string;
+	names: ReadonlyMap<string, T>;
+	exact: ReadonlyMap<string, T>;
+};
+
+const MODELS: Vocabulary<Model> = {
+	what: 'model',
+	names: new Map(Object.entries(modelAliases)),
+	exact: new Map(Object.values(modelAliases).map((model) => [model.modelId, model])),
+};
+
+const THINKING: Vocabulary<ThinkingLevel> = {
+	what: 'thinking level',
+	names: new Map(THINKING_LEVELS.map((level) => [level, level])),
+	exact: new Map([['mid', 'medium']]),
+};
 
 /** Typos allowed for a name: one edit up to four letters, two beyond. */
-export function distanceLimit(name: string): number {
+export function typoLimit(name: string): number {
 	return name.length <= 4 ? 1 : 2;
 }
 
-export function resolveModelAlias(input: string): Resolution<ModelAlias> {
-	return resolveName(input, MODEL_ALIAS_NAMES, ALIAS_BY_MODEL_ID);
-}
+type LookUp<T> = { value: T; corrected: boolean } | { error: string };
 
-export function resolveThinkingLevel(input: string): Resolution<ThinkingLevel> {
-	return resolveName(input, thinkingLevels, THINKING_SHORTHANDS);
-}
+/**
+ * Case-insensitive, in order: an exact name or spelling, then the names the
+ * input starts, then names within `typoLimit` edits. Only a typo match counts
+ * as a correction. More than one candidate is an error, never a guess.
+ */
+function lookUp<T>(input: string, vocabulary: Vocabulary<T>): LookUp<T> {
+	const typed = input.toLowerCase();
+	const exact = vocabulary.names.get(typed) ?? vocabulary.exact.get(typed);
 
-// Exact name, then exact synonym, then unique prefix; only the last step,
-// edit distance, counts as a correction the run card shows.
-function resolveName<T extends string>(
-	input: string,
-	names: readonly T[],
-	synonyms: ReadonlyMap<string, T>,
-): Resolution<T> {
-	const wanted = input.toLowerCase();
-	const exact = names.find((name) => name === wanted) ?? synonyms.get(wanted);
+	if (exact !== undefined) return { value: exact, corrected: false };
 
-	if (exact !== undefined) return { kind: 'match', value: exact, corrected: false };
+	const entries = [...vocabulary.names];
+	const byPrefix = entries.filter(([name]) => name.startsWith(typed));
+	const corrected = byPrefix.length === 0;
 
-	const prefixed = names.filter((name) => name.startsWith(wanted));
+	const candidates = corrected
+		? entries.filter(([name]) => levenshtein(typed, name).steps <= typoLimit(name))
+		: byPrefix;
 
-	if (prefixed.length > 0) return single(prefixed, false);
+	const [only, ...others] = candidates;
 
-	const near = names.filter((name) => levenshtein(wanted, name).steps <= distanceLimit(name));
+	if (only === undefined) return { error: `Unknown ${vocabulary.what} \`${input}\`.` };
 
-	return near.length === 0 ? { kind: 'unknown' } : single(near, true);
-}
+	if (others.length > 0) {
+		const names = candidates.map(([name]) => code(name)).join(', ');
 
-function single<T extends string>(candidates: T[], corrected: boolean): Resolution<T> {
-	const [only] = candidates;
+		return { error: `\`${input}\` could be any of ${names}.` };
+	}
 
-	if (candidates.length === 1 && only !== undefined)
-		return { kind: 'match', value: only, corrected };
-
-	return { kind: 'ambiguous', candidates };
+	return { value: only[1], corrected };
 }
 
 export type ModelChoiceResult = { ok: true; choice?: ModelChoice } | { ok: false; error: string };
 
-/** Resolves raw `model:` / `think:` values into the choice `initialData` records. */
+/** Turns raw `model:` / `think:` values into the choice `initialData` records. */
 export function resolveModelChoice(args: { model?: string; think?: string }): ModelChoiceResult {
 	const choice: ModelChoice = {};
-	const correctedFrom: NonNullable<ModelChoice['correctedFrom']> = {};
 
 	if (args.model !== undefined) {
-		const resolved = resolveModelAlias(args.model);
+		const found = lookUp(args.model, MODELS);
 
-		if (resolved.kind !== 'match')
-			return { ok: false, error: failure('model', args.model, resolved) };
-		const { provider, modelId } = modelAliases[resolved.value];
+		if ('error' in found) return { ok: false, error: found.error };
+		choice.model = { provider: found.value.provider, modelId: found.value.modelId };
 
-		choice.model = { provider, modelId };
-
-		if (resolved.corrected) correctedFrom.model = args.model;
+		if (found.corrected) choice.correctedFrom = { model: args.model };
 	}
 
 	if (args.think !== undefined) {
-		const resolved = resolveThinkingLevel(args.think);
+		const found = lookUp(args.think, THINKING);
 
-		if (resolved.kind !== 'match') {
-			return { ok: false, error: failure('thinking level', args.think, resolved) };
-		}
+		if ('error' in found) return { ok: false, error: found.error };
+		choice.thinkingLevel = found.value;
 
-		choice.thinkingLevel = resolved.value;
-
-		if (resolved.corrected) correctedFrom.think = args.think;
+		if (found.corrected) choice.correctedFrom = { ...choice.correctedFrom, think: args.think };
 	}
-
-	if (Object.keys(correctedFrom).length > 0) choice.correctedFrom = correctedFrom;
 
 	return { ok: true, choice: Object.keys(choice).length > 0 ? choice : undefined };
 }
 
-function failure(
-	what: string,
-	input: string,
-	resolved: Exclude<Resolution<string>, { kind: 'match' }>,
-): string {
-	if (resolved.kind === 'unknown') return `Unknown ${what} \`${input}\`.`;
-
-	return `\`${input}\` could be any of ${resolved.candidates.map((name) => `\`${name}\``).join(', ')}.`;
-}
+// Specifiers the registered providers can serve. A thread's recorded choice
+// outlives the deploy that recorded it, and pi upgrades can drop models.
+const SERVABLE = new Set([
+	...openaiCodexProvider()
+		.getModels()
+		.map((model) => `openai-codex/${model.id}`),
+	...openCodeGoModels.map((model) => `opencode-go/${model.id}`),
+]);
 
 export type CoworkerModel = {
+	/** For `useModel`. */
 	specifier: string;
 	thinkingLevel: ThinkingLevel;
-	/** Run card text for the model, with any fallback or correction. */
+	/** For the run card: the model, plus any fallback or typo correction. */
 	label: string;
 	thinkingLabel: string;
-	/** No model was picked; the deployment default route applies. */
+	/** No model was picked, so the card hints at `model:`. */
 	isDefault: boolean;
 };
 
-// Model ids the registered providers can serve. A thread's recorded choice
-// outlives the deploy that recorded it, and pi upgrades can drop models.
-const CATALOG_MODEL_IDS = {
-	chatgpt: new Set(
-		openaiCodexProvider()
-			.getModels()
-			.map((model) => model.id),
-	),
-	'opencode-go': new Set(openCodeGoModels.map((model) => model.id)),
-};
-
 /**
- * The model a submission runs on. A choice falls back to the default route,
- * named on the run card, when ChatGPT is not usable for this event (`route`)
- * or the catalog no longer has the model, so a thread in progress keeps working.
+ * No choice: the deployment default, ChatGPT while it is usable, else
+ * OpenCode Go. A choice runs as picked, unless it is a ChatGPT model and
+ * ChatGPT is not usable now, or the catalog no longer has it; then the
+ * default runs and the card says why, so a thread in progress keeps working.
  */
 export function coworkerModel(
 	choice: ModelChoice | undefined,
-	route: ModelRoute | undefined,
+	chatgptUsable: boolean,
 ): CoworkerModel {
-	const thinkingLevel = choice?.thinkingLevel ?? DEFAULT_THINKING_LEVEL;
-	const thinkingLabel = withCorrection(thinkingLevel, choice?.correctedFrom?.think);
-
-	const defaultSpecifier =
-		route === 'chatgpt' ? openAICodexModelSpecifier : openCodeGoModelSpecifier;
-
+	const thinkingLevel = choice?.thinkingLevel ?? 'medium';
+	const thinkingLabel = withTypo(thinkingLevel, choice?.correctedFrom?.think);
+	const fallback = chatgptUsable ? openAICodexModelSpecifier : openCodeGoModelSpecifier;
 	const picked = choice?.model;
 
 	if (picked === undefined) {
-		return {
-			specifier: defaultSpecifier,
-			thinkingLevel,
-			label: defaultSpecifier,
-			thinkingLabel,
-			isDefault: true,
-		};
-	}
-
-	if (!inCatalog(picked) || (picked.provider === 'chatgpt' && route !== 'chatgpt')) {
-		return {
-			specifier: defaultSpecifier,
-			thinkingLevel,
-			label: `${picked.modelId} unavailable → ${defaultSpecifier}`,
-			thinkingLabel,
-			isDefault: false,
-		};
+		return { specifier: fallback, label: fallback, thinkingLevel, thinkingLabel, isDefault: true };
 	}
 
 	const specifier = modelSpecifier(picked);
+	const runnable = SERVABLE.has(specifier) && (picked.provider !== 'chatgpt' || chatgptUsable);
 
 	return {
-		specifier,
+		specifier: runnable ? specifier : fallback,
+		label: runnable
+			? withTypo(specifier, choice?.correctedFrom?.model)
+			: `${picked.modelId} unavailable → ${fallback}`,
 		thinkingLevel,
-		label: withCorrection(specifier, choice?.correctedFrom?.model),
 		thinkingLabel,
 		isDefault: false,
 	};
 }
 
-function inCatalog(model: NonNullable<ModelChoice['model']>): boolean {
-	return (
-		model.modelId === OPENCODE_GO_PREFERRED_ID ||
-		CATALOG_MODEL_IDS[model.provider].has(model.modelId)
-	);
-}
-
-export function modelSpecifier(model: NonNullable<ModelChoice['model']>): string {
+export function modelSpecifier(model: Model): string {
 	if (model.provider === 'chatgpt') return `openai-codex/${model.modelId}`;
 
 	// The preferred DeepSeek id may have resolved to the bundled fallback.
@@ -226,20 +181,24 @@ export function modelSpecifier(model: NonNullable<ModelChoice['model']>): string
 	return `opencode-go/${model.modelId}`;
 }
 
-function withCorrection(value: string, from: string | undefined): string {
-	return from === undefined ? value : `${value} (from "${from}")`;
+function withTypo(value: string, typed: string | undefined): string {
+	return typed === undefined ? value : `${value} (from "${typed}")`;
 }
 
 /** Slack mrkdwn shared by argument errors and the ChatGPT refusal. */
 export function modelHelpText(): string {
-	const byProvider = (provider: 'chatgpt' | 'opencode-go') =>
+	const aliases = (provider: Model['provider']) =>
 		Object.entries(modelAliases)
 			.filter(([, model]) => model.provider === provider)
-			.map(([alias]) => `\`${alias}\``)
+			.map(([alias]) => code(alias))
 			.join(' · ');
 
 	return [
-		`Pick a model with \`model:&lt;name&gt;\` and effort with \`think:${thinkingLevels.join('|')}\`.`,
-		`ChatGPT: ${byProvider('chatgpt')} — OpenCode Go: ${byProvider('opencode-go')}`,
+		`Pick a model with \`model:&lt;name&gt;\` and effort with \`think:${THINKING_LEVELS.join('|')}\`.`,
+		`ChatGPT: ${aliases('chatgpt')} — OpenCode Go: ${aliases('opencode-go')}`,
 	].join('\n');
+}
+
+function code(text: string): string {
+	return `\`${text}\``;
 }

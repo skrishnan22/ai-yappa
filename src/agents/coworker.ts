@@ -65,7 +65,7 @@ export function Coworker(props: { id: string }) {
 	// A choice recorded by an older deploy that no longer validates falls back
 	// to the default route instead of breaking the thread.
 	const choice = v.is(modelChoiceSchema, data.modelChoice) ? data.modelChoice : undefined;
-	const model = coworkerModel(choice, route);
+	const model = coworkerModel(choice, route === 'chatgpt');
 
 	useModel(model.specifier, { thinkingLevel: model.thinkingLevel });
 

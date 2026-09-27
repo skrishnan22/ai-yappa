@@ -4,37 +4,36 @@ export type InvocationArgsResult =
 	| { ok: true; args: InvocationArgs }
 	| { ok: false; error: string };
 
-type ArgKey = 'model' | 'think';
+type Arg = { key: 'model' | 'think'; value: string };
 
-type Arg = { key: ArgKey; value: string };
-
-// Code spans, code blocks, and quoted lines (Slack sends `>` as `&gt;`).
-// Pasted logs and config live there, so nothing inside is an argument. The
-// capture group makes `split` keep these parts at odd indexes.
-const VERBATIM = /(```[\s\S]*?```|`[^`\n]*`|^(?:>|&gt;).*$)/m;
-
-// A whole word like `model:luna`, `think:high,` or `model:gpt-5.6-luna.`.
-// Anything else in the word (`config.model:x`, `model:luna/v2`) makes it prose.
-const ARG_WORD = /^(?<key>model|think):(?<value>[\w-]+(?:\.[\w-]+)*)(?<punctuation>[,.;!?)\]]*)$/i;
-
-// A word with the spaces before it, so an argument can leave with its space.
-const WORD = /[ \t]*(\S+)/g;
+const TRAILING_PUNCTUATION = ',.;!?)]';
 
 /**
- * Inline `model:` and `think:` arguments from a Slack mention. Values are
- * raw; `resolveModelChoice` decides what they mean. The returned body, with
- * the arguments removed, is what the model reads.
+ * Reads `model:<value>` and `think:<value>` from a Slack mention and removes
+ * them from the text the model reads. Values are raw; `resolveModelChoice`
+ * decides what they mean.
+ *
+ * An argument is a whole word. Words inside code (`...`, ``` blocks) and
+ * quoted lines are left alone, because pasted logs and config live there.
  */
 export function parseInvocationArgs(text: string): InvocationArgsResult {
 	const found: Arg[] = [];
+	const lines: string[] = [];
+	let inCodeBlock = false;
 
-	const body = text
-		.split(VERBATIM)
-		.map((part, index) => (index % 2 === 1 ? part : takeArgs(part, found)))
-		.join('')
-		.trim();
+	for (const line of text.split('\n')) {
+		const hasFence = line.includes('```');
 
-	const values: Partial<Record<ArgKey, string>> = {};
+		if (inCodeBlock || hasFence || isQuote(line)) {
+			lines.push(line);
+		} else {
+			lines.push(takeArgsOutsideInlineCode(line, found));
+		}
+
+		if (hasFence && countFences(line) % 2 === 1) inCodeBlock = !inCodeBlock;
+	}
+
+	const values: Partial<Record<Arg['key'], string>> = {};
 
 	for (const { key, value } of found) {
 		const first = values[key];
@@ -46,21 +45,65 @@ export function parseInvocationArgs(text: string): InvocationArgsResult {
 		}
 	}
 
-	return { ok: true, args: { ...values, body } };
+	return { ok: true, args: { ...values, body: lines.join('\n').trim() } };
 }
 
-// Removes argument words from prose and collects them. Trailing punctuation
-// stays, so `use model:kimi, then` becomes `use, then`.
+// Slack sends `>` as `&gt;`.
+function isQuote(line: string): boolean {
+	return line.startsWith('>') || line.startsWith('&gt;');
+}
+
+function countFences(line: string): number {
+	return line.split('```').length - 1;
+}
+
+// Splitting on backticks puts inline code at the odd positions.
+function takeArgsOutsideInlineCode(line: string, found: Arg[]): string {
+	return line
+		.split('`')
+		.map((part, index) => (index % 2 === 1 ? part : takeArgs(part, found)))
+		.join('`');
+}
+
+// Drops argument words and collects them. Trailing punctuation moves onto
+// the previous word, so `use model:kimi, then` becomes `use, then`.
 function takeArgs(prose: string, found: Arg[]): string {
-	return prose.replace(WORD, (word: string, token: string) => {
-		const groups = ARG_WORD.exec(token)?.groups;
+	const kept: string[] = [];
 
-		if (groups?.key === undefined || groups.value === undefined) return word;
-		found.push({
-			key: groups.key.toLowerCase() === 'think' ? 'think' : 'model',
-			value: groups.value,
-		});
+	for (const word of prose.split(' ')) {
+		const { bare, punctuation } = splitTrailingPunctuation(word);
+		const arg = readArg(bare);
 
-		return groups.punctuation ?? '';
-	});
+		if (arg === undefined) {
+			kept.push(word);
+		} else {
+			found.push(arg);
+
+			if (punctuation !== '') kept.push(`${kept.pop() ?? ''}${punctuation}`);
+		}
+	}
+
+	return kept.join(' ');
+}
+
+function splitTrailingPunctuation(word: string) {
+	let end = word.length;
+
+	while (end > 0 && TRAILING_PUNCTUATION.includes(word.charAt(end - 1))) end--;
+
+	return { bare: word.slice(0, end), punctuation: word.slice(end) };
+}
+
+// `model:luna` → { key: 'model', value: 'luna' }. Anything else in the word,
+// like `config.model:x` or `model:luna/v2`, makes it ordinary text.
+function readArg(word: string): Arg | undefined {
+	const colon = word.indexOf(':');
+	const key = word.slice(0, colon).toLowerCase();
+	const value = word.slice(colon + 1);
+
+	if (colon === -1 || (key !== 'model' && key !== 'think')) return undefined;
+
+	if (!/^[\w.-]+$/.test(value)) return undefined;
+
+	return { key, value };
 }

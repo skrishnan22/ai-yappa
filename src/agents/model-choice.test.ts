@@ -3,69 +3,60 @@ import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-code
 import { opencodeGoProvider } from '@earendil-works/pi-ai/providers/opencode-go';
 import { describe, expect, test } from 'vitest';
 import { modelAliases } from '../config.ts';
-import {
-	coworkerModel,
-	distanceLimit,
-	modelHelpText,
-	resolveModelAlias,
-	resolveModelChoice,
-	resolveThinkingLevel,
-} from './model-choice.ts';
+import { coworkerModel, modelHelpText, resolveModelChoice, typoLimit } from './model-choice.ts';
 import { openAICodexModelSpecifier } from './openai-codex-route.ts';
 import { openCodeGoModelSpecifier } from './opencode-go-catalog.ts';
 
-describe('resolveModelAlias', () => {
+const pickModel = (typed: string) => resolveModelChoice({ model: typed });
+
+const pickThinking = (typed: string) => resolveModelChoice({ think: typed });
+
+const luna = { provider: 'chatgpt', modelId: 'gpt-5.6-luna' } as const;
+
+describe('matching model names', () => {
 	test('matches alias, model id, and unique prefix without calling it a correction', () => {
-		expect(resolveModelAlias('LUNA')).toEqual({ kind: 'match', value: 'luna', corrected: false });
-		expect(resolveModelAlias('gpt-5.6-luna')).toEqual({
-			kind: 'match',
-			value: 'luna',
-			corrected: false,
+		expect(pickModel('LUNA')).toEqual({ ok: true, choice: { model: luna } });
+		expect(pickModel('gpt-5.6-luna')).toEqual({ ok: true, choice: { model: luna } });
+		expect(pickModel('ki')).toEqual({
+			ok: true,
+			choice: { model: { provider: 'opencode-go', modelId: 'kimi-k3' } },
 		});
-		expect(resolveModelAlias('ki')).toEqual({ kind: 'match', value: 'kimi', corrected: false });
 	});
 
 	test('corrects a typo within the length-scaled edit limit', () => {
-		expect(resolveModelAlias('lnua')).toEqual({ kind: 'match', value: 'luna', corrected: true });
-		expect(resolveModelAlias('kmi')).toEqual({ kind: 'match', value: 'kimi', corrected: true });
-		expect(resolveModelAlias('deepsek')).toEqual({
-			kind: 'match',
-			value: 'deepseek',
-			corrected: true,
+		expect(pickModel('lnua')).toEqual({
+			ok: true,
+			choice: { model: luna, correctedFrom: { model: 'lnua' } },
 		});
-		expect(resolveModelAlias('deespeek')).toEqual({
-			kind: 'match',
-			value: 'deepseek',
-			corrected: true,
-		});
+
+		for (const typo of ['deepsek', 'deespeek']) {
+			expect(pickModel(typo)).toMatchObject({
+				ok: true,
+				choice: { model: { modelId: 'deepseek-v4.1-flash' }, correctedFrom: { model: typo } },
+			});
+		}
 	});
 
 	test('rejects names too far from any alias', () => {
-		expect(resolveModelAlias('gpt')).toEqual({ kind: 'unknown' });
-		expect(resolveModelAlias('gpt-4o')).toEqual({ kind: 'unknown' });
-		expect(resolveModelAlias('lunar-x')).toEqual({ kind: 'unknown' });
+		for (const typed of ['gpt', 'gpt-4o', 'lunar-x']) {
+			expect(pickModel(typed)).toEqual({ ok: false, error: `Unknown model \`${typed}\`.` });
+		}
 	});
 });
 
-describe('resolveThinkingLevel', () => {
+describe('matching thinking levels', () => {
 	test('matches levels, prefixes, shorthands, and typos', () => {
-		expect(resolveThinkingLevel('High')).toEqual({
-			kind: 'match',
-			value: 'high',
-			corrected: false,
+		expect(pickThinking('High')).toEqual({ ok: true, choice: { thinkingLevel: 'high' } });
+		expect(pickThinking('med')).toEqual({ ok: true, choice: { thinkingLevel: 'medium' } });
+		expect(pickThinking('mid')).toEqual({ ok: true, choice: { thinkingLevel: 'medium' } });
+		expect(pickThinking('hgih')).toEqual({
+			ok: true,
+			choice: { thinkingLevel: 'high', correctedFrom: { think: 'hgih' } },
 		});
-		expect(resolveThinkingLevel('med')).toEqual({
-			kind: 'match',
-			value: 'medium',
-			corrected: false,
+		expect(pickThinking('maximum')).toEqual({
+			ok: false,
+			error: 'Unknown thinking level `maximum`.',
 		});
-		expect(resolveThinkingLevel('mid')).toEqual({
-			kind: 'match',
-			value: 'medium',
-			corrected: false,
-		});
-		expect(resolveThinkingLevel('hgih')).toEqual({ kind: 'match', value: 'high', corrected: true });
-		expect(resolveThinkingLevel('maximum')).toEqual({ kind: 'unknown' });
 	});
 });
 
@@ -99,10 +90,8 @@ describe('resolveModelChoice', () => {
 });
 
 describe('coworkerModel', () => {
-	const luna = { provider: 'chatgpt', modelId: 'gpt-5.6-luna' } as const;
-
 	test('uses a ChatGPT choice while ChatGPT is usable', () => {
-		expect(coworkerModel({ model: luna, thinkingLevel: 'high' }, 'chatgpt')).toEqual({
+		expect(coworkerModel({ model: luna, thinkingLevel: 'high' }, true)).toEqual({
 			specifier: 'openai-codex/gpt-5.6-luna',
 			thinkingLevel: 'high',
 			label: 'openai-codex/gpt-5.6-luna',
@@ -112,7 +101,7 @@ describe('coworkerModel', () => {
 	});
 
 	test('falls back to the OpenCode Go default when ChatGPT is not usable', () => {
-		expect(coworkerModel({ model: luna, thinkingLevel: 'high' }, 'opencode-go')).toEqual({
+		expect(coworkerModel({ model: luna, thinkingLevel: 'high' }, false)).toEqual({
 			specifier: openCodeGoModelSpecifier,
 			thinkingLevel: 'high',
 			label: `gpt-5.6-luna unavailable → ${openCodeGoModelSpecifier}`,
@@ -124,46 +113,43 @@ describe('coworkerModel', () => {
 	test('uses an OpenCode Go choice regardless of ChatGPT', () => {
 		const kimi = { model: { provider: 'opencode-go', modelId: 'kimi-k3' } } as const;
 
-		expect(coworkerModel(kimi, 'chatgpt').specifier).toBe('opencode-go/kimi-k3');
-		expect(coworkerModel(kimi, 'opencode-go').specifier).toBe('opencode-go/kimi-k3');
+		expect(coworkerModel(kimi, true).specifier).toBe('opencode-go/kimi-k3');
+		expect(coworkerModel(kimi, false).specifier).toBe('opencode-go/kimi-k3');
 		expect(
-			coworkerModel(
-				{ model: { provider: 'opencode-go', modelId: 'deepseek-v4.1-flash' } },
-				'chatgpt',
-			).specifier,
+			coworkerModel({ model: { provider: 'opencode-go', modelId: 'deepseek-v4.1-flash' } }, true)
+				.specifier,
 		).toBe(openCodeGoModelSpecifier);
 	});
 
 	test('falls back to the default route when the catalog no longer has the model', () => {
 		const dropped = { model: { provider: 'opencode-go', modelId: 'kimi-k0' } } as const;
 
-		expect(coworkerModel(dropped, 'chatgpt')).toMatchObject({
+		expect(coworkerModel(dropped, true)).toMatchObject({
 			specifier: openAICodexModelSpecifier,
 			label: `kimi-k0 unavailable → ${openAICodexModelSpecifier}`,
 			isDefault: false,
 		});
-		expect(coworkerModel(dropped, 'opencode-go').specifier).toBe(openCodeGoModelSpecifier);
+		expect(coworkerModel(dropped, false).specifier).toBe(openCodeGoModelSpecifier);
 	});
 
 	test('keeps the deployment default without a model choice', () => {
-		expect(coworkerModel(undefined, 'chatgpt')).toMatchObject({
+		expect(coworkerModel(undefined, true)).toMatchObject({
 			specifier: openAICodexModelSpecifier,
 			thinkingLevel: 'medium',
 			isDefault: true,
 		});
-		expect(coworkerModel({ thinkingLevel: 'low' }, 'opencode-go')).toMatchObject({
+		expect(coworkerModel({ thinkingLevel: 'low' }, false)).toMatchObject({
 			specifier: openCodeGoModelSpecifier,
 			thinkingLevel: 'low',
 			isDefault: true,
 		});
-		expect(coworkerModel(undefined, undefined).specifier).toBe(openCodeGoModelSpecifier);
 	});
 
 	test('labels corrected input', () => {
 		expect(
 			coworkerModel(
 				{ model: luna, thinkingLevel: 'high', correctedFrom: { model: 'lnua', think: 'hgih' } },
-				'chatgpt',
+				true,
 			),
 		).toMatchObject({
 			label: 'openai-codex/gpt-5.6-luna (from "lnua")',
@@ -190,7 +176,7 @@ describe('model alias table', () => {
 		for (const a of aliases) {
 			for (const b of aliases) {
 				if (a === b) continue;
-				expect(levenshtein(a, b).steps).toBeGreaterThan(distanceLimit(b));
+				expect(levenshtein(a, b).steps).toBeGreaterThan(typoLimit(b));
 			}
 		}
 	});
