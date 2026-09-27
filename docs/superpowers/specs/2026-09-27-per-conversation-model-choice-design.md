@@ -26,7 +26,7 @@ Inline arguments anywhere in the mention text:
 - The same key twice with different values is an error. Repeating the same value is allowed.
 - Matched arguments are removed from the text before it reaches the model; whitespace is collapsed.
 - Either argument may appear without the other. A missing model uses the default model; a missing `think:` uses `medium`.
-- Arguments are parsed only on `app_mention`. Unmentioned thread replies are plain text.
+- Arguments are parsed only on the `app_mention` that creates the conversation. Replies and later mentions are plain text.
 
 ### Alias table
 
@@ -66,7 +66,7 @@ When a value was corrected by rule 4, the run card shows the correction (shortha
    > ChatGPT isn't connected, so `luna` isn't available. Pick one of `deepseek` · `kimi` · `glm`, or ask an admin to run `/aiyappa openai connect`.
 3. Otherwise dispatch with `initialData.modelChoice = { model?: { provider, modelId }, thinkingLevel?, correctedFrom? }`, carrying only what the user gave. No `model:` and no `think:` means `initialData.modelChoice` is absent.
 
-Flue records `initialData` once, at instance creation. A `model:` in a later mention in an existing thread therefore does not change the conversation's model. The run card always shows the model actually in use. (A later mention's arguments are still parsed and stripped, and still produce the help reply if invalid.)
+Flue records `initialData` once, at instance creation. A `model:` in a later mention in an existing thread therefore does not change the conversation's model. The run card always shows the model actually in use. Only the mention that creates the conversation is parsed; later mentions are plain text, so a disconnected ChatGPT cannot refuse them and they fall back as below.
 
 ### Every event
 
@@ -127,7 +127,8 @@ Pure. `parseInvocationArgs(text): { ok: true; model?: string; think?: string; bo
 
 - `CodexAuth` status failure at dispatch: `modelRouteForDispatch` already treats it as disconnected. A ChatGPT choice gets `model-unavailable`; an OpenCode Go choice dispatches normally.
 - `initialData.modelChoice` failing validation at render (e.g. schema drift across deploys): ignore it and use the "none" row of the render table.
-- An alias whose model id disappears from pi's catalog is caught in CI by the alias-table test, not at runtime.
+- An alias whose model id disappears from pi's catalog is caught in CI by the alias-table test. A thread that recorded such a model falls back to the default route at render, with `<id> unavailable → <default>` on the run card.
+- Slack `http_timeout` retries skip posting refusals (the first delivery posts them); dispatch already dedupes on event id.
 
 ## Testing
 

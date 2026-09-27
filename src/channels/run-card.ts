@@ -18,7 +18,7 @@ export type RunCardState = {
 	model?: string;
 	/** Reasoning effort from useModel options, stamped from bindRunCard. */
 	thinkingLevel?: string;
-	/** No model was picked at thread start; the card hints at `model:`. */
+	/** No model was picked at thread start; the card hints at `model:` for new threads. */
 	modelIsDefault?: boolean;
 };
 
@@ -346,7 +346,7 @@ function isSubmissionBoundary(event: RoutedCardEvent): event is SubmissionBounda
 	return event.type === 'submission_queued' || event.type === 'submission_running';
 }
 
-const MODEL_HINT = 'pick with `model:&lt;name&gt; think:&lt;level&gt;`';
+const MODEL_HINT = 'new threads can pick `model:&lt;name&gt; think:&lt;level&gt;`';
 
 export type CardRender = {
 	text: string;

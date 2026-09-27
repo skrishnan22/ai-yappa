@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { decideAdmit, decideInvocation, mentionsAuthorizedBot } from './admit.ts';
+import { decideAdmit, decideInvocation, isTimeoutRetry, mentionsAuthorizedBot } from './admit.ts';
 
 describe('decideAdmit', () => {
 	test('refuses a user who is not allowlisted', () => {
@@ -82,7 +82,12 @@ describe('decideAdmit', () => {
 
 describe('decideInvocation', () => {
 	const mention = (text: string, modelRoute: 'chatgpt' | 'opencode-go' = 'chatgpt') =>
-		decideInvocation({ signalType: 'slack.app_mention', text, modelRoute });
+		decideInvocation({
+			signalType: 'slack.app_mention',
+			text,
+			modelRoute,
+			conversationExists: false,
+		});
 
 	test('records the model choice and strips the arguments', () => {
 		expect(mention('<@U1> model:luna think:high fix it')).toEqual({
@@ -114,14 +119,33 @@ describe('decideInvocation', () => {
 		expect(mention('<@U1> model:kimi fix it', 'opencode-go').kind).toBe('proceed');
 	});
 
-	test('leaves unmentioned replies as plain text', () => {
+	test('leaves unmentioned replies and later mentions as plain text', () => {
 		expect(
 			decideInvocation({
 				signalType: 'slack.message',
 				text: 'model:nonsense please',
 				modelRoute: 'opencode-go',
+				conversationExists: true,
 			}),
 		).toEqual({ kind: 'proceed', body: 'model:nonsense please' });
+		// The thread's choice is recorded; a disconnected ChatGPT must not block
+		// the mid-thread fallback.
+		expect(
+			decideInvocation({
+				signalType: 'slack.app_mention',
+				text: '<@U1> model:luna continue',
+				modelRoute: 'opencode-go',
+				conversationExists: true,
+			}),
+		).toEqual({ kind: 'proceed', body: '<@U1> model:luna continue' });
+	});
+});
+
+describe('isTimeoutRetry', () => {
+	test('matches only Slack timeout redeliveries', () => {
+		expect(isTimeoutRetry(new Headers({ 'x-slack-retry-reason': 'http_timeout' }))).toBe(true);
+		expect(isTimeoutRetry(new Headers({ 'x-slack-retry-reason': 'http_error' }))).toBe(false);
+		expect(isTimeoutRetry(new Headers())).toBe(false);
 	});
 });
 

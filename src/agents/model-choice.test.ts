@@ -134,6 +134,17 @@ describe('coworkerModel', () => {
 		).toBe(openCodeGoModelSpecifier);
 	});
 
+	test('falls back to the default route when the catalog no longer has the model', () => {
+		const dropped = { model: { provider: 'opencode-go', modelId: 'kimi-k0' } } as const;
+
+		expect(coworkerModel(dropped, 'chatgpt')).toMatchObject({
+			specifier: openAICodexModelSpecifier,
+			label: `kimi-k0 unavailable → ${openAICodexModelSpecifier}`,
+			isDefault: false,
+		});
+		expect(coworkerModel(dropped, 'opencode-go').specifier).toBe(openCodeGoModelSpecifier);
+	});
+
 	test('keeps the deployment default without a model choice', () => {
 		expect(coworkerModel(undefined, 'chatgpt')).toMatchObject({
 			specifier: openAICodexModelSpecifier,

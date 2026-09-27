@@ -1,9 +1,14 @@
+import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 import levenshtein from 'damerau-levenshtein';
 import * as v from 'valibot';
 import { modelAliases } from '../config.ts';
 import type { ModelRoute } from './model-route.ts';
 import { openAICodexModelSpecifier } from './openai-codex-route.ts';
-import { OPENCODE_GO_PREFERRED_ID, openCodeGoModelSpecifier } from './opencode-go-catalog.ts';
+import {
+	OPENCODE_GO_PREFERRED_ID,
+	openCodeGoModelSpecifier,
+	openCodeGoModels,
+} from './opencode-go-catalog.ts';
 
 export type ModelAlias = keyof typeof modelAliases;
 
@@ -146,10 +151,21 @@ export type CoworkerModel = {
 	isDefault: boolean;
 };
 
+// Model ids the registered providers can serve. A thread's recorded choice
+// outlives the deploy that recorded it, and pi upgrades can drop models.
+const CATALOG_MODEL_IDS = {
+	chatgpt: new Set(
+		openaiCodexProvider()
+			.getModels()
+			.map((model) => model.id),
+	),
+	'opencode-go': new Set(openCodeGoModels.map((model) => model.id)),
+};
+
 /**
- * The model a submission runs on. A ChatGPT choice needs ChatGPT usable for
- * this event (`route`); otherwise it falls back to the OpenCode Go default so
- * a thread already in progress keeps working.
+ * The model a submission runs on. A choice falls back to the default route,
+ * named on the run card, when ChatGPT is not usable for this event (`route`)
+ * or the catalog no longer has the model, so a thread in progress keeps working.
  */
 export function coworkerModel(
 	choice: ModelChoice | undefined,
@@ -157,19 +173,27 @@ export function coworkerModel(
 ): CoworkerModel {
 	const thinkingLevel = choice?.thinkingLevel ?? DEFAULT_THINKING_LEVEL;
 	const thinkingLabel = withCorrection(thinkingLevel, choice?.correctedFrom?.think);
+
+	const defaultSpecifier =
+		route === 'chatgpt' ? openAICodexModelSpecifier : openCodeGoModelSpecifier;
+
 	const picked = choice?.model;
 
 	if (picked === undefined) {
-		const specifier = route === 'chatgpt' ? openAICodexModelSpecifier : openCodeGoModelSpecifier;
-
-		return { specifier, thinkingLevel, label: specifier, thinkingLabel, isDefault: true };
+		return {
+			specifier: defaultSpecifier,
+			thinkingLevel,
+			label: defaultSpecifier,
+			thinkingLabel,
+			isDefault: true,
+		};
 	}
 
-	if (picked.provider === 'chatgpt' && route !== 'chatgpt') {
+	if (!inCatalog(picked) || (picked.provider === 'chatgpt' && route !== 'chatgpt')) {
 		return {
-			specifier: openCodeGoModelSpecifier,
+			specifier: defaultSpecifier,
 			thinkingLevel,
-			label: `${picked.modelId} unavailable → ${openCodeGoModelSpecifier}`,
+			label: `${picked.modelId} unavailable → ${defaultSpecifier}`,
 			thinkingLabel,
 			isDefault: false,
 		};
@@ -184,6 +208,13 @@ export function coworkerModel(
 		thinkingLabel,
 		isDefault: false,
 	};
+}
+
+function inCatalog(model: NonNullable<ModelChoice['model']>): boolean {
+	return (
+		model.modelId === OPENCODE_GO_PREFERRED_ID ||
+		CATALOG_MODEL_IDS[model.provider].has(model.modelId)
+	);
 }
 
 export function modelSpecifier(model: NonNullable<ModelChoice['model']>): string {

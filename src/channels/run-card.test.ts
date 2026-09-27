@@ -265,7 +265,7 @@ describe('renderRunCard', () => {
 	});
 
 	test('hints at model: only when the thread uses the default model', () => {
-		const hint = 'pick with `model:&lt;name&gt; think:&lt;level&gt;`';
+		const hint = 'new threads can pick `model:&lt;name&gt; think:&lt;level&gt;`';
 		const route = { startedAt: 0, model: 'opencode-go/kimi-k3', thinkingLevel: 'high' };
 
 		expect(
