@@ -43,6 +43,7 @@ export function repoForChannel(channelId: string): string | undefined {
 	switch (channelId) {
 		case 'C0BTJCJD69K':
 		case 'C0C172RQLSD':
+		case 'C0C4QH6RVNJ':
 			return channelRepos[channelId].defaultRepo;
 		default:
 			return undefined;
