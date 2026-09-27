@@ -4,4 +4,4 @@ if ! command -v gitleaks >/dev/null 2>&1; then
 	echo "https://github.com/gitleaks/gitleaks#installing"
 	exit 1
 fi
-npm run gitleaks:staged
+pnpm run gitleaks:staged

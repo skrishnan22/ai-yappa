@@ -21,15 +21,15 @@ Implementation source of truth: `SLACK_AGENT_SPEC.md`. Milestone scope: `SLACK_A
 
 ## Commands
 
-- `npx flue run src/agents/coworker.ts --message "Hi"` — run the agent locally, no server. Slack dispatch will not fire.
-- `npm run dev` — start the dev server. Slack Events URL is `/channels/slack/events`.
-- `npm run deploy` — build and deploy the Worker.
-- `npm run check:types` — typecheck.
-- `npm test` — Vitest (`src/**/*.test.ts`).
-- `npm run lint` / `npm run fmt:check` — Oxlint and Oxfmt (also CI).
-- `npm run gitleaks` — local secret scan (`gitleaks` on PATH; `brew install gitleaks`). Pre-commit runs staged lint/format plus `gitleaks:staged`. CI uses `ghcr.io/gitleaks/gitleaks:v8.30.1`.
-- `npx flue docs search <query>` — search the Flue docs from the terminal (then `flue docs read <path>`).
-- `npx flue add` — list blueprints for adding channels, sandboxes, and databases.
+- `pnpm flue run src/agents/coworker.ts --message "Hi"` — run the agent locally, no server. Slack dispatch will not fire.
+- `pnpm run dev` — start the dev server. Slack Events URL is `/channels/slack/events`.
+- `pnpm run deploy` — build and deploy the Worker.
+- `pnpm run check:types` — typecheck.
+- `pnpm test` — Vitest (`src/**/*.test.ts`).
+- `pnpm run lint` / `pnpm run fmt:check` — Oxlint and Oxfmt (also CI).
+- `pnpm run gitleaks` — local secret scan (`gitleaks` on PATH; `brew install gitleaks`). Pre-commit runs staged lint/format plus `gitleaks:staged`. CI uses `ghcr.io/gitleaks/gitleaks:v8.30.1`.
+- `pnpm flue docs search <query>` — search the Flue docs from the terminal (then `flue docs read <path>`).
+- `pnpm flue add` — list blueprints for adding channels, sandboxes, and databases.
 
 ## Domain docs
 
