@@ -50,7 +50,7 @@ export async function handleSlashCommand(
 				return reply('You are not on the invoker allowlist for this deployment.');
 			}
 
-			return runReply('status', async () => {
+			return replyOrError('status', async () => {
 				const status = await codexAuth().status();
 
 				return statusText(status);
@@ -63,7 +63,7 @@ export async function handleSlashCommand(
 
 			if (!responseUrl.success) return reply('Slack sent no usable response URL.');
 
-			return runReply('connect', async () => {
+			return replyOrError('connect', async () => {
 				const result = await codexAuth().startLogin(responseUrl.output);
 
 				return connectText(result);
@@ -73,7 +73,7 @@ export async function handleSlashCommand(
 		case 'disconnect': {
 			if (!isCodexAdmin(payload.user_id)) return reply(adminOnly('disconnect'));
 
-			return runReply('disconnect', async () => {
+			return replyOrError('disconnect', async () => {
 				const result = await codexAuth().disconnect();
 
 				return disconnectText(result);
@@ -96,7 +96,10 @@ function adminOnly(action: string): string {
 	return `Only Codex admins can ${action} the ChatGPT subscription. Ask for your Slack user id to be added to \`codexAdminIds\` in \`src/config.ts\`.`;
 }
 
-async function runReply(action: string, run: () => Promise<string>): Promise<SlashCommandReply> {
+async function replyOrError(
+	action: string,
+	run: () => Promise<string>,
+): Promise<SlashCommandReply> {
 	try {
 		const text = await run();
 

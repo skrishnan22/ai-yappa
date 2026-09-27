@@ -119,7 +119,7 @@ export class CodexAuthService {
 	async status(): Promise<CodexAuthStatus> {
 		const credential = await this.#store.read(CODEX_PROVIDER_ID);
 
-		if (credential !== undefined) {
+		if (credential) {
 			const { expires, accountId } = v.parse(storedCodexCredentialSchema, credential);
 
 			return { state: 'connected', expires, accountId };
@@ -127,7 +127,7 @@ export class CodexAuthService {
 
 		const login = this.#pendingLogin.get();
 
-		if (login !== undefined) return { state: 'pending_login', expires: login.deadline };
+		if (login) return { state: 'pending_login', expires: login.deadline };
 
 		return { state: 'disconnected' };
 	}
@@ -184,7 +184,7 @@ export class CodexAuthService {
 	async pollLogin(): Promise<void> {
 		const ended = await this.#withLoginLock(() => this.#pollOnce());
 
-		if (ended !== undefined) await editSlackResponse(ended.responseUrl, ended.text);
+		if (ended) await editSlackResponse(ended.responseUrl, ended.text);
 	}
 
 	// Cancels a pending login, revokes the stored refresh token, and deletes
@@ -194,7 +194,7 @@ export class CodexAuthService {
 		const { login, revocation } = await this.#withLoginLock(async () => {
 			const pending = this.#pendingLogin.get();
 
-			if (pending !== undefined) {
+			if (pending) {
 				this.#pendingLogin.clear();
 				await this.#alarm.clear();
 			}
@@ -213,7 +213,7 @@ export class CodexAuthService {
 			return { login: pending, revocation: revoked };
 		});
 
-		if (login !== undefined) {
+		if (login) {
 			await editSlackResponse(login.responseUrl, 'ChatGPT login cancelled by a disconnect.');
 		}
 
@@ -224,7 +224,7 @@ export class CodexAuthService {
 	async #pollOnce(): Promise<LoginEnd | undefined> {
 		const login = this.#pendingLogin.get();
 
-		if (login === undefined) return undefined;
+		if (!login) return undefined;
 
 		if (Date.now() >= login.deadline) {
 			return this.#endLogin(

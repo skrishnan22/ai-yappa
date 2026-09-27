@@ -23,26 +23,55 @@ const pendingLoginRowSchema = v.object({
 	responseUrl: v.string(),
 });
 
+const CREATE_PENDING_LOGIN_TABLE = `
+	CREATE TABLE IF NOT EXISTS pending_login (
+		slot INTEGER PRIMARY KEY CHECK (slot = 0),
+		device_auth_id TEXT NOT NULL,
+		user_code TEXT NOT NULL,
+		interval_ms INTEGER NOT NULL,
+		deadline INTEGER NOT NULL,
+		response_url TEXT NOT NULL
+	)
+`;
+
+const SELECT_PENDING_LOGIN = `
+	SELECT
+		device_auth_id AS deviceAuthId,
+		user_code AS userCode,
+		interval_ms AS intervalMs,
+		deadline,
+		response_url AS responseUrl
+	FROM pending_login
+	WHERE slot = 0
+`;
+
+const UPSERT_PENDING_LOGIN = `
+	INSERT INTO pending_login (slot, device_auth_id, user_code, interval_ms, deadline, response_url)
+	VALUES (0, ?, ?, ?, ?, ?)
+	ON CONFLICT (slot) DO UPDATE SET
+		device_auth_id = excluded.device_auth_id,
+		user_code = excluded.user_code,
+		interval_ms = excluded.interval_ms,
+		deadline = excluded.deadline,
+		response_url = excluded.response_url
+`;
+
+const DELETE_PENDING_LOGIN = 'DELETE FROM pending_login';
+
 // `PendingLoginRecord` over the Durable Object's SQLite storage, so polling
 // resumes after the object restarts.
 export function sqlPendingLogin(sql: SqlStorage): PendingLoginRecord {
-	sql.exec(
-		'CREATE TABLE IF NOT EXISTS pending_login (slot INTEGER PRIMARY KEY CHECK (slot = 0), device_auth_id TEXT NOT NULL, user_code TEXT NOT NULL, interval_ms INTEGER NOT NULL, deadline INTEGER NOT NULL, response_url TEXT NOT NULL)',
-	);
+	sql.exec(CREATE_PENDING_LOGIN_TABLE);
 
 	return {
 		get() {
-			const [row] = sql
-				.exec(
-					'SELECT device_auth_id AS deviceAuthId, user_code AS userCode, interval_ms AS intervalMs, deadline, response_url AS responseUrl FROM pending_login WHERE slot = 0',
-				)
-				.toArray();
+			const [row] = sql.exec(SELECT_PENDING_LOGIN).toArray();
 
 			return row === undefined ? undefined : v.parse(pendingLoginRowSchema, row);
 		},
 		set(login) {
 			sql.exec(
-				'INSERT INTO pending_login (slot, device_auth_id, user_code, interval_ms, deadline, response_url) VALUES (0, ?, ?, ?, ?, ?) ON CONFLICT (slot) DO UPDATE SET device_auth_id = excluded.device_auth_id, user_code = excluded.user_code, interval_ms = excluded.interval_ms, deadline = excluded.deadline, response_url = excluded.response_url',
+				UPSERT_PENDING_LOGIN,
 				login.deviceAuthId,
 				login.userCode,
 				login.intervalMs,
@@ -51,7 +80,7 @@ export function sqlPendingLogin(sql: SqlStorage): PendingLoginRecord {
 			);
 		},
 		clear() {
-			sql.exec('DELETE FROM pending_login');
+			sql.exec(DELETE_PENDING_LOGIN);
 		},
 	};
 }
