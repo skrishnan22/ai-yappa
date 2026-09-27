@@ -73,9 +73,9 @@ export async function requestDeviceCode(): Promise<DeviceCode> {
 	}
 
 	if (!response.ok) {
-		const message = await failureMessage('Device code request', response);
+		const text = await response.text();
 
-		throw new Error(message);
+		throw new Error(failureText('Device code request', response.status, text));
 	}
 
 	const body = await response.json();
@@ -175,9 +175,9 @@ export async function exchangeDeviceCode(
 	});
 
 	if (!response.ok) {
-		const message = await failureMessage('Token exchange', response);
+		const text = await response.text();
 
-		throw new Error(message);
+		throw new Error(failureText('Token exchange', response.status, text));
 	}
 
 	const body = await response.json();
@@ -225,12 +225,6 @@ export async function revokeRefreshToken(refresh: string): Promise<boolean> {
 	} catch {
 		return false;
 	}
-}
-
-async function failureMessage(action: string, response: Response): Promise<string> {
-	const text = await response.text();
-
-	return failureText(action, response.status, text);
 }
 
 // OpenAI error bodies carry codes and descriptions, never tokens.
