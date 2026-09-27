@@ -129,7 +129,8 @@ async function workspaceFingerprintHolds(
 		if (!(await io.exists(lockPath))) return false;
 
 		if (marker.lockfileSha256) {
-			const digest = await sha256Hex(await io.readFile(lockPath));
+			const lock = await io.readFile(lockPath);
+			const digest = await sha256Hex(lock);
 
 			if (digest !== marker.lockfileSha256) return false;
 		}
@@ -220,7 +221,9 @@ export async function hydrateWorkspace(
 	let lockfileSha256: string | null = null;
 
 	if (lockfile) {
-		lockfileSha256 = await sha256Hex(await io.readFile(`${WORKSPACE_REPO_DIR}/${lockfile}`));
+		const lock = await io.readFile(`${WORKSPACE_REPO_DIR}/${lockfile}`);
+
+		lockfileSha256 = await sha256Hex(lock);
 	}
 
 	await io.writeFile(

@@ -2,10 +2,14 @@
 import { dispatch, getAgentInstance } from '@flue/runtime';
 import { createSlackChannel, type SlackThreadRef } from '@flue/slack';
 import { Coworker } from '../agents/coworker.ts';
+import { type ModelRoute, modelRouteFor } from '../agents/model-route.ts';
 import { isAllowedInvoker, repoForChannel } from '../config.ts';
+import type { CodexAuthControl } from '../integrations/codex-auth/codex-auth.ts';
+import { errorMessage } from '../json.ts';
 import { emitSemanticEvent } from '../observability.ts';
 import { decideAdmit, mentionsAuthorizedBot } from './admit.ts';
 import type { SlackSignal } from './admit.ts';
+import { handleSlashCommand } from './slash-command.ts';
 import { getSlackClient } from './slack-reply.ts';
 import { loadThreadContext } from './thread-context.ts';
 import type { ServerEnv } from '../env.ts';
@@ -17,9 +21,27 @@ async function conversationExistsInThread(signalType: SlackSignal, id: string): 
 	return existing !== null;
 }
 
-export function createSlackChannelForEnv(env: ServerEnv) {
+// Falls back to OpenCode Go when `CodexAuth` cannot answer, so a broken
+// ChatGPT connection never blocks Slack.
+async function modelRouteForDispatch(codexAuth: () => CodexAuthControl): Promise<ModelRoute> {
+	try {
+		const status = await codexAuth().status();
+
+		return modelRouteFor(status);
+	} catch (error) {
+		console.warn(`[slack] CodexAuth status failed; routing to OpenCode Go: ${errorMessage(error)}`);
+
+		return 'opencode-go';
+	}
+}
+
+export function createSlackChannelForEnv(env: ServerEnv, codexAuth: () => CodexAuthControl) {
 	const channel = createSlackChannel({
 		signingSecret: env.SLACK_SIGNING_SECRET,
+
+		commands({ payload }) {
+			return handleSlashCommand(payload, codexAuth);
+		},
 
 		async events({ payload }) {
 			if (payload.type !== 'event_callback') return;
@@ -30,6 +52,7 @@ export function createSlackChannelForEnv(env: ServerEnv) {
 					await admitThread({
 						channel,
 						env,
+						codexAuth,
 						thread: {
 							teamId: payload.team_id,
 							channelId: event.channel,
@@ -57,6 +80,7 @@ export function createSlackChannelForEnv(env: ServerEnv) {
 					await admitThread({
 						channel,
 						env,
+						codexAuth,
 						thread: {
 							teamId: payload.team_id,
 							channelId: event.channel,
@@ -83,6 +107,7 @@ export function createSlackChannelForEnv(env: ServerEnv) {
 async function admitThread({
 	channel,
 	env,
+	codexAuth,
 	thread,
 	userId,
 	eventId,
@@ -91,6 +116,7 @@ async function admitThread({
 }: {
 	channel: ReturnType<typeof createSlackChannel>;
 	env: ServerEnv;
+	codexAuth: () => CodexAuthControl;
 	thread: SlackThreadRef;
 	userId: string | undefined;
 	eventId: string;
@@ -163,9 +189,10 @@ async function admitThread({
 				// Thread history is context for the agent, not a dispatch requirement.
 			}
 
-			type SignalAttributes = { eventId: string; threadContext?: string };
+			type SignalAttributes = { eventId: string; modelRoute: ModelRoute; threadContext?: string };
 
-			const attributes: SignalAttributes = { eventId };
+			const modelRoute = await modelRouteForDispatch(codexAuth);
+			const attributes: SignalAttributes = { eventId, modelRoute };
 
 			if (threadContext !== undefined) attributes.threadContext = threadContext;
 

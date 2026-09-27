@@ -93,7 +93,8 @@ describe('hydrateWorkspace', () => {
 		);
 		expect(io.commands).toContain(`${WORKSPACE_REPO_DIR} git config user.name 'ai-yappa[bot]'`);
 
-		const parsed = JSON.parse(await io.readFile(WORKSPACE_READY_PATH));
+		const ready = await io.readFile(WORKSPACE_READY_PATH);
+		const parsed = JSON.parse(ready);
 		expect(v.is(jsonValueSchema, parsed)).toBe(true);
 
 		const marker = v.parse(

@@ -51,22 +51,21 @@ export function githubHandlers(
 			const parsed = parseIssueParams(params);
 			const token = await reads.get(context.repo);
 
-			const json = await githubOk(
-				await port.request({
-					method: 'GET',
-					path: `/repos/${context.repo}/issues/${parsed.number}`,
-					token,
-				}),
-			);
+			const response = await port.request({
+				method: 'GET',
+				path: `/repos/${context.repo}/issues/${parsed.number}`,
+				token,
+			});
+
+			const json = await githubOk(response);
 
 			return mapIssue(json);
 		},
 		readRepoMetadata: async ({ context }) => {
 			const token = await reads.get(context.repo);
 
-			const json = await githubOk(
-				await port.request({ method: 'GET', path: `/repos/${context.repo}`, token }),
-			);
+			const response = await port.request({ method: 'GET', path: `/repos/${context.repo}`, token });
+			const json = await githubOk(response);
 
 			return mapRepo(json);
 		},
@@ -74,13 +73,13 @@ export function githubHandlers(
 			const parsed = parseRefParams(params);
 			const token = await reads.get(context.repo);
 
-			const json = await githubOk(
-				await port.request({
-					method: 'GET',
-					path: `/repos/${context.repo}/git/ref/${parsed.gitRef}`,
-					token,
-				}),
-			);
+			const response = await port.request({
+				method: 'GET',
+				path: `/repos/${context.repo}/git/ref/${parsed.gitRef}`,
+				token,
+			});
+
+			const json = await githubOk(response);
 
 			return mapRef(json);
 		},
@@ -88,14 +87,14 @@ export function githubHandlers(
 			const parsed = parseBranchParams(params);
 			const token = await writes.get(context.repo);
 
-			const json = await githubOk(
-				await port.request({
-					method: 'POST',
-					path: `/repos/${context.repo}/git/refs`,
-					token,
-					body: { ref: `refs/heads/${parsed.name}`, sha: parsed.fromSha },
-				}),
-			);
+			const response = await port.request({
+				method: 'POST',
+				path: `/repos/${context.repo}/git/refs`,
+				token,
+				body: { ref: `refs/heads/${parsed.name}`, sha: parsed.fromSha },
+			});
+
+			const json = await githubOk(response);
 
 			return mapRef(json);
 		},
@@ -103,19 +102,19 @@ export function githubHandlers(
 			const parsed = parsePullParams(params);
 			const token = await writes.get(context.repo);
 
-			const json = await githubOk(
-				await port.request({
-					method: 'POST',
-					path: `/repos/${context.repo}/pulls`,
-					token,
-					body: {
-						head: parsed.head,
-						base: parsed.base,
-						title: parsed.title,
-						body: parsed.body,
-					},
-				}),
-			);
+			const response = await port.request({
+				method: 'POST',
+				path: `/repos/${context.repo}/pulls`,
+				token,
+				body: {
+					head: parsed.head,
+					base: parsed.base,
+					title: parsed.title,
+					body: parsed.body,
+				},
+			});
+
+			const json = await githubOk(response);
 
 			return mapPull(json);
 		},

@@ -101,6 +101,14 @@
 			{
 				"selector": "ConditionalExpression Property[value.async=true]",
 				"message": "Don't put an async method inside a ternary; use if/else."
+			},
+			{
+				"selector": "CallExpression > AwaitExpression.arguments",
+				"message": "Don't nest await in a call's arguments; await into a variable first."
+			},
+			{
+				"selector": "NewExpression > AwaitExpression.arguments",
+				"message": "Don't nest await in a constructor's arguments; await into a variable first."
 			}
 		]
 	}
