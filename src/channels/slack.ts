@@ -12,10 +12,18 @@ import type { SlackSignal } from './admit.ts';
 import { handleSlashCommand } from './slash-command.ts';
 import { getSlackClient } from './slack-reply.ts';
 import { loadThreadContext } from './thread-context.ts';
+import { buildSignalAttributes } from './signal-attributes.ts';
 import type { ServerEnv } from '../env.ts';
 
-async function conversationExistsInThread(id: string): Promise<boolean> {
-	const existing = await getAgentInstance(Coworker, id);
+export type SlackRuntime = {
+	dispatch: typeof dispatch;
+	getAgentInstance: typeof getAgentInstance;
+};
+
+const defaultSlackRuntime: SlackRuntime = { dispatch, getAgentInstance };
+
+async function conversationExistsInThread(runtime: SlackRuntime, id: string): Promise<boolean> {
+	const existing = await runtime.getAgentInstance(Coworker, id);
 
 	return existing !== null;
 }
@@ -34,7 +42,11 @@ async function modelRouteForDispatch(codexAuth: () => CodexAuthControl): Promise
 	}
 }
 
-export function createSlackChannelForEnv(env: ServerEnv, codexAuth: () => CodexAuthControl) {
+export function createSlackChannelForEnv(
+	env: ServerEnv,
+	codexAuth: () => CodexAuthControl,
+	runtime: SlackRuntime = defaultSlackRuntime,
+) {
 	const channel = createSlackChannel({
 		signingSecret: env.SLACK_SIGNING_SECRET,
 
@@ -53,6 +65,7 @@ export function createSlackChannelForEnv(env: ServerEnv, codexAuth: () => CodexA
 						channel,
 						env,
 						codexAuth,
+						runtime,
 						thread: {
 							teamId: payload.team_id,
 							channelId: event.channel,
@@ -82,6 +95,7 @@ export function createSlackChannelForEnv(env: ServerEnv, codexAuth: () => CodexA
 						channel,
 						env,
 						codexAuth,
+						runtime,
 						thread: {
 							teamId: payload.team_id,
 							channelId: event.channel,
@@ -110,6 +124,7 @@ async function admitThread({
 	channel,
 	env,
 	codexAuth,
+	runtime,
 	thread,
 	userId,
 	eventId,
@@ -120,6 +135,7 @@ async function admitThread({
 	channel: ReturnType<typeof createSlackChannel>;
 	env: ServerEnv;
 	codexAuth: () => CodexAuthControl;
+	runtime: SlackRuntime;
 	thread: SlackThreadRef;
 	userId: string | undefined;
 	eventId: string;
@@ -133,7 +149,7 @@ async function admitThread({
 
 	// Mentions check too: only the mention that creates a conversation reads
 	// `$model:` / `$effort:`.
-	const conversationExists = await conversationExistsInThread(id);
+	const conversationExists = await conversationExistsInThread(runtime, id);
 
 	async function refuse(
 		kind: 'refuse-invoker' | 'no-repo' | 'bad-args' | 'model-unavailable',
@@ -210,14 +226,10 @@ async function admitThread({
 				// Thread history is context for the agent, not a dispatch requirement.
 			}
 
-			type SignalAttributes = { eventId: string; modelRoute: ModelRoute; threadContext?: string };
-
-			const attributes: SignalAttributes = { eventId, modelRoute };
-
-			if (threadContext !== undefined) attributes.threadContext = threadContext;
+			const attributes = { ...buildSignalAttributes(eventId, userId, threadContext), modelRoute };
 
 			try {
-				const receipt = await dispatch(Coworker, {
+				const receipt = await runtime.dispatch(Coworker, {
 					id,
 					idempotencyKey: eventId,
 					initialData: {

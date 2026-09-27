@@ -36,7 +36,7 @@ fi
 # https:// with no host is the account's assigned free domain, which is stable.
 if [ -z "$HOSTNAME" ]; then
 	echo "TUNNEL_HOSTNAME is unset. Binding the free assigned domain."
-	echo "Run npm run tunnel:setup afterward so Slack gets the exact URL."
+	echo "Run pnpm run tunnel:setup afterward so Slack gets the exact URL."
 	run_tunnel 'https://'
 	exit $?
 fi
