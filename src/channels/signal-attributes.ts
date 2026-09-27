@@ -9,9 +9,9 @@ export function buildSignalAttributes(
 ): SignalAttributes {
 	const attributes: SignalAttributes = { eventId };
 
-	if (userId !== undefined) attributes.userId = userId;
+	if (userId) attributes.userId = userId;
 
-	if (threadContext !== undefined) attributes.threadContext = threadContext;
+	if (threadContext) attributes.threadContext = threadContext;
 
 	return attributes;
 }
