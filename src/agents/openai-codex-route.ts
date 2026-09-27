@@ -2,7 +2,7 @@ import { createProvider, type Provider, type ProviderStreams } from '@earendil-w
 import { openAICodexResponsesApi } from '@earendil-works/pi-ai/api/openai-codex-responses.lazy';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 
-export const OPENAI_CODEX_MODEL_ID = 'gpt-5.6-sol';
+export const OPENAI_CODEX_MODEL_ID = 'gpt-5.6-luna';
 
 export const openAICodexModelSpecifier = `openai-codex/${OPENAI_CODEX_MODEL_ID}`;
 

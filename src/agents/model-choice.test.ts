@@ -106,8 +106,13 @@ describe('coworkerModel', () => {
 
 	test('keeps the deployment default without a model choice', () => {
 		expect(coworkerModel(undefined, true)).toMatchObject({
-			specifier: openAICodexModelSpecifier,
-			thinkingLevel: 'medium',
+			specifier: 'openai-codex/gpt-5.6-luna',
+			thinkingLevel: 'high',
+			isDefault: true,
+		});
+		expect(coworkerModel(undefined, false)).toMatchObject({
+			specifier: openCodeGoModelSpecifier,
+			thinkingLevel: 'high',
 			isDefault: true,
 		});
 		expect(coworkerModel({ thinkingLevel: 'low' }, false)).toMatchObject({

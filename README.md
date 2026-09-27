@@ -2,7 +2,7 @@
 
 Slack-native engineering coworker. Investigates a repo, makes changes, and opens PRs via native GitHub tools. Mounted MCP tools may exercise the authority of the deployment-scoped secrets you configure.
 
-Built as a Flue app on the Cloudflare target. Execution is Daytona container Sandboxes, not Cloudflare Sandbox. A stopped container retains its filesystem but loses RAM and running processes. The model is `openai-codex/gpt-5.6-sol` on a ChatGPT subscription once an admin connects one with `/aiyappa openai connect` ([ChatGPT subscription](#chatgpt-subscription), [ADR 0020](docs/adr/0020-chatgpt-subscription-model-route.md)). Otherwise it is OpenCode Go: `deepseek-v4.1-flash` if [models.dev](https://models.dev/providers/opencode-go/) lists it, otherwise bundled `deepseek-v4-flash`.
+Built as a Flue app on the Cloudflare target. Execution is Daytona container Sandboxes, not Cloudflare Sandbox. A stopped container retains its filesystem but loses RAM and running processes. The model is `openai-codex/gpt-5.6-luna` on a ChatGPT subscription once an admin connects one with `/aiyappa openai connect` ([ChatGPT subscription](#chatgpt-subscription), [ADR 0020](docs/adr/0020-chatgpt-subscription-model-route.md)). Otherwise it is OpenCode Go: `deepseek-v4.1-flash` if [models.dev](https://models.dev/providers/opencode-go/) lists it, otherwise bundled `deepseek-v4-flash`.
 
 ## Setup
 
@@ -88,7 +88,7 @@ The manifest registers the `/aiyappa` slash command with a placeholder host. Onc
 
 ## ChatGPT subscription
 
-Coworker runs on `openai-codex/gpt-5.6-sol` through a ChatGPT Plus/Pro subscription once a Codex admin connects one. Until then, and after a disconnect, it uses OpenCode Go. One `CodexAuth` Durable Object holds the deployment's single credential, encrypted under `CODEX_CREDENTIAL_KEY`, and refreshes it; only access tokens leave it ([ADR 0020](docs/adr/0020-chatgpt-subscription-model-route.md)).
+Coworker runs on `openai-codex/gpt-5.6-luna` through a ChatGPT Plus/Pro subscription once a Codex admin connects one. Until then, and after a disconnect, it uses OpenCode Go. One `CodexAuth` Durable Object holds the deployment's single credential, encrypted under `CODEX_CREDENTIAL_KEY`, and refreshes it; only access tokens leave it ([ADR 0020](docs/adr/0020-chatgpt-subscription-model-route.md)).
 
 - `/aiyappa openai connect` (admins): replies, visible only to you, with a code to enter at `https://auth.openai.com/codex/device` within 15 minutes. Whoever enters the code connects the whole deployment to their account, so do not share it. Sign in with a ChatGPT account dedicated to the bot; that account must enable "Device code authorization for Codex" in ChatGPT security settings, and on Team or Enterprise a workspace admin must allow it. The reply updates when the login finishes. Connect refuses while an account is connected; disconnect first to switch.
 - `/aiyappa openai status` (admins and invokers): the connected account id, the current access token's expiry, and the route Coworker uses. It never shows the code.

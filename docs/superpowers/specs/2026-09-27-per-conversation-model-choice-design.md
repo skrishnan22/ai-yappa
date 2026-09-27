@@ -24,7 +24,7 @@ Inline arguments anywhere in the mention text:
 - Only the mention's own text is parsed. Thread Context loaded at dispatch is never parsed.
 - The same key twice with different values is an error. Repeating the same value is allowed.
 - Matched arguments are removed, with the spaces before them, before the text reaches the model.
-- Either argument may appear without the other. A missing model uses the default model; a missing `$effort:` uses `medium`. Effort becomes Flue's `thinkingLevel`.
+- Either argument may appear without the other. A missing model uses the default model; a missing `$effort:` uses `high`. Effort becomes Flue's `thinkingLevel`.
 - Arguments are parsed only on the `app_mention` that creates the conversation. Replies and later mentions are plain text.
 
 ### Alias table
@@ -72,14 +72,14 @@ Unchanged: Slack ingress attaches `modelRoute` to each signal. It now means "Cha
 
 ### Render
 
-`Coworker` combines `initialData.modelChoice` with the delivered `modelRoute`. A missing thinking level is `medium`.
+`Coworker` combines `initialData.modelChoice` with the delivered `modelRoute`. A missing thinking level is `high`.
 
 | choice | ChatGPT usable | result |
 |---|---|---|
 | ChatGPT model | yes | the choice |
 | ChatGPT model | no | OpenCode Go default (`deepseek`) at the thread's thinking level; run card shows `luna unavailable → deepseek-v4.1-flash` |
 | OpenCode Go model | either | the choice |
-| none | yes | `sol` |
+| none | yes | `luna` |
 | none | no | `deepseek` |
 
 Renders with no route (appended reminders, `flue run`) keep the current behavior: the model latched for the submission is not re-stamped on the card.

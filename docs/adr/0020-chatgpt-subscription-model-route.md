@@ -20,7 +20,7 @@ pi's contract for this is an application-owned `CredentialStore` passed to `crea
 
 ## Decision
 
-1. **Provider.** Register a custom `openai-codex` provider from `src/agents/openai-codex-route.ts` with `setProvider()`, built from pi's catalog and Codex Responses API. Its `auth.apiKey.resolve()` returns only an access token. The wrapper forces `transport: 'sse'`, because workerd's `WebSocket` constructor takes no request headers and pi's default WebSocket attempt would fail on every fresh isolate. The default model is `openai-codex/gpt-5.6-sol` at the existing `medium` thinking level.
+1. **Provider.** Register a custom `openai-codex` provider from `src/agents/openai-codex-route.ts` with `setProvider()`, built from pi's catalog and Codex Responses API. Its `auth.apiKey.resolve()` returns only an access token. The wrapper forces `transport: 'sse'`, because workerd's `WebSocket` constructor takes no request headers and pi's default WebSocket attempt would fail on every fresh isolate. The default model is `openai-codex/gpt-5.6-luna` at the `high` thinking level.
 
 2. **Credential owner.** A single `CodexAuth` Durable Object (`getByName('default')`) holds a private pi `Models` instance created with `createModels({ credentials })`, with `openaiCodexProvider()` registered and `registerBunOAuthFlows()` called so pi's refresh code bundles into the Worker. Its store implements pi's `CredentialStore` on Durable Object SQLite storage. `modify` is serialized by a per-provider promise chain; because only one instance exists, that chain is the deployment-wide refresh lock. Coworker calls `accessToken()` over RPC. The refresh token never leaves the object.
 

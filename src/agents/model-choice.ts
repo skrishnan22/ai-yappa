@@ -120,7 +120,7 @@ export function coworkerModel(
 	choice: ModelChoice | undefined,
 	chatgptUsable: boolean,
 ): CoworkerModel {
-	const thinkingLevel = choice?.thinkingLevel ?? 'medium';
+	const thinkingLevel = choice?.thinkingLevel ?? 'high';
 	const fallback = chatgptUsable ? openAICodexModelSpecifier : openCodeGoModelSpecifier;
 	const picked = choice?.model;
 
