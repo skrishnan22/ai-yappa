@@ -105,7 +105,7 @@ function eventPayload({
 	};
 }
 
-describe('Slack admission signal attribution', () => {
+describe('Slack ingress', () => {
 	afterEach(() => {
 		allowedInvokerIds.delete(FOLLOW_UP_USER);
 		__setSlackClientFactoryForTests();
@@ -175,6 +175,55 @@ describe('Slack admission signal attribution', () => {
 		});
 		expect(dispatchRequests[1]?.message).toMatchObject({
 			attributes: { eventId: 'Ev-follow-up', userId: FOLLOW_UP_USER },
+		});
+	});
+
+	test('leaves model arguments untouched on a later app mention', async () => {
+		const dispatchRequests: Array<Parameters<SlackRuntime['dispatch']>[1]> = [];
+
+		const runtime: SlackRuntime = {
+			dispatch: async (_agent, request) => {
+				dispatchRequests.push(request);
+
+				return {
+					submissionId: 'submission',
+					acceptedAt: '2026-09-27T00:00:00.000Z',
+					uid: 'uid',
+				};
+			},
+			getAgentInstance: async () => ({ id: 'instance', uid: 'uid' }),
+		};
+
+		const slackClient: SlackBotClient = {
+			chat: {
+				postMessage: async () => ({ ok: true }),
+				update: async () => ({ ok: true }),
+			},
+			conversations: {
+				replies: async () => ({ ok: true, messages: [] }),
+			},
+		};
+
+		__setSlackClientFactoryForTests(() => slackClient);
+
+		const channel = createSlackChannelForEnv(env, codexAuth, runtime);
+
+		const response = await channel.route().fetch(
+			signedEventRequest(
+				eventPayload({
+					eventId: 'Ev-later-mention',
+					type: 'app_mention',
+					user: THREAD_STARTER,
+					text: '<@UBOT> $model:luna continue',
+					ts: THREAD_TS,
+				}),
+			),
+		);
+
+		expect(response.status).toBe(200);
+		expect(dispatchRequests).toHaveLength(1);
+		expect(dispatchRequests[0]?.message).toMatchObject({
+			body: '<@UBOT> $model:luna continue',
 		});
 	});
 });

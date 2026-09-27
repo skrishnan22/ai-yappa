@@ -66,13 +66,20 @@ afterEach(() => {
 });
 
 describe('/aiyappa openai', () => {
-	test('shows usage for anything but openai connect|status|disconnect', async () => {
+	test('shows usage for anything but openai connect|status|disconnect or models', async () => {
 		const service = new CodexAuthService(memoryStorage(), credentialKey);
 
-		for (const text of ['', 'openai', 'openai login', 'anthropic status', 'openai status now']) {
+		for (const text of [
+			'',
+			'openai',
+			'openai login',
+			'anthropic status',
+			'openai status now',
+			'models all',
+		]) {
 			await expect(handleSlashCommand(command(text, ADMIN), () => service)).resolves.toEqual({
 				response_type: 'ephemeral',
-				text: 'Usage: `/aiyappa openai connect|status|disconnect`',
+				text: 'Usage: `/aiyappa openai connect|status|disconnect` or `/aiyappa models`',
 			});
 		}
 	});
@@ -157,5 +164,46 @@ describe('/aiyappa openai', () => {
 		const after = await handleSlashCommand(command('openai status', ADMIN), () => service);
 
 		expect(after.text).toContain('not connected');
+	});
+});
+
+describe('/aiyappa models', () => {
+	test('lists aliases and marks ChatGPT ones unavailable while disconnected', async () => {
+		const service = new CodexAuthService(memoryStorage(), credentialKey);
+
+		const disconnected = await handleSlashCommand(command('models', ADMIN), () => service);
+
+		expect(disconnected.response_type).toBe('ephemeral');
+		expect(disconnected.text).toContain('`luna` — `openai-codex/gpt-5.6-luna` (unavailable)');
+		expect(disconnected.text).toContain('`kimi` — `opencode-go/kimi-k3`\n');
+
+		await service.seed({
+			access: 'access-1',
+			refresh: 'refresh-1',
+			expires: Date.now() + 60 * 60 * 1000,
+			accountId: 'account-1',
+		});
+
+		const connected = await handleSlashCommand(command('models', ADMIN), () => service);
+
+		expect(connected.text).toContain('`luna` — `openai-codex/gpt-5.6-luna`\n');
+	});
+
+	test('treats an unreachable CodexAuth as disconnected', async () => {
+		const service = new CodexAuthService(memoryStorage(), credentialKey);
+
+		vi.spyOn(service, 'status').mockRejectedValue(new Error('boom'));
+
+		const reply = await handleSlashCommand(command('models', ADMIN), () => service);
+
+		expect(reply.text).toContain('(unavailable)');
+	});
+
+	test('refuses users on neither list', async () => {
+		const reply = await handleSlashCommand(command('models', STRANGER), () => {
+			throw new Error('CodexAuth should not be asked');
+		});
+
+		expect(reply.text).toBe('You are not on the invoker allowlist for this deployment.');
 	});
 });

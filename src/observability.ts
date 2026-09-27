@@ -4,7 +4,14 @@ export type SlackAdmissionEvent = {
 	conversation_id: string;
 	slack_event_id: string;
 	signal_type: 'slack.app_mention' | 'slack.message';
-	decision: 'dispatch' | 'refuse-invoker' | 'no-repo' | 'drop-untracked' | 'admission-error';
+	decision:
+		| 'dispatch'
+		| 'refuse-invoker'
+		| 'no-repo'
+		| 'drop-untracked'
+		| 'bad-args'
+		| 'model-unavailable'
+		| 'admission-error';
 	submission_id?: string;
 	agent_uid?: string;
 };
