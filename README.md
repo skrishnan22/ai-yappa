@@ -9,7 +9,7 @@ Built as a Flue app on the Cloudflare target. Execution is Daytona container San
 Requires Node.js 22.22.1 or later (`lint-staged` 17) and [gitleaks](https://github.com/gitleaks/gitleaks#installing) 8 on PATH (`brew install gitleaks`).
 
 ```sh
-npm install
+pnpm install
 ```
 
 Fill `.env` (never commit it):
@@ -35,7 +35,7 @@ PARALLEL_API_KEY=
 
 `OPENCODE_API_KEY` stays required: OpenCode Go is the fallback whenever no ChatGPT subscription is connected.
 
-`CODEX_CREDENTIAL_KEY` is the AES-GCM key the `CodexAuth` Durable Object uses to encrypt the stored Codex Credential. Generate it with `openssl rand -base64 32`. Only the Worker reads it (`npm run dev` and deploys); `flue run` has no Durable Objects. Without it, `CodexAuth` refuses to store or read a credential. There is no key rotation: a changed or lost key makes the stored credential unreadable. An admin then runs `/aiyappa openai disconnect`, which deletes the unreadable credential without revoking it, and connects again.
+`CODEX_CREDENTIAL_KEY` is the AES-GCM key the `CodexAuth` Durable Object uses to encrypt the stored Codex Credential. Generate it with `openssl rand -base64 32`. Only the Worker reads it (`pnpm run dev` and deploys); `flue run` has no Durable Objects. Without it, `CodexAuth` refuses to store or read a credential. There is no key rotation: a changed or lost key makes the stored credential unreadable. An admin then runs `/aiyappa openai disconnect`, which deletes the unreadable credential without revoking it, and connects again.
 
 `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` are optional. If both are set, hydration configures that identity in the cloned repo (GitHub App bot: `{slug}[bot]` / `{id}+{slug}[bot]@users.noreply.github.com`). If neither is set, commits would otherwise be `root` — do not guess. If only one is set, boot fails.
 
@@ -50,7 +50,7 @@ GitHub tools require `GITHUB_APP_ID`, the RSA `.pem` GitHub downloads for `GITHU
 
 Ordinary GitHub operations use repository-scoped installation tokens that remain inside trusted Worker code. Checkpoint push creates a fresh token with exactly `contents:write`, injects it into one sandbox `git push` process, confirms the remote branch SHA, and immediately revokes it. The model never receives this token, but code in the same sandbox may observe or exercise it during that bounded window; this is not strict sandbox credential isolation.
 
-`npm run dev` runs under the Cloudflare Vite plugin, which reads Worker secrets from `.dev.vars`, not `.env`. Copy the same values there:
+`pnpm run dev` runs under the Cloudflare Vite plugin, which reads Worker secrets from `.dev.vars`, not `.env`. Copy the same values there:
 
 ```sh
 cp .env .dev.vars
@@ -65,7 +65,7 @@ Remote MCP servers are listed in `src/integrations/mcp-catalog.ts` and mounted o
 To add a server:
 
 1. Mint an API token scoped as tightly as you accept (prefer read-only for pilots).
-2. Put the value in `.env` (for `flue run`) and `.dev.vars` (for `npm run dev`). For production: `npx wrangler secret put THAT_TOKEN`.
+2. Put the value in `.env` (for `flue run`) and `.dev.vars` (for `pnpm run dev`). For production: `pnpm wrangler secret put THAT_TOKEN`.
 3. Append `{ name, url, authEnv: 'THAT_TOKEN', optional: true }` to `INTEGRATION_CATALOG`.
 4. Redeploy (or restart local). The next Coworker submission resolves the secret at render, connects, discovers tools, and mounts them as `mcp__<name>__<tool>`.
 
@@ -82,7 +82,7 @@ Do not pick Slack’s Bolt, AI assistant, or workflow templates. Those enable So
 3. Paste `slack-app-manifest.yaml`. Create.
 4. **Install to Workspace**. Copy **Signing Secret** (Basic Information) and **Bot User OAuth Token** (`xoxb-…`, OAuth & Permissions) into `.env` and `.dev.vars`.
 
-Event Subscriptions come after `npm run dev` plus a tunnel, because Slack must verify `https://<host>/channels/slack/events`. Then subscribe the bot to `app_mention`, `message.channels`, and `message.groups`. Reinstall if Slack asks.
+Event Subscriptions come after `pnpm run dev` plus a tunnel, because Slack must verify `https://<host>/channels/slack/events`. Then subscribe the bot to `app_mention`, `message.channels`, and `message.groups`. Reinstall if Slack asks.
 
 The manifest registers the `/aiyappa` slash command with a placeholder host. Once you have a host, set its Request URL (**Slash Commands**) to `https://<host>/channels/slack/commands`, or edit the manifest's `url` before pasting.
 
@@ -109,7 +109,7 @@ There is no fully offline loop.
 Needs OpenCode Go and Daytona credentials. Pass the same `initialData` Slack would:
 
 ```sh
-npx flue run src/agents/coworker.ts \
+pnpm flue run src/agents/coworker.ts \
   --id local-1 \
   --data '{"channelId":"C_LOCAL","threadTs":"1.0","startedAt":"2026-08-30T00:00:00.000Z","repo":"https://github.com/org/pilot"}' \
   --message "What does package.json name this workspace?"
@@ -129,27 +129,27 @@ One-time:
 2. Create a free account, copy the authtoken from [the ngrok dashboard](https://dashboard.ngrok.com/get-started/your-authtoken), and run `ngrok config add-authtoken <token>` locally. Do not put the token in git or in chat.
 
 ```sh
-npm run tunnel:setup
+pnpm run tunnel:setup
 ```
 
 Setup writes the assigned host into `TUNNEL_HOSTNAME`. Then:
 
-1. `npm run dev` (default `http://localhost:5173`).
-2. `npm run tunnel`.
+1. `pnpm run dev` (default `http://localhost:5173`).
+2. `pnpm run tunnel`.
 3. Slack Events URL, once: `https://<assigned-host>/channels/slack/events`. Subscribe to `app_mention` and thread `message` events. Scopes: `app_mentions:read`, `chat:write`, `commands`, channel history. Point the `/aiyappa` slash command at `https://<assigned-host>/channels/slack/commands`.
 4. Mention the bot in a mapped channel.
 
-Stop with `npm run tunnel:stop`. Free ngrok also shows a browser warning page. Slack's event POSTs skip that. If you open the URL in a browser, click through once.
+Stop with `pnpm run tunnel:stop`. Free ngrok also shows a browser warning page. Slack's event POSTs skip that. If you open the URL in a browser, click through once.
 
 A threaded reply that reflects work in the already-cloned repo (not clone/`ls` as the job) is the hydration slice. M3 adds a live run card in the thread (one Slack message per submission, edited in place, plus a short ping when the submission settles) and attaches thread history on wake. Seed images with repo+deps baked in wait for M4.
 
 ## Deploy
 
 ```sh
-npm run deploy
+pnpm run deploy
 ```
 
-Use a Cloudflare account that is not the Codevil account. `npx wrangler secret put OPENCODE_API_KEY` (and the Slack/Daytona/GitHub secrets). Set `CODEX_CREDENTIAL_KEY` with `npx wrangler secret put CODEX_CREDENTIAL_KEY`, using a fresh `openssl rand -base64 32` value rather than your local one. Optional catalog secrets such as `CLOUDFLARE_MCP_API_TOKEN`, `HONEYCOMB_MCP_API_TOKEN`, and `LANGFUSE_MCP_BASIC_AUTH` use the same command, as do optional web-search keys `EXA_API_KEY` and `PARALLEL_API_KEY`. If `CLOUDFLARE_API_TOKEN` is set in the shell (or `.env`) to an MCP-scoped token, unset it for Wrangler commands so the CLI can use `wrangler login` or a token with **Workers Scripts Write**. Do not put secrets in git.
+Use a Cloudflare account that is not the Codevil account. `pnpm wrangler secret put OPENCODE_API_KEY` (and the Slack/Daytona/GitHub secrets). Set `CODEX_CREDENTIAL_KEY` with `pnpm wrangler secret put CODEX_CREDENTIAL_KEY`, using a fresh `openssl rand -base64 32` value rather than your local one. Optional catalog secrets such as `CLOUDFLARE_MCP_API_TOKEN`, `HONEYCOMB_MCP_API_TOKEN`, and `LANGFUSE_MCP_BASIC_AUTH` use the same command, as do optional web-search keys `EXA_API_KEY` and `PARALLEL_API_KEY`. If `CLOUDFLARE_API_TOKEN` is set in the shell (or `.env`) to an MCP-scoped token, unset it for Wrangler commands so the CLI can use `wrangler login` or a token with **Workers Scripts Write**. Do not put secrets in git.
 
 ## Observability
 
@@ -227,4 +227,4 @@ OTLP export charges. Recheck both figures after October 1, 2026.
 
 - `SLACK_AGENT_SPEC.md` — v1 design
 - `SLACK_AGENT_HANDOFF.md` — M1 acceptance
-- [Flue docs](https://flueframework.com/docs/) or `npx flue docs`
+- [Flue docs](https://flueframework.com/docs/) or `pnpm flue docs`
