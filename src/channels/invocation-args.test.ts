@@ -45,6 +45,7 @@ describe('parseInvocationArgs', () => {
 			'<@U1> tag env:model:luna',
 			'<@U1> path model:luna/v2',
 			'<@U1> remodel:luna',
+			'<@U1> (model:luna)',
 		]) {
 			expect(parseInvocationArgs(text)).toEqual({ ok: true, args: { body: text } });
 		}
