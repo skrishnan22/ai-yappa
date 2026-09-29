@@ -37,6 +37,7 @@ function createFakeSandbox(
 	const files = overrides?.files ?? new Map<string, Buffer>();
 	const dirs = new Set<string>(['/workspace']);
 	let state: SandboxState | undefined = overrides?.state ?? 'started';
+	let autoStopInterval = overrides?.autoStopInterval ?? 15;
 
 	const sandbox: DaytonaSandboxLike = {
 		id: overrides?.id ?? 'sb-1',
@@ -46,6 +47,12 @@ function createFakeSandbox(
 		},
 		set state(value: SandboxState | undefined) {
 			state = value;
+		},
+		get autoStopInterval() {
+			return autoStopInterval;
+		},
+		set autoStopInterval(value: number | undefined) {
+			autoStopInterval = value ?? 15;
 		},
 		async refreshData() {
 			if (overrides?.refreshData) {
@@ -71,6 +78,15 @@ function createFakeSandbox(
 			}
 
 			state = 'started';
+		},
+		async setAutostopInterval(interval: number) {
+			if (overrides?.setAutostopInterval) {
+				await overrides.setAutostopInterval(interval);
+
+				return;
+			}
+
+			autoStopInterval = interval;
 		},
 		fs: overrides?.fs ?? {
 			async downloadFile(remotePath: string) {
@@ -304,6 +320,7 @@ describe('container lease', () => {
 
 		await createContainerSandbox(client, { conversationId: 'conv-1' });
 
+		expect(CONTAINER_AUTO_STOP_MINUTES).toBe(3);
 		expect(snapshots).toEqual([
 			expect.objectContaining({
 				name: CONTAINER_SNAPSHOT_NAME,
@@ -355,8 +372,43 @@ describe('container lease', () => {
 		const sandbox = await createContainerSandbox(client, { conversationId: 'conv-1' });
 
 		expect(sandbox).toBe(existing);
+		expect(existing.autoStopInterval).toBe(CONTAINER_AUTO_STOP_MINUTES);
 		expect(created).toEqual([]);
 		expect(requestedNames).toEqual([expect.stringMatching(/^slack-agent-[0-9a-f]{32}$/)]);
+	});
+
+	test('does not rewrite auto-stop when the reused sandbox already matches policy', async () => {
+		const existing = createFakeSandbox({
+			id: 'container-existing',
+			autoStopInterval: CONTAINER_AUTO_STOP_MINUTES,
+		});
+
+		existing.setAutostopInterval = async () => {
+			throw new Error('auto-stop interval should already match');
+		};
+
+		const client = {
+			async create() {
+				throw new Error('should not create a replacement');
+			},
+			async get() {
+				return existing;
+			},
+			async *list() {},
+			snapshot: {
+				async get() {
+					throw new Error('should not inspect a snapshot');
+				},
+				async create() {
+					throw new Error('should not create a snapshot');
+				},
+			},
+		};
+
+		const sandbox = await createContainerSandbox(client, { conversationId: 'conv-1' });
+
+		expect(sandbox).toBe(existing);
+		expect(existing.autoStopInterval).toBe(CONTAINER_AUTO_STOP_MINUTES);
 	});
 
 	test.each(['stopped', 'archived'] as const)(
@@ -391,6 +443,7 @@ describe('container lease', () => {
 
 			expect(sandbox).toBe(existing);
 			expect(events).toEqual(['start']);
+			expect(existing.autoStopInterval).toBe(CONTAINER_AUTO_STOP_MINUTES);
 		},
 	);
 
