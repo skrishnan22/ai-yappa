@@ -305,4 +305,43 @@ describe('slack WebClient factory', () => {
 			},
 		]);
 	});
+
+	test('includes Slack platform error details when a reply is rejected', async () => {
+		__setSlackClientFactoryForTests(() => ({
+			chat: {
+				async postMessage() {
+					throw Object.assign(new Error('An API error occurred: invalid_blocks'), {
+						code: 'slack_webapi_platform_error',
+						data: {
+							ok: false,
+							error: 'invalid_blocks',
+							response_metadata: {
+								messages: ['[ERROR] unsupported type: data_table [json-pointer:/blocks/0/type]'],
+							},
+						},
+					});
+				},
+				async update() {
+					return { ok: true };
+				},
+			},
+			conversations: {
+				async replies() {
+					return { ok: true, messages: [] };
+				},
+			},
+		}));
+
+		const tool = replyInThread({ channelId: 'C-test', threadTs: '2.3' }, 'xoxb-injected');
+
+		await expect(
+			tool.run({
+				data: { text: 'hello Slack' },
+				toolCallId: 'post-rejected',
+				log: { info() {}, warn() {}, error() {} },
+			}),
+		).rejects.toThrow(
+			/invalid_blocks[\s\S]*\[ERROR\] unsupported type: data_table \[json-pointer:\/blocks\/0\/type\]/,
+		);
+	});
 });
