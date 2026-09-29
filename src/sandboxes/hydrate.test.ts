@@ -213,10 +213,20 @@ describe('markerMatchesRepo', () => {
 });
 
 describe('coworkerInstructions', () => {
-	test('names the workspace path and treats Slack text as the task', () => {
+	test('is conversational by default and mutates the repository only for a clear implementation request', () => {
 		const prompt = coworkerInstructions('https://github.com/skrishnan22/codevil.git');
 		expect(prompt).toContain(WORKSPACE_REPO_DIR);
-		expect(prompt).toMatch(/signal body as the request to act/i);
+		expect(prompt).toMatch(
+			/general-purpose conversational agent specialized in software engineering/i,
+		);
+		expect(prompt).toMatch(/questions, idea exploration, explanations, comparisons/i);
+		expect(prompt).toMatch(/answer in Slack/i);
+		expect(prompt).toMatch(/do not edit files, create commits, checkpoint, or open pull requests/i);
+		expect(prompt).toMatch(/unless the user clearly asks for a repository change/i);
+		expect(prompt).toMatch(
+			/repository binding and write-tool availability do not imply permission/i,
+		);
+		expect(prompt).toMatch(/for a clear implementation request/i);
 		expect(prompt).toContain('checkpoint_working_branch');
 		expect(prompt).toContain('open_pull_request');
 		expect(prompt).toContain('live run card');

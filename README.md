@@ -1,6 +1,6 @@
 # slack-agent
 
-Slack-native engineering coworker. Investigates a repo, makes changes, and opens PRs via native GitHub tools. Mounted MCP tools may exercise the authority of the deployment-scoped secrets you configure.
+Slack-native software-engineering coworker. It discusses ideas, answers engineering questions, and inspects repositories; when a user clearly asks for a repository change, it can edit, test, checkpoint, and open a PR through native GitHub tools. Repository binding and write-tool availability are not permission to mutate. Mounted MCP tools may exercise the authority of the deployment-scoped secrets you configure.
 
 Built as a Flue app on the Cloudflare target. Execution is Daytona container Sandboxes, not Cloudflare Sandbox. A stopped container retains its filesystem but loses RAM and running processes. The model is `openai-codex/gpt-5.6-luna` on a ChatGPT subscription once an admin connects one with `/aiyappa openai connect` ([ChatGPT subscription](#chatgpt-subscription), [ADR 0020](docs/adr/0020-chatgpt-subscription-model-route.md)). Otherwise it is OpenCode Go: `deepseek-v4.1-flash` if [models.dev](https://models.dev/providers/opencode-go/) lists it, otherwise bundled `deepseek-v4-flash`.
 
