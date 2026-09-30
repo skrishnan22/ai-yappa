@@ -236,4 +236,5 @@ OTLP export charges. Recheck both figures after October 1, 2026.
 
 - `SLACK_AGENT_SPEC.md` — v1 design
 - `SLACK_AGENT_HANDOFF.md` — M1 acceptance
+- [`docs/software-factory-assessment.md`](docs/software-factory-assessment.md) — current factory maturity and gaps
 - [Flue docs](https://flueframework.com/docs/) or `pnpm flue docs`
