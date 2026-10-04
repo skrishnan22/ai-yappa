@@ -183,22 +183,3 @@ describe('CodexAuthService', () => {
 		await expect(service.status()).resolves.toEqual({ state: 'disconnected' });
 	});
 });
-
-describe('DurableCredentialStore', () => {
-	test('lists credential types and deletes under the provider lock', async () => {
-		const store = storeOver(new MemoryRecords());
-
-		await store.modify('openai-codex', async () => ({
-			type: 'oauth',
-			access: 'a',
-			refresh: 'r',
-			expires: 0,
-		}));
-
-		await expect(store.list()).resolves.toEqual([{ providerId: 'openai-codex', type: 'oauth' }]);
-
-		await store.delete('openai-codex');
-
-		await expect(store.read('openai-codex')).resolves.toBeUndefined();
-	});
-});

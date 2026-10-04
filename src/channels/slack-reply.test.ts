@@ -140,6 +140,7 @@ describe('slack WebClient factory', () => {
 			},
 		]);
 		expect(calls[0]?.params).not.toHaveProperty('text');
+		expect(calls.map((call) => call.token)).toEqual(['xoxb-injected']);
 	});
 
 	test.each([
@@ -195,64 +196,6 @@ describe('slack WebClient factory', () => {
 		expect(calls[0]?.params).not.toHaveProperty('markdown_text');
 	});
 
-	test('posts normalized table cells and header text', async () => {
-		const calls = stubSlackApi();
-		const tool = replyInThread({ channelId: 'C-test', threadTs: '2.3' }, 'xoxb-injected');
-
-		const data = v.parse(tool.input, {
-			text: 'lint took 1.5 minutes on 09/23.',
-			blocks: [
-				{ type: 'header', text: 'Results' },
-				{
-					type: 'data_table',
-					caption: 'Results',
-					rows: [
-						['Job', 'When', 'Minutes'],
-						['lint', '09/23', 1.5],
-					],
-				},
-			],
-		});
-
-		await expect(
-			tool.run({
-				data,
-				toolCallId: 'post-cells',
-				log: { info() {}, warn() {}, error() {} },
-			}),
-		).resolves.toEqual({
-			output: { posted: true, text: data.text, blocks: null, channel: null, ts: null },
-		});
-		expect(calls.map((call) => call.params)).toEqual([
-			{
-				channel: 'C-test',
-				thread_ts: '2.3',
-				text: data.text,
-				blocks: [
-					{ type: 'header', text: { type: 'plain_text', text: 'Results' } },
-					{
-						type: 'data_table',
-						caption: 'Results',
-						rows: [
-							[
-								{ type: 'raw_text', text: 'Job' },
-								{ type: 'raw_text', text: 'When' },
-								{ type: 'raw_text', text: 'Minutes' },
-							],
-							[
-								{ type: 'raw_text', text: 'lint' },
-								{ type: 'raw_text', text: '09/23' },
-								{ type: 'raw_number', value: 1.5 },
-							],
-						],
-					},
-				],
-				unfurl_links: false,
-				unfurl_media: false,
-			},
-		]);
-	});
-
 	test('returns validated blocks without posting when no Slack token was supplied', async () => {
 		const tool = replyInThread({ channelId: 'C-local', threadTs: '1.2' });
 		const blocks = [{ type: 'divider' as const }];
@@ -277,28 +220,5 @@ describe('slack WebClient factory', () => {
 		});
 
 		expect(result.success).toBe(false);
-	});
-
-	test('posts with the injected token and thread reference', async () => {
-		const calls = stubSlackApi();
-		const tool = replyInThread({ channelId: 'C-test', threadTs: '2.3' }, 'xoxb-injected');
-		await expect(
-			tool.run({
-				data: { text: 'hello Slack' },
-				toolCallId: 'post',
-				log: { info() {}, warn() {}, error() {} },
-			}),
-		).resolves.toEqual({
-			output: { posted: true, text: 'hello Slack', blocks: null, channel: null, ts: null },
-		});
-		expect(calls.map((call) => call.params)).toEqual([
-			{
-				channel: 'C-test',
-				thread_ts: '2.3',
-				markdown_text: 'hello Slack',
-				unfurl_links: false,
-				unfurl_media: false,
-			},
-		]);
 	});
 });

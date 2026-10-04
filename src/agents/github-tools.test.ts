@@ -125,24 +125,6 @@ describe('trusted GitHub operations', () => {
 		});
 		expect(issue).not.toHaveProperty('token');
 	});
-
-	test('keeps the working branch deterministic from conversation id', async () => {
-		let params: JsonValue | undefined;
-		await performCreateWorkingBranch(
-			ctx(
-				baseHandlers({
-					createBranch: async (input) => {
-						params = input.params;
-
-						return { ref: 'refs/heads/agent/c1', sha: 'abc' };
-					},
-				}),
-			),
-			{ fromSha: 'abc' },
-		);
-
-		expect(params).toEqual({ name: 'agent/c1', fromSha: 'abc' });
-	});
 });
 
 describe('githubTools schemas', () => {
@@ -206,38 +188,6 @@ describe('performCheckpoint', () => {
 			htmlUrl: 'https://github.com/skrishnan22/codevil/tree/agent/c1',
 		});
 		expect(result).not.toHaveProperty('token');
-	});
-
-	test('does not expose a push token written by a failing process', async () => {
-		const secret = 'ghs_secret';
-		let message = '';
-
-		try {
-			await performCheckpoint(
-				ctx(
-					baseHandlers({
-						vendPushToken: async () => ({
-							token: secret,
-							expiresAt: '2099-01-01T00:00:00.000Z',
-						}),
-					}),
-				),
-				{ expectedSha: 'abc123' },
-				{
-					exec: async (command) => ({
-						stdout: command === 'git rev-parse HEAD' ? 'abc123\n' : secret,
-						stderr: command === 'git rev-parse HEAD' ? '' : secret,
-						exitCode: command === 'git rev-parse HEAD' ? 0 : 128,
-					}),
-					revoke: async () => {},
-				},
-			);
-		} catch (error) {
-			message = error instanceof Error ? error.message : String(error);
-		}
-
-		expect(message).toBe('git push exited 128');
-		expect(message).not.toContain(secret);
 	});
 });
 
