@@ -60,12 +60,12 @@ const digestRow = v.object({
 // Every query using this must bind the current channel ID as parameter ?2.
 const IN_SCOPE = "(d.channel_visibility = 'public' OR d.channel_id = ?2)";
 
-// Model-written queries become an OR of quoted words, so FTS5 syntax
-// (quotes, parentheses, AND/NEAR, *, -) can never cause a parse error.
+// Quote search terms to neutralize FTS syntax. Keep compound names together
+// as phrases so a partial name cannot crowd out the intended result.
 export const FTS_QUERY_MAX_WORDS = 32;
 
 export function ftsQuery(text: string): string | undefined {
-	const words = text.match(/[\p{L}\p{N}_]+/gu) ?? [];
+	const words = text.match(/[\p{L}\p{N}_]+(?:[-./][\p{L}\p{N}_]+)*/gu) ?? [];
 	const seen = new Set<string>();
 	const deduped: string[] = [];
 
@@ -121,7 +121,7 @@ export function createDigestStore(db: D1Database): DigestStore {
 		async search(query, currentChannelId, limit) {
 			const match = ftsQuery(query);
 
-			if (match === undefined) return [];
+			if (!match) return [];
 
 			const { results } = await db
 				.prepare(

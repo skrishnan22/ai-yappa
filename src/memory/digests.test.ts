@@ -25,6 +25,11 @@ function digest(overrides: Partial<ConversationDigest>): ConversationDigest {
 }
 
 describe('ftsQuery', () => {
+	test('preserves compound names as quoted phrases', () => {
+		expect(ftsQuery('checkout-test cart.ts src/cart')).toBe(
+			'"checkout-test" OR "cart.ts" OR "src/cart"',
+		);
+	});
 	test('quotes words and drops FTS operators and punctuation', () => {
 		expect(ftsQuery('c++ "crash" AND (NEAR -flaky*')).toBe(
 			'"c" OR "crash" OR "AND" OR "NEAR" OR "flaky"',
@@ -49,6 +54,22 @@ describe('ftsQuery', () => {
 });
 
 describe('DigestStore', () => {
+	test('specific names exclude partial matches before the result limit', async () => {
+		const store = createDigestStore(openMigratedSqlite());
+
+		await store.upsert(
+			digest({ id: 'checkout', conversationId: 'checkout', requests: 'checkout', replies: '' }),
+		);
+		await store.upsert(
+			digest({ id: 'test', conversationId: 'test', requests: 'test', replies: '' }),
+		);
+		await store.upsert(digest({ id: 'exact', conversationId: 'exact' }));
+
+		const hits = await store.search('checkout-test', 'C_PUBLIC', 1);
+
+		expect(hits.map((hit) => hit.conversationId)).toEqual(['exact']);
+	});
+
 	test('search finds public digests and the current private channel only', async () => {
 		const store = createDigestStore(openMigratedSqlite());
 
@@ -80,15 +101,46 @@ describe('DigestStore', () => {
 		await expect(store.search('???', 'C_PUBLIC', 5)).resolves.toEqual([]);
 	});
 
+	test('filters inaccessible hits before LIMIT and refreshes visibility on upsert', async () => {
+		const store = createDigestStore(openMigratedSqlite());
+
+		await store.upsert(
+			digest({ id: 'hidden', conversationId: 'hidden', requests: 'mango', replies: '' }),
+		);
+		await store.upsert(digest({ id: 'visible', conversationId: 'visible', replies: 'mango' }));
+		await store.upsert(
+			digest({
+				id: 'hidden',
+				conversationId: 'hidden',
+				requests: 'mango',
+				replies: '',
+				channelVisibility: 'private',
+			}),
+		);
+
+		const hits = await store.search('mango', 'C_OTHER', 1);
+
+		expect(hits.map((hit) => hit.conversationId)).toEqual(['visible']);
+		const hidden = await store.forConversation('hidden', 'C_OTHER');
+		const sameChannel = await store.search('mango', 'C_PUBLIC', 5);
+
+		expect(hidden).toEqual([]);
+		expect(sameChannel).toHaveLength(2);
+	});
+
 	test('upsert is idempotent and keeps the index in sync', async () => {
 		const store = createDigestStore(openMigratedSqlite());
 
 		await store.upsert(digest({ replies: 'first reply mentions pineapple' }));
 		await store.upsert(digest({ replies: 'second reply mentions mango' }));
 
-		expect(await store.search('pineapple', 'C_PUBLIC', 5)).toEqual([]);
-		expect(await store.search('mango', 'C_PUBLIC', 5)).toHaveLength(1);
-		expect(await store.forConversation('conv-1', 'C_PUBLIC')).toHaveLength(1);
+		const stale = await store.search('pineapple', 'C_PUBLIC', 5);
+		const updated = await store.search('mango', 'C_PUBLIC', 5);
+		const rows = await store.forConversation('conv-1', 'C_PUBLIC');
+
+		expect(stale).toEqual([]);
+		expect(updated).toHaveLength(1);
+		expect(rows).toHaveLength(1);
 	});
 
 	test('forConversation applies the same channel filter and orders by time', async () => {
@@ -114,7 +166,9 @@ describe('DigestStore', () => {
 			}),
 		);
 
-		expect(await store.forConversation('x', 'C_PUBLIC')).toEqual([]);
+		const outOfScope = await store.forConversation('x', 'C_PUBLIC');
+
+		expect(outOfScope).toEqual([]);
 
 		const rows = await store.forConversation('x', 'C_SECRET');
 
@@ -145,9 +199,10 @@ describe('DigestStore', () => {
 			digest({ id: 'new', conversationId: 'conv-2', createdAt: '2026-09-01T00:00:00.000Z' }),
 		);
 
-		expect(await store.deleteOlderThan(new Date('2026-06-01T00:00:00.000Z'))).toBe(1);
-		expect((await store.search('flaky', 'C_PUBLIC', 5)).map((hit) => hit.conversationId)).toEqual([
-			'conv-2',
-		]);
+		const deleted = await store.deleteOlderThan(new Date('2026-06-01T00:00:00.000Z'));
+		const remaining = await store.search('flaky', 'C_PUBLIC', 5);
+
+		expect(deleted).toBe(1);
+		expect(remaining.map((hit) => hit.conversationId)).toEqual(['conv-2']);
 	});
 });
