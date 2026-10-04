@@ -7,7 +7,7 @@ import { isAllowedInvoker, repoForChannel } from '../config.ts';
 import type { CodexAuthControl } from '../integrations/codex-auth/codex-auth.ts';
 import { errorMessage } from '../json.ts';
 import { emitSemanticEvent } from '../observability.ts';
-import { decideAdmit, mentionsAuthorizedBot } from './admit.ts';
+import { decideAdmit, decideInvocation, isTimeoutRetry, mentionsAuthorizedBot } from './admit.ts';
 import type { SlackSignal } from './admit.ts';
 import { handleSlashCommand } from './slash-command.ts';
 import { getSlackClient } from './slack-reply.ts';
@@ -15,9 +15,15 @@ import { loadThreadContext } from './thread-context.ts';
 import { buildSignalAttributes } from './signal-attributes.ts';
 import type { ServerEnv } from '../env.ts';
 
-async function conversationExistsInThread(signalType: SlackSignal, id: string): Promise<boolean> {
-	if (signalType === 'slack.app_mention') return false;
-	const existing = await getAgentInstance(Coworker, id);
+export type SlackRuntime = {
+	dispatch: typeof dispatch;
+	getAgentInstance: typeof getAgentInstance;
+};
+
+const defaultSlackRuntime: SlackRuntime = { dispatch, getAgentInstance };
+
+async function conversationExistsInThread(runtime: SlackRuntime, id: string): Promise<boolean> {
+	const existing = await runtime.getAgentInstance(Coworker, id);
 
 	return existing !== null;
 }
@@ -36,7 +42,11 @@ async function modelRouteForDispatch(codexAuth: () => CodexAuthControl): Promise
 	}
 }
 
-export function createSlackChannelForEnv(env: ServerEnv, codexAuth: () => CodexAuthControl) {
+export function createSlackChannelForEnv(
+	env: ServerEnv,
+	codexAuth: () => CodexAuthControl,
+	runtime: SlackRuntime = defaultSlackRuntime,
+) {
 	const channel = createSlackChannel({
 		signingSecret: env.SLACK_SIGNING_SECRET,
 
@@ -44,8 +54,9 @@ export function createSlackChannelForEnv(env: ServerEnv, codexAuth: () => CodexA
 			return handleSlashCommand(payload, codexAuth);
 		},
 
-		async events({ payload }) {
+		async events({ c, payload }) {
 			if (payload.type !== 'event_callback') return;
+			const timeoutRetry = isTimeoutRetry(c.req.raw.headers);
 
 			switch (payload.event.type) {
 				case 'app_mention': {
@@ -54,6 +65,7 @@ export function createSlackChannelForEnv(env: ServerEnv, codexAuth: () => CodexA
 						channel,
 						env,
 						codexAuth,
+						runtime,
 						thread: {
 							teamId: payload.team_id,
 							channelId: event.channel,
@@ -63,6 +75,7 @@ export function createSlackChannelForEnv(env: ServerEnv, codexAuth: () => CodexA
 						eventId: payload.event_id,
 						text: event.text,
 						signalType: 'slack.app_mention',
+						timeoutRetry,
 					});
 
 					return;
@@ -82,6 +95,7 @@ export function createSlackChannelForEnv(env: ServerEnv, codexAuth: () => CodexA
 						channel,
 						env,
 						codexAuth,
+						runtime,
 						thread: {
 							teamId: payload.team_id,
 							channelId: event.channel,
@@ -91,6 +105,7 @@ export function createSlackChannelForEnv(env: ServerEnv, codexAuth: () => CodexA
 						eventId: payload.event_id,
 						text: event.text ?? '',
 						signalType: 'slack.message',
+						timeoutRetry,
 					});
 
 					return;
@@ -109,26 +124,53 @@ async function admitThread({
 	channel,
 	env,
 	codexAuth,
+	runtime,
 	thread,
 	userId,
 	eventId,
 	text,
 	signalType,
+	timeoutRetry,
 }: {
 	channel: ReturnType<typeof createSlackChannel>;
 	env: ServerEnv;
 	codexAuth: () => CodexAuthControl;
+	runtime: SlackRuntime;
 	thread: SlackThreadRef;
 	userId: string | undefined;
 	eventId: string;
 	text: string;
 	signalType: SlackSignal;
+	timeoutRetry: boolean;
 }): Promise<void> {
 	const id = channel.instanceId(thread);
 	const allowed = isAllowedInvoker(userId);
 	const repo = repoForChannel(thread.channelId);
 
-	const conversationExists = await conversationExistsInThread(signalType, id);
+	// Mentions check too: only the mention that creates a conversation reads
+	// `$model:` / `$effort:`.
+	const conversationExists = await conversationExistsInThread(runtime, id);
+
+	async function refuse(
+		kind: 'refuse-invoker' | 'no-repo' | 'bad-args' | 'model-unavailable',
+		reply: string,
+	): Promise<void> {
+		emitSemanticEvent({
+			event_name: 'slack_admission',
+			outcome: 'refused',
+			conversation_id: id,
+			slack_event_id: eventId,
+			signal_type: signalType,
+			decision: kind,
+		});
+
+		if (timeoutRetry) return;
+		await getSlackClient(env.SLACK_BOT_TOKEN).chat.postMessage({
+			channel: thread.channelId,
+			thread_ts: thread.threadTs,
+			text: reply,
+		});
+	}
 
 	const decision = decideAdmit({
 		signalType,
@@ -139,35 +181,14 @@ async function admitThread({
 
 	switch (decision.kind) {
 		case 'refuse-invoker':
-			emitSemanticEvent({
-				event_name: 'slack_admission',
-				outcome: 'refused',
-				conversation_id: id,
-				slack_event_id: eventId,
-				signal_type: signalType,
-				decision: decision.kind,
-			});
-			await getSlackClient(env.SLACK_BOT_TOKEN).chat.postMessage({
-				channel: thread.channelId,
-				thread_ts: thread.threadTs,
-				text: 'You are not on the invoker allowlist for this deployment.',
-			});
+			await refuse(decision.kind, 'You are not on the invoker allowlist for this deployment.');
 
 			return;
 		case 'no-repo':
-			emitSemanticEvent({
-				event_name: 'slack_admission',
-				outcome: 'refused',
-				conversation_id: id,
-				slack_event_id: eventId,
-				signal_type: signalType,
-				decision: decision.kind,
-			});
-			await getSlackClient(env.SLACK_BOT_TOKEN).chat.postMessage({
-				channel: thread.channelId,
-				thread_ts: thread.threadTs,
-				text: 'This channel has no default repo. Add it to `src/config.ts` (or pass `repo:` once that override exists).',
-			});
+			await refuse(
+				decision.kind,
+				'This channel has no default repo. Add it to `src/config.ts` (or pass `repo:` once that override exists).',
+			);
 
 			return;
 		case 'drop-untracked':
@@ -182,6 +203,21 @@ async function admitThread({
 
 			return;
 		case 'dispatch': {
+			const modelRoute = await modelRouteForDispatch(codexAuth);
+
+			const invocation = decideInvocation({
+				signalType,
+				text,
+				chatgptConnected: modelRoute === 'chatgpt',
+				conversationExists,
+			});
+
+			if (invocation.kind !== 'proceed') {
+				await refuse(invocation.kind, invocation.reply);
+
+				return;
+			}
+
 			let threadContext: string | undefined;
 
 			try {
@@ -190,11 +226,10 @@ async function admitThread({
 				// Thread history is context for the agent, not a dispatch requirement.
 			}
 
-			const modelRoute = await modelRouteForDispatch(codexAuth);
 			const attributes = { ...buildSignalAttributes(eventId, userId, threadContext), modelRoute };
 
 			try {
-				const receipt = await dispatch(Coworker, {
+				const receipt = await runtime.dispatch(Coworker, {
 					id,
 					idempotencyKey: eventId,
 					initialData: {
@@ -203,11 +238,13 @@ async function admitThread({
 						startedBy: userId,
 						startedAt: new Date().toISOString(),
 						repo: decision.repo,
+						// Flue records this only when the dispatch creates the conversation.
+						modelChoice: invocation.modelChoice,
 					},
 					message: {
 						kind: 'signal',
 						type: signalType,
-						body: text,
+						body: invocation.body,
 						attributes,
 					},
 				});

@@ -42,8 +42,13 @@ Evidence behind specific choices:
 Today `src/channels/slack.ts` passes the thread **starter** as `initialData.startedBy`; signal attributes carry only `eventId` and `threadContext`. Add the per-message Slack `userId` to signal attributes:
 
 ```ts
-type SignalAttributes = { eventId: string; userId: string; threadContext?: string };
+type SignalAttributes = { eventId: string; userId?: string; threadContext?: string };
 ```
+
+Slack may omit the author on workflow- or app-authored messages. In that case
+the signal omits `userId`, and memory intake skips the message rather than
+assigning it to the thread starter. When present, `userId` identifies the
+author of this message and may differ from `initialData.startedBy`.
 
 Coworker code reads the invoker from the delivery in `useAgentStart` and stores it in `usePersistentState('memory-invoker')`; tools read that state. Tools must not call `useDelivery()` directly: the cursor advances to any signal an event hook appends (including the preference-profile signal), so it does not reliably point at the Slack message. No memory tool accepts a user ID, channel, or scope as a model argument (same trusted-binding rule as D13).
 

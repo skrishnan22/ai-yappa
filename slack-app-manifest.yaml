@@ -9,8 +9,8 @@ features:
   slash_commands:
     - command: /aiyappa
       url: https://example.invalid/channels/slack/commands
-      description: Connect, check, or disconnect the ChatGPT subscription
-      usage_hint: openai connect|status|disconnect
+      description: List models, or connect, check, or disconnect the ChatGPT subscription
+      usage_hint: models | openai connect|status|disconnect
       should_escape: false
 oauth_config:
   scopes:

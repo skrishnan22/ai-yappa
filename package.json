@@ -2,6 +2,7 @@
 	"name": "slack-agent",
 	"private": true,
 	"type": "module",
+	"packageManager": "pnpm@10.28.1",
 	"engines": {
 		"node": ">=22.22.1"
 	},
@@ -28,6 +29,7 @@
 		"@flue/runtime": "^2.0.3",
 		"@flue/slack": "^2.0.3",
 		"@slack/web-api": "^8.1.1",
+		"damerau-levenshtein": "^1.0.8",
 		"hono": "4.12.32",
 		"jose": "^6.2.12",
 		"valibot": "^1.4.2"
@@ -37,7 +39,9 @@
 		"@flue/cli": "^2.0.3",
 		"@flue/vite": "^2.0.3",
 		"@oxlint/plugins": "1.82.0",
+		"@types/damerau-levenshtein": "^1.0.2",
 		"@types/node": "^22.10.10",
+		"@valibot/to-json-schema": "^1.8.0",
 		"husky": "^9.1.7",
 		"lint-staged": "^17.5.1",
 		"oxfmt": "^0.67.0",
@@ -49,8 +53,14 @@
 		"vitest": "^4.1.11",
 		"wrangler": "^4.113.0"
 	},
-	"overrides": {
-		"@earendil-works/pi-ai": "0.86.0"
+	"pnpm": {
+		"overrides": {
+			"@earendil-works/pi-ai": "0.86.0"
+		},
+		"onlyBuiltDependencies": [
+			"esbuild",
+			"workerd"
+		]
 	},
 	"lint-staged": {
 		"*.{ts,js,mjs,cjs}": [

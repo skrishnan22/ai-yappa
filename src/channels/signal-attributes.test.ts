@@ -13,4 +13,8 @@ describe('buildSignalAttributes', () => {
 	test('omits userId when Slack sent no user', () => {
 		expect(buildSignalAttributes('Ev2', undefined, undefined)).toEqual({ eventId: 'Ev2' });
 	});
+
+	test('omits empty optional attributes', () => {
+		expect(buildSignalAttributes('Ev3', '', '')).toEqual({ eventId: 'Ev3' });
+	});
 });

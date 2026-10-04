@@ -54,7 +54,7 @@ if [ -n "$HOSTNAME" ]; then
 else
 	if ! command -v curl >/dev/null 2>&1; then
 		echo "curl is required to discover the free ngrok domain, or pass it:"
-		echo "  npm run tunnel:setup -- your-assigned-name.ngrok-free.app"
+		echo "  pnpm run tunnel:setup -- your-assigned-name.ngrok-free.app"
 		exit 1
 	fi
 
@@ -92,7 +92,7 @@ if (tunnel) process.stdout.write(new URL(tunnel.public_url).hostname);
 	if [ -z "$HOSTNAME" ]; then
 		echo "Could not read the free assigned domain from ngrok."
 		echo "Open https://dashboard.ngrok.com/domains and run:"
-		echo "  npm run tunnel:setup -- your-assigned-name.ngrok-free.app"
+		echo "  pnpm run tunnel:setup -- your-assigned-name.ngrok-free.app"
 		exit 1
 	fi
 fi
@@ -105,7 +105,7 @@ echo "That name stays on this ngrok account. You cannot pick it on the free plan
 echo "Slack Events URL: https://${HOSTNAME}/channels/slack/events"
 echo
 echo "Then, in two terminals:"
-echo "  npm run dev"
-echo "  npm run tunnel"
+echo "  pnpm run dev"
+echo "  pnpm run tunnel"
 echo
-echo "Stop with: npm run tunnel:stop"
+echo "Stop with: pnpm run tunnel:stop"
