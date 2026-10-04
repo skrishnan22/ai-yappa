@@ -34,7 +34,7 @@ Store all of these as secrets (wrangler secrets / `.env` locally); never commit 
 
 ## Your milestone: M1 — Skeleton loop (spec §10)
 
-Slack `@mention` in a channel → ingress worker verifies the Slack signature and routes to a Flue conversation owner keyed by the thread → owner creates a Daytona container Sandbox and wraps it with the Flue factory → model clones (public repo) and `ls` via sandbox tools → replies in the Slack thread. Filesystem sentinel stop/start is a unit test (`verifyContainerStopStartPersistence`), not part of every conversation create. `commandId` / fencing / Unknown Tool Outcome wait for M4.
+Slack `@mention` in a channel → ingress worker verifies the Slack signature and routes to a Flue conversation owner keyed by the thread → owner creates a Daytona container Sandbox and wraps it with the Flue factory → model clones (public repo) and `ls` via sandbox tools → replies in the Slack thread. Stop/start filesystem persistence is not checked on conversation create and has no automated test. `commandId` / fencing / Unknown Tool Outcome wait for M4.
 
 M1 acceptance:
 

@@ -1,9 +1,9 @@
 import { createHmac } from 'node:crypto';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { SlackRuntime } from './slack.ts';
 import { createSlackChannelForEnv } from './slack.ts';
-import type { SlackBotClient } from './slack-reply.ts';
-import { __setSlackClientFactoryForTests } from './slack-reply.ts';
+import { __resetSlackClientForTests } from './slack-reply.ts';
+import { stubSlackApi } from './testing/slack-api-stub.ts';
 import { allowedInvokerIds } from '../config.ts';
 import type { CodexAuthControl } from '../integrations/codex-auth/codex-auth.ts';
 
@@ -108,7 +108,8 @@ function eventPayload({
 describe('Slack ingress', () => {
 	afterEach(() => {
 		allowedInvokerIds.delete(FOLLOW_UP_USER);
-		__setSlackClientFactoryForTests();
+		vi.unstubAllGlobals();
+		__resetSlackClientForTests();
 	});
 
 	test('attributes a follow-up to its author rather than the thread starter', async () => {
@@ -129,17 +130,7 @@ describe('Slack ingress', () => {
 			getAgentInstance: async () => ({ id: 'instance', uid: 'uid' }),
 		};
 
-		const slackClient: SlackBotClient = {
-			chat: {
-				postMessage: async () => ({ ok: true }),
-				update: async () => ({ ok: true }),
-			},
-			conversations: {
-				replies: async () => ({ ok: true, messages: [] }),
-			},
-		};
-
-		__setSlackClientFactoryForTests(() => slackClient);
+		stubSlackApi(async () => ({ ok: true, messages: [] }));
 
 		const channel = createSlackChannelForEnv(env, codexAuth, runtime);
 
@@ -194,17 +185,7 @@ describe('Slack ingress', () => {
 			getAgentInstance: async () => ({ id: 'instance', uid: 'uid' }),
 		};
 
-		const slackClient: SlackBotClient = {
-			chat: {
-				postMessage: async () => ({ ok: true }),
-				update: async () => ({ ok: true }),
-			},
-			conversations: {
-				replies: async () => ({ ok: true, messages: [] }),
-			},
-		};
-
-		__setSlackClientFactoryForTests(() => slackClient);
+		stubSlackApi(async () => ({ ok: true, messages: [] }));
 
 		const channel = createSlackChannelForEnv(env, codexAuth, runtime);
 

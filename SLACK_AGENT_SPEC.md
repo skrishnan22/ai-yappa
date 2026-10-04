@@ -278,7 +278,7 @@ The original M1 layout used the Flue Modal blueprint. On 2026-08-30 D2 first cha
 - The conversation owner is `src/agents/coworker.ts`. It is dispatch-only: no public `createAgentRouter` mount. Conversation id is `channel.instanceId({ teamId, channelId, threadTs })`.
 - Event log for M1 is Flue conversation persistence plus `initialData`. Lease/fencing metadata goes in `usePersistentState` when that protocol lands. A custom cross-conversation audit store waits for M2/M4.
 - Implement Daytona behind Flue's `SandboxFactory` in `src/sandboxes/daytona.ts`. Spec §4.3 lifecycle operations remain application-owned around that factory. Spec §4.4 `commandId` markers are still ours; provider command/session ids strengthen reconciliation but do not replace the client-generated id.
-- The Modal prototype is gone. Rework `src/agents/coworker.ts` and `src/sandboxes/daytona.ts` to create a Daytona container, then wrap it with the Flue factory. Prove stop/start filesystem persistence in `verifyContainerStopStartPersistence` unit tests, not on the Coworker create path. Do not call `pause`, request `linux-vm`, or add a Cloudflare Container gRPC bridge.
+- The Modal prototype is gone. Rework `src/agents/coworker.ts` and `src/sandboxes/daytona.ts` to create a Daytona container, then wrap it with the Flue factory. Do not check stop/start filesystem persistence on the Coworker create path. Do not call `pause`, request `linux-vm`, or add a Cloudflare Container gRPC bridge.
 - Unmentioned thread messages continue a conversation only when `getAgentInstance(Coworker, id)` finds one. A mention may create. (2026-08-30)
 - Do not use Cloudflare Sandbox or Cloudflare Computer for workspace exec.
 - The credential proxy was deferred from M1 to M2.

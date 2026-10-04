@@ -54,12 +54,7 @@
 		"eslint/no-underscore-dangle": [
 			"warn",
 			{
-				"allow": [
-					"_exhaustive",
-					"__resetSlackClientForTests",
-					"__setSlackClientFactoryForTests",
-					"__resetRunCardForTests"
-				]
+				"allow": ["_exhaustive", "__resetSlackClientForTests", "__resetRunCardForTests"]
 			}
 		],
 		"unicorn/require-post-message-target-origin": "off",

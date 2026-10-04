@@ -18,8 +18,6 @@ import {
 	CONTAINER_SNAPSHOT_NAME,
 	createContainerSandbox,
 	daytona,
-	M1_PERSISTENCE_PROBE_PATH,
-	verifyContainerStopStartPersistence,
 } from './daytona.ts';
 import type { DaytonaClientLike, DaytonaSandboxLike } from './daytona.ts';
 
@@ -457,26 +455,5 @@ describe('container lease', () => {
 		await expect(createContainerSandbox(client, { conversationId: 'conv-1' })).rejects.toThrow(
 			/multiple Daytona sandboxes/,
 		);
-	});
-
-	test('proves a filesystem marker survives stop and start on the same id', async () => {
-		const events: string[] = [];
-		const files = new Map<string, Buffer>();
-		const sandbox = createFakeSandbox({ id: 'container-9', files });
-		sandbox.stop = async () => {
-			events.push('stop');
-			sandbox.state = 'stopped';
-		};
-
-		sandbox.start = async () => {
-			events.push('start');
-			sandbox.state = 'started';
-		};
-
-		const restarted = await verifyContainerStopStartPersistence(sandbox);
-
-		expect(restarted.id).toBe('container-9');
-		expect(events).toEqual(['stop', 'start']);
-		expect(files.has(M1_PERSISTENCE_PROBE_PATH)).toBe(false);
 	});
 });

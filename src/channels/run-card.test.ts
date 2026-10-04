@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import type { JsonValue } from '../json.ts';
 import {
 	__resetRunCardForTests,
 	applyCardEvent,
@@ -10,11 +11,70 @@ import {
 	type CardEvent,
 	type RoutedCardEvent,
 	type RunCardState,
-	type SlackCardPort,
 } from './run-card.ts';
+import { stringParam, stubSlackApi } from './testing/slack-api-stub.ts';
+import { __resetSlackClientForTests } from './slack-reply.ts';
+
+type SlackCardPort = {
+	post(args: {
+		channel: string;
+		threadTs: string;
+		text: string;
+		blocks: JsonValue;
+	}): Promise<{ ts: string | null }>;
+	update(args: { channel: string; ts: string; text: string; blocks: JsonValue }): Promise<void>;
+	notify(args: { channel: string; threadTs: string; text: string }): Promise<void>;
+};
+
+const TOKEN = 'xoxb-test';
+
+// Routes the Slack Web API calls the card makes to the fake: chat.postMessage
+// with blocks is the card post, without blocks the settle ping, and
+// chat.update edits the card. A throwing notify surfaces as a Slack API error.
+function stubCardApi(port: SlackCardPort) {
+	return stubSlackApi(async (call): Promise<Record<string, JsonValue>> => {
+		const { method, params } = call;
+
+		if (method === 'chat.update') {
+			await port.update({
+				channel: stringParam(call, 'channel'),
+				ts: stringParam(call, 'ts'),
+				text: stringParam(call, 'text'),
+				blocks: params.blocks ?? null,
+			});
+
+			return { ok: true };
+		}
+
+		if (params.blocks) {
+			const posted = await port.post({
+				channel: stringParam(call, 'channel'),
+				threadTs: stringParam(call, 'thread_ts'),
+				text: stringParam(call, 'text'),
+				blocks: params.blocks,
+			});
+
+			return { ok: true, ts: posted.ts };
+		}
+
+		try {
+			await port.notify({
+				channel: stringParam(call, 'channel'),
+				threadTs: stringParam(call, 'thread_ts'),
+				text: stringParam(call, 'text'),
+			});
+		} catch (error) {
+			return { ok: false, error: error instanceof Error ? error.message : String(error) };
+		}
+
+		return { ok: true };
+	});
+}
 
 afterEach(() => {
 	__resetRunCardForTests();
+	__resetSlackClientForTests();
+	vi.unstubAllGlobals();
 });
 
 function working(overrides?: Partial<RunCardState>): RunCardState {
@@ -316,24 +376,26 @@ describe('publishCardEvent', () => {
 
 		await publishCardEvent(routed({ type: 'submission_running', submissionId: 'sub-2' }), 1_000);
 
+		stubCardApi({
+			async post() {
+				const ts = `card-${posts.length + 1}`;
+				posts.push({ ts });
+
+				return { ts };
+			},
+			async update(args) {
+				updates.push({ ts: args.ts });
+			},
+			async notify() {},
+		});
+
 		bindRunCard({
 			instanceId: 'conversation-1',
 			channelId: 'C1',
 			threadTs: '1.2',
 			state: working({ messageTs: 'old.ts' }),
 			persist() {},
-			port: {
-				async post() {
-					const ts = `card-${posts.length + 1}`;
-					posts.push({ ts });
-
-					return { ts };
-				},
-				async update(args) {
-					updates.push({ ts: args.ts });
-				},
-				async notify() {},
-			},
+			token: TOKEN,
 		});
 
 		await publishCardEvent(routed({ type: 'hydration', phase: 'start' }), 2_000);
@@ -365,13 +427,15 @@ describe('publishCardEvent', () => {
 			async notify() {},
 		};
 
+		stubCardApi(port);
+
 		bindRunCard({
 			instanceId: 'conversation-1',
 			channelId: 'C1',
 			threadTs: '1.2',
 			state: working({ status: 'completed', step: 'Completed', messageTs: 'old.ts' }),
 			persist() {},
-			port,
+			token: TOKEN,
 		});
 
 		const running = publishCardEvent(
@@ -401,6 +465,8 @@ describe('publishCardEvent', () => {
 			async notify() {},
 		};
 
+		stubCardApi(port);
+
 		const persisted: RunCardState[] = [];
 		bindRunCard({
 			instanceId: 'conversation-1',
@@ -412,7 +478,7 @@ describe('publishCardEvent', () => {
 			persist(state) {
 				persisted.push(state);
 			},
-			port,
+			token: TOKEN,
 		});
 		await publishCardEvent(routed({ type: 'submission_running', submissionId: 'sub-1' }), 1_000);
 		expect(posts[0]?.text).toContain('opencode-go/deepseek-v4-flash · thinking medium');
@@ -433,13 +499,15 @@ describe('publishCardEvent', () => {
 			async notify() {},
 		};
 
+		stubCardApi(firstThreadPort);
+
 		bindRunCard({
 			instanceId: 'conversation-1',
 			channelId: 'C1',
 			threadTs: 'first-thread.ts',
 			state: null,
 			persist() {},
-			port: firstThreadPort,
+			token: TOKEN,
 		});
 
 		await publishCardEvent(
@@ -448,21 +516,23 @@ describe('publishCardEvent', () => {
 
 		expect(firstThreadPosts).toEqual([]);
 
+		stubCardApi({
+			async post(args) {
+				secondThreadPosts.push(args);
+
+				return { ts: 'second-card.ts' };
+			},
+			async update() {},
+			async notify() {},
+		});
+
 		bindRunCard({
 			instanceId: 'conversation-2',
 			channelId: 'C1',
 			threadTs: 'second-thread.ts',
 			state: null,
 			persist() {},
-			port: {
-				async post(args) {
-					secondThreadPosts.push(args);
-
-					return { ts: 'second-card.ts' };
-				},
-				async update() {},
-				async notify() {},
-			},
+			token: TOKEN,
 		});
 		await publishCardEvent(
 			routed({ type: 'submission_running', submissionId: 'sub-2' }, 'conversation-2'),
@@ -493,6 +563,8 @@ describe('publishCardEvent', () => {
 			},
 		};
 
+		stubCardApi(port);
+
 		bindRunCard({
 			instanceId: 'conversation-1',
 			channelId: 'C1',
@@ -501,7 +573,7 @@ describe('publishCardEvent', () => {
 			persist: (state) => {
 				persisted.push(state);
 			},
-			port,
+			token: TOKEN,
 		});
 
 		await publishCardEvent(routed({ type: 'submission_running', submissionId: 'sub-1' }), 1_000);
@@ -550,6 +622,8 @@ describe('publishCardEvent', () => {
 			async notify() {},
 		};
 
+		stubCardApi(port);
+
 		bindRunCard({
 			instanceId: 'conversation-1',
 			channelId: 'C1',
@@ -558,7 +632,7 @@ describe('publishCardEvent', () => {
 			persist: (state) => {
 				persisted.push(state);
 			},
-			port,
+			token: TOKEN,
 		});
 
 		await publishCardEvent(routed({ type: 'submission_running', submissionId: 'sub-1' }), 1_000);
@@ -576,7 +650,7 @@ describe('publishCardEvent', () => {
 			persist: (state) => {
 				persisted.push(state);
 			},
-			port,
+			token: TOKEN,
 		});
 		updates.length = 0;
 		await publishCardEvent(routed({ type: 'submission_running', submissionId: 'sub-2' }), 3_000);
@@ -607,6 +681,8 @@ describe('publishCardEvent', () => {
 			},
 		};
 
+		stubCardApi(port);
+
 		bindRunCard({
 			instanceId: 'conversation-1',
 			channelId: 'C1',
@@ -615,7 +691,7 @@ describe('publishCardEvent', () => {
 			persist: (state) => {
 				persisted.push(state);
 			},
-			port,
+			token: TOKEN,
 		});
 
 		await publishCardEvent(
@@ -658,6 +734,8 @@ describe('publishCardEvent', () => {
 			},
 		};
 
+		stubCardApi(port);
+
 		bindRunCard({
 			instanceId: 'conversation-1',
 			channelId: 'C1',
@@ -666,7 +744,7 @@ describe('publishCardEvent', () => {
 			persist: (state) => {
 				persisted.push(state);
 			},
-			port,
+			token: TOKEN,
 		});
 
 		await publishCardEvent(routed({ type: 'submission_running', submissionId: 'sub-1' }), 1_000);
@@ -686,7 +764,9 @@ describe('publishCardEvent', () => {
 		expect(persisted.at(-1)?.notifyPosted).not.toBe(true);
 	});
 
-	test('skips Slack when no token or port is bound', async () => {
+	test('skips Slack when no token is bound', async () => {
+		const calls = stubSlackApi();
+
 		const persisted: RunCardState[] = [];
 		bindRunCard({
 			instanceId: 'conversation-1',
@@ -700,5 +780,6 @@ describe('publishCardEvent', () => {
 		await publishCardEvent(routed({ type: 'submission_running', submissionId: 'sub-1' }), 1_000);
 		expect(persisted[0]?.status).toBe('working');
 		expect(persisted[0]?.messageTs).toBeNull();
+		expect(calls).toEqual([]);
 	});
 });
