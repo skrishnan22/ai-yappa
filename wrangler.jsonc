@@ -37,6 +37,13 @@
 	// Cross-thread memory (Person Preferences + Conversation Digests).
 	// Apply migrations with: npx wrangler d1 migrations apply MEMORY_DB --remote
 	"d1_databases": [
+		// APP_DB and MEMORY_DB share one physical database and migration history.
+		{
+			"binding": "APP_DB",
+			"database_name": "slack-agent-memory",
+			"database_id": "d89b5f6b-5b02-41b2-aca0-85ff1923b6a5",
+			"migrations_dir": "migrations",
+		},
 		{
 			"binding": "MEMORY_DB",
 			"database_name": "slack-agent-memory",

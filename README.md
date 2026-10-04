@@ -143,6 +143,26 @@ Stop with `pnpm run tunnel:stop`. Free ngrok also shows a browser warning page. 
 
 A threaded reply that reflects work in the already-cloned repo (not clone/`ls` as the job) is the hydration slice. M3 adds a live run card in the thread (one Slack message per submission, edited in place, plus a short ping when the submission settles) and attaches thread history on wake. Seed images with repo+deps baked in wait for M4.
 
+## Application database
+
+`APP_DB` and `MEMORY_DB` in `wrangler.jsonc` point to the same provisioned `slack-agent-memory` D1 database. They share the SQL migrations in `migrations/`: preferences and questions coexist in that database. `APP_DB` is the binding for question storage; the existing memory binding remains available.
+
+Run the question SQL smoke check with:
+
+```bash
+pnpm run db:smoke:questions
+```
+
+It applies every migration to a fresh temporary local D1 database, verifies participant deduplication, vote changes and first-wins submission, then removes the database. It never uses the remote database. Unit tests also exercise the production store's SQL through Node SQLite and run the same behavior suite against an in-memory fake.
+
+Before deploying code that uses new tables, apply pending migrations once through either binding:
+
+```bash
+pnpm exec wrangler d1 migrations apply APP_DB --remote
+```
+
+This requires D1 write permission in the database's Cloudflare account. Wrangler records applied migrations in the shared database; applying through `MEMORY_DB` sees the same history. Worker deployment does not apply D1 migrations. The question-store foundation adds no Slack behavior; question tools and ingress changes ship in later PRs.
+
 ## Deploy
 
 Merges to `main` deploy the Worker with GitHub Actions (`.github/workflows/deploy.yml`) after tests, lint, and format check pass. The deploy job uses the protected `production` environment, limited to `main`. Add these environment secrets (Settings → Environments → production):

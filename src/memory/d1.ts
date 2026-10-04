@@ -10,7 +10,10 @@ export type D1Statement = {
 	run(): Promise<{ meta: { changes: number } }>;
 };
 
-export type D1Database = { prepare(sql: string): D1Statement };
+export type D1Database = {
+	prepare(sql: string): D1Statement;
+	batch(statements: D1Statement[]): Promise<{ meta: { changes: number } }[]>;
+};
 
 export type Clock = { now(): Date; newId(): string };
 
