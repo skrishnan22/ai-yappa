@@ -111,8 +111,6 @@ describe('resolveIntegrationCatalog', () => {
 	});
 
 	test('missing optional secret omits only that connection and emits a credential-free warning', () => {
-		const token = 'super-secret-should-not-leak';
-
 		const result = resolveIntegrationCatalog([cloudflare, requiredLinear], {
 			LINEAR_API_KEY: 'lin-ok',
 			// CLOUDFLARE_MCP_API_TOKEN intentionally absent
@@ -129,33 +127,18 @@ describe('resolveIntegrationCatalog', () => {
 		expect(result.warnings).toEqual([
 			'[mcp-catalog] skipping optional MCP "cloudflare": missing CLOUDFLARE_MCP_API_TOKEN',
 		]);
-		const blob = JSON.stringify(result);
-		expect(blob).not.toContain(token);
-		expect(blob).not.toContain('super-secret');
 	});
 
-	test('missing required secret fails before mount and names the env key, never the value', () => {
-		const secret = 'lin-secret-must-not-appear';
-		expect(() =>
-			resolveIntegrationCatalog([requiredLinear], {
-				LINEAR_API_KEY: '',
-			}),
-		).toThrow(/required MCP "linear" missing secret LINEAR_API_KEY/);
-
-		let thrown: unknown;
-
-		try {
-			resolveIntegrationCatalog([requiredLinear], { LINEAR_API_KEY: undefined });
-		} catch (error) {
-			thrown = error;
-		}
-
-		expect(thrown).toBeInstanceOf(Error);
-
-		if (!(thrown instanceof Error)) throw new Error('expected Error');
-		expect(thrown.message).toContain('LINEAR_API_KEY');
-		expect(thrown.message).not.toContain(secret);
-	});
+	test.each(['', undefined])(
+		'missing required secret (%s) fails and names the env key',
+		(secret) => {
+			expect(() =>
+				resolveIntegrationCatalog([requiredLinear], {
+					LINEAR_API_KEY: secret,
+				}),
+			).toThrow('[mcp-catalog] required MCP "linear" missing secret LINEAR_API_KEY');
+		},
+	);
 
 	test('rejects empty or invalid catalog fields without exposing secrets', () => {
 		const secret = 'leak-me-please';
