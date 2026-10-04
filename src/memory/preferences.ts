@@ -42,18 +42,7 @@ export function createPreferenceStore(db: D1Database, clock: Clock): PreferenceS
 
 			if (text === '') return { ok: false, reason: 'empty' };
 
-			if (text.length > PREFERENCE_MAX_CHARS) return { ok: false, reason: 'too_long' };
-
-			const existing = await db
-				.prepare(
-					'SELECT id FROM memories WHERE subject_user_id = ?1 AND content = ?2 AND deleted_at IS NULL',
-				)
-				.bind(subjectUserId, text)
-				.all();
-
-			const [duplicate] = v.parse(v.array(idRow), existing.results);
-
-			if (duplicate) return { ok: true, id: duplicate.id };
+			if (Array.from(text).length > PREFERENCE_MAX_CHARS) return { ok: false, reason: 'too_long' };
 
 			const id = clock.newId();
 			const now = clock.now().toISOString();
@@ -64,12 +53,24 @@ export function createPreferenceStore(db: D1Database, clock: Clock): PreferenceS
 					`INSERT INTO memories
 					   (id, subject_user_id, content, source_conversation_id, source_user_id, created_at, updated_at)
 					 SELECT ?1, ?2, ?3, ?4, ?2, ?5, ?5
-					 WHERE (SELECT COUNT(*) FROM memories WHERE subject_user_id = ?2 AND deleted_at IS NULL) < ?6`,
+					 WHERE (SELECT COUNT(*) FROM memories WHERE subject_user_id = ?2 AND deleted_at IS NULL) < ?6
+					 ON CONFLICT (subject_user_id, content) WHERE deleted_at IS NULL DO NOTHING`,
 				)
 				.bind(id, subjectUserId, text, conversationId, now, PREFERENCE_LIMIT)
 				.run();
 
-			if (meta.changes === 0) return { ok: false, reason: 'limit' };
+			if (meta.changes === 0) {
+				const existing = await db
+					.prepare(
+						'SELECT id FROM memories WHERE subject_user_id = ?1 AND content = ?2 AND deleted_at IS NULL',
+					)
+					.bind(subjectUserId, text)
+					.all();
+
+				const [duplicate] = v.parse(v.array(idRow), existing.results);
+
+				return duplicate ? { ok: true, id: duplicate.id } : { ok: false, reason: 'limit' };
+			}
 
 			return { ok: true, id };
 		},

@@ -67,6 +67,76 @@ describe('PreferenceStore', () => {
 		expect(otherSubjectResult.ok).toBe(true);
 	});
 
+	test('counts Unicode code points toward the content limit', async () => {
+		const store = createPreferenceStore(openMigratedSqlite(), testClock());
+
+		const atLimit = await store.add('U_A', '😀'.repeat(PREFERENCE_MAX_CHARS), 'conv-1');
+		const overLimit = await store.add('U_A', '😀'.repeat(PREFERENCE_MAX_CHARS + 1), 'conv-1');
+
+		expect(atLimit.ok).toBe(true);
+		expect(overLimit).toEqual({ ok: false, reason: 'too_long' });
+	});
+
+	test('concurrent identical saves reuse one id and preserve original provenance', async () => {
+		const db = openMigratedSqlite();
+		const store = createPreferenceStore(db, testClock());
+
+		const [first, second] = await Promise.all([
+			store.add('U_A', 'Prefers small PRs', 'conv-1'),
+			store.add('U_A', '  Prefers small PRs ', 'conv-2'),
+		]);
+
+		const preferences = await store.list('U_A');
+
+		const { results } = await db
+			.prepare('SELECT source_conversation_id, created_at, updated_at FROM memories')
+			.all();
+
+		expect(first.ok).toBe(true);
+		expect(second).toEqual(first);
+		expect(preferences).toHaveLength(1);
+		expect(results).toEqual([
+			{
+				source_conversation_id: 'conv-1',
+				created_at: '2026-09-26T00:00:01.000Z',
+				updated_at: '2026-09-26T00:00:01.000Z',
+			},
+		]);
+	});
+
+	test('concurrent distinct saves cannot exceed the per-person limit', async () => {
+		const store = createPreferenceStore(openMigratedSqlite(), testClock());
+
+		const results = await Promise.all(
+			Array.from({ length: PREFERENCE_LIMIT + 1 }, (_, i) =>
+				store.add('U_A', `pref ${i}`, 'conv-1'),
+			),
+		);
+
+		const preferences = await store.list('U_A');
+
+		expect(results.filter((result) => result.ok)).toHaveLength(PREFERENCE_LIMIT);
+		expect(results.filter((result) => !result.ok)).toEqual([{ ok: false, reason: 'limit' }]);
+		expect(preferences).toHaveLength(PREFERENCE_LIMIT);
+	});
+
+	test('forgotten content can be saved again with a new id', async () => {
+		const store = createPreferenceStore(openMigratedSqlite(), testClock());
+
+		const first = await store.add('U_A', 'Prefers small PRs', 'conv-1');
+
+		await store.forget('U_A', 'mem_1');
+
+		const second = await store.add('U_A', 'Prefers small PRs', 'conv-2');
+		const otherSubject = await store.add('U_B', 'Prefers small PRs', 'conv-3');
+		const preferences = await store.list('U_A');
+
+		expect(second.ok).toBe(true);
+		expect(second).not.toEqual(first);
+		expect(otherSubject.ok).toBe(true);
+		expect(preferences).toHaveLength(1);
+	});
+
 	test('saving the same preference twice returns the existing id', async () => {
 		const store = createPreferenceStore(openMigratedSqlite(), testClock());
 
