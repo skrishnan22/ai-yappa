@@ -111,12 +111,15 @@ describe('slack WebClient factory', () => {
 		expect(tool.description).not.toMatch(/standard Markdown accepted by Slack/i);
 	});
 
-	test('submits standard Markdown unchanged through markdown_text', async () => {
+	test.each([
+		'Completed at **17:43:23.056Z**. Inline `**requestId**`.\n```text\n**traceId**\n```\n_italic_ and [link](https://example.com)',
+		'[example]',
+		'{name}',
+		'true',
+		'false',
+	])('submits Markdown unchanged through markdown_text: %s', async (text) => {
 		const calls = stubSlackApi();
 		const tool = replyInThread({ channelId: 'C-test', threadTs: '2.3' }, 'xoxb-injected');
-
-		const text =
-			'Completed at **17:43:23.056Z**. Inline `**requestId**`.\n```text\n**traceId**\n```\n_italic_ and [link](https://example.com)';
 
 		await expect(
 			tool.run({
@@ -139,12 +142,18 @@ describe('slack WebClient factory', () => {
 		expect(calls[0]?.params).not.toHaveProperty('text');
 	});
 
-	test('posts validated blocks with a top-level text fallback instead of markdown_text', async () => {
+	test.each([
+		'p95 latency fell from 480 ms on Monday to 210 ms on Wednesday.',
+		'[example]',
+		'{name}',
+		'true',
+		'false',
+	])('posts validated blocks with unchanged text fallback: %s', async (text) => {
 		const calls = stubSlackApi();
 		const tool = replyInThread({ channelId: 'C-test', threadTs: '2.3' }, 'xoxb-injected');
 
 		const data = v.parse(tool.input, {
-			text: 'p95 latency fell from 480 ms on Monday to 210 ms on Wednesday.',
+			text,
 			blocks: [
 				{ type: 'markdown', text: 'Latency after the cache change:' },
 				{

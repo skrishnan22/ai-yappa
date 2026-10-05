@@ -10,14 +10,13 @@ export type SlackApiCall = {
 
 export type SlackApiResponder = (call: SlackApiCall) => Promise<Record<string, JsonValue>>;
 
-// The WebClient form-encodes arguments. Decode booleans and JSON-encoded
-// objects and arrays so tests can assert on the arguments they passed.
-function decodeParam(value: string): JsonValue {
-	if (value === 'true') return true;
+// Decode the structured parameters used by these tests; text stays verbatim.
+function decodeParam(key: string, value: string): JsonValue {
+	if (key === 'blocks') return JSON.parse(value);
 
-	if (value === 'false') return false;
+	if (key === 'unfurl_links' || key === 'unfurl_media') return value === 'true';
 
-	return value.startsWith('[') || value.startsWith('{') ? JSON.parse(value) : value;
+	return value;
 }
 
 // Replaces the network only; the real Slack WebClient builds and sends the request.
@@ -34,7 +33,7 @@ export function stubSlackApi(
 			method: new URL(String(input)).pathname.replace('/api/', ''),
 			token: (headers.get('authorization') ?? '').replace('Bearer ', ''),
 			params: Object.fromEntries(
-				Array.from(new URLSearchParams(body), ([key, value]) => [key, decodeParam(value)]),
+				Array.from(new URLSearchParams(body), ([key, value]) => [key, decodeParam(key, value)]),
 			),
 		};
 
