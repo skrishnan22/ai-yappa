@@ -3,44 +3,15 @@ import * as v from 'valibot';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
 	__resetSlackClientForTests,
-	__setSlackClientFactoryForTests,
 	getSlackClient,
 	replyInThread,
 	slackFetch,
-	type SlackBotClient,
 } from './slack-reply.ts';
-
-const constructed: string[] = [];
-
-const posted: Array<Parameters<SlackBotClient['chat']['postMessage']>[0]> = [];
-
-function fakeClient(token: string): SlackBotClient {
-	constructed.push(token);
-
-	return {
-		chat: {
-			async postMessage(args) {
-				posted.push(args);
-
-				return { ok: true };
-			},
-			async update() {
-				return { ok: true };
-			},
-		},
-		conversations: {
-			async replies() {
-				return { ok: true, messages: [] };
-			},
-		},
-	};
-}
+import { stubSlackApi } from './testing/slack-api-stub.ts';
 
 afterEach(() => {
-	constructed.length = 0;
-	posted.length = 0;
+	vi.unstubAllGlobals();
 	vi.unstubAllEnvs();
-	__setSlackClientFactoryForTests();
 	__resetSlackClientForTests();
 });
 
@@ -110,11 +81,12 @@ describe('slack WebClient factory', () => {
 		}
 	});
 
-	test('replaces the cached client when the validated token changes', () => {
-		__setSlackClientFactoryForTests(fakeClient);
-		getSlackClient('xoxb-first');
-		getSlackClient('xoxb-second');
-		expect(constructed).toEqual(['xoxb-first', 'xoxb-second']);
+	test('replaces the cached client when the validated token changes', async () => {
+		const calls = stubSlackApi();
+
+		await getSlackClient('xoxb-first').chat.postMessage({ channel: 'C1', text: 'a' });
+		await getSlackClient('xoxb-second').chat.postMessage({ channel: 'C1', text: 'b' });
+		expect(calls.map((call) => call.token)).toEqual(['xoxb-first', 'xoxb-second']);
 	});
 
 	test('uses the local fallback when no Slack token was supplied', async () => {
@@ -139,12 +111,15 @@ describe('slack WebClient factory', () => {
 		expect(tool.description).not.toMatch(/standard Markdown accepted by Slack/i);
 	});
 
-	test('submits standard Markdown unchanged through markdown_text', async () => {
-		__setSlackClientFactoryForTests(fakeClient);
+	test.each([
+		'Completed at **17:43:23.056Z**. Inline `**requestId**`.\n```text\n**traceId**\n```\n_italic_ and [link](https://example.com)',
+		'[example]',
+		'{name}',
+		'true',
+		'false',
+	])('submits Markdown unchanged through markdown_text: %s', async (text) => {
+		const calls = stubSlackApi();
 		const tool = replyInThread({ channelId: 'C-test', threadTs: '2.3' }, 'xoxb-injected');
-
-		const text =
-			'Completed at **17:43:23.056Z**. Inline `**requestId**`.\n```text\n**traceId**\n```\n_italic_ and [link](https://example.com)';
 
 		await expect(
 			tool.run({
@@ -155,7 +130,7 @@ describe('slack WebClient factory', () => {
 		).resolves.toEqual({
 			output: { posted: true, text, blocks: null, channel: null, ts: null },
 		});
-		expect(posted).toEqual([
+		expect(calls.map((call) => call.params)).toEqual([
 			{
 				channel: 'C-test',
 				thread_ts: '2.3',
@@ -164,15 +139,21 @@ describe('slack WebClient factory', () => {
 				unfurl_media: false,
 			},
 		]);
-		expect(posted[0]).not.toHaveProperty('text');
+		expect(calls[0]?.params).not.toHaveProperty('text');
 	});
 
-	test('posts validated blocks with a top-level text fallback instead of markdown_text', async () => {
-		__setSlackClientFactoryForTests(fakeClient);
+	test.each([
+		'p95 latency fell from 480 ms on Monday to 210 ms on Wednesday.',
+		'[example]',
+		'{name}',
+		'true',
+		'false',
+	])('posts validated blocks with unchanged text fallback: %s', async (text) => {
+		const calls = stubSlackApi();
 		const tool = replyInThread({ channelId: 'C-test', threadTs: '2.3' }, 'xoxb-injected');
 
 		const data = v.parse(tool.input, {
-			text: 'p95 latency fell from 480 ms on Monday to 210 ms on Wednesday.',
+			text,
 			blocks: [
 				{ type: 'markdown', text: 'Latency after the cache change:' },
 				{
@@ -201,7 +182,7 @@ describe('slack WebClient factory', () => {
 		).resolves.toEqual({
 			output: { posted: true, text: data.text, blocks: null, channel: null, ts: null },
 		});
-		expect(posted).toEqual([
+		expect(calls.map((call) => call.params)).toEqual([
 			{
 				channel: 'C-test',
 				thread_ts: '2.3',
@@ -211,11 +192,11 @@ describe('slack WebClient factory', () => {
 				unfurl_media: false,
 			},
 		]);
-		expect(posted[0]).not.toHaveProperty('markdown_text');
+		expect(calls[0]?.params).not.toHaveProperty('markdown_text');
 	});
 
 	test('posts normalized table cells and header text', async () => {
-		__setSlackClientFactoryForTests(fakeClient);
+		const calls = stubSlackApi();
 		const tool = replyInThread({ channelId: 'C-test', threadTs: '2.3' }, 'xoxb-injected');
 
 		const data = v.parse(tool.input, {
@@ -242,7 +223,7 @@ describe('slack WebClient factory', () => {
 		).resolves.toEqual({
 			output: { posted: true, text: data.text, blocks: null, channel: null, ts: null },
 		});
-		expect(posted).toEqual([
+		expect(calls.map((call) => call.params)).toEqual([
 			{
 				channel: 'C-test',
 				thread_ts: '2.3',
@@ -299,7 +280,7 @@ describe('slack WebClient factory', () => {
 	});
 
 	test('posts with the injected token and thread reference', async () => {
-		__setSlackClientFactoryForTests(fakeClient);
+		const calls = stubSlackApi();
 		const tool = replyInThread({ channelId: 'C-test', threadTs: '2.3' }, 'xoxb-injected');
 		await expect(
 			tool.run({
@@ -310,7 +291,7 @@ describe('slack WebClient factory', () => {
 		).resolves.toEqual({
 			output: { posted: true, text: 'hello Slack', blocks: null, channel: null, ts: null },
 		});
-		expect(posted).toEqual([
+		expect(calls.map((call) => call.params)).toEqual([
 			{
 				channel: 'C-test',
 				thread_ts: '2.3',

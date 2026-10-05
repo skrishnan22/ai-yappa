@@ -34,13 +34,13 @@ Store all of these as secrets (wrangler secrets / `.env` locally); never commit 
 
 ## Your milestone: M1 — Skeleton loop (spec §10)
 
-Slack `@mention` in a channel → ingress worker verifies the Slack signature and routes to a Flue conversation owner keyed by the thread → owner creates a Daytona container Sandbox and wraps it with the Flue factory → model clones (public repo) and `ls` via sandbox tools → replies in the Slack thread. Filesystem sentinel stop/start is a unit test (`verifyContainerStopStartPersistence`), not part of every conversation create. `commandId` / fencing / Unknown Tool Outcome wait for M4.
+Slack `@mention` in a channel → ingress worker verifies the Slack signature and routes to a Flue conversation owner keyed by the thread → owner creates a Daytona container Sandbox and wraps it with the Flue factory → model clones (public repo) and `ls` via sandbox tools → replies in the Slack thread. Stop/start filesystem persistence is not checked on conversation create and has no automated test. `commandId` / fencing / Unknown Tool Outcome wait for M4.
 
 M1 acceptance:
 
 1. Mentioning the agent in a mapped channel produces a threaded reply containing real output from inside the sandbox.
 2. A second message in the same thread reaches the **same** conversation (same Flue agent ID). Unmentioned replies in a thread the bot never joined are dropped (`getAgentInstance` is null).
-3. The Daytona sandbox class is `container`; creation sets a 15-minute auto-stop, disables auto-pause and auto-delete, and does not make the sandbox ephemeral. No test or production path calls `pause()`. Stop/start filesystem survival is asserted in `src/sandboxes/daytona.test.ts`.
+3. The Daytona sandbox class is `container`; creation sets a 15-minute auto-stop, disables auto-pause and auto-delete, and does not make the sandbox ephemeral. No test or production path calls `pause()`. Stop/start filesystem survival requires a separate manual check against a real Daytona container: write a sentinel, stop/start the same container, and read it back. There is no automated persistence test or recorded live acceptance evidence here.
 4. Deferred to M4: command results carry `commandId` and fencing token; kill the sandbox mid-command and record `Unknown Tool Outcome` rather than a failure.
 5. The channel→repo mapping and invoker allowlist exist as config (hardcoded config file is fine for M1).
 6. `README.md` documents local dev (`vite dev` + tunnel for Slack events), deployment, and the container lifecycle.

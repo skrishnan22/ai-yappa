@@ -26,8 +26,6 @@ export const CONTAINER_AUTO_ARCHIVE_MINUTES = 7 * 24 * 60;
 
 export const CONTAINER_RESOURCES = { cpu: 2, memory: 4, disk: 3 };
 
-export const M1_PERSISTENCE_PROBE_PATH = '/workspace/.slack-agent-persistence-probe';
-
 export const CONTAINER_IMAGE_COMMANDS = [
 	'RUN apt-get update && apt-get install -y git build-essential python3 && rm -rf /var/lib/apt/lists/*',
 	'RUN corepack enable',
@@ -438,24 +436,6 @@ export async function createContainerSandbox(
 		await sandbox.delete?.(60, true);
 		throw error;
 	}
-
-	return sandbox;
-}
-
-export async function verifyContainerStopStartPersistence(
-	sandbox: DaytonaSandboxLike,
-): Promise<DaytonaSandboxLike> {
-	const marker = Buffer.from(`sandbox:${sandbox.id}`, 'utf8');
-	await sandbox.fs.uploadFile(marker, M1_PERSISTENCE_PROBE_PATH);
-	await sandbox.stop();
-	await sandbox.start();
-	const restored = await sandbox.fs.downloadFile(M1_PERSISTENCE_PROBE_PATH);
-
-	if (!restored.equals(marker)) {
-		throw new Error('[slack-agent] Daytona container filesystem did not survive stop/start');
-	}
-
-	await sandbox.fs.deleteFile(M1_PERSISTENCE_PROBE_PATH);
 
 	return sandbox;
 }

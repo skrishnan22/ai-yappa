@@ -5,12 +5,11 @@ import {
 	coworkerInstructions,
 	hydrateWorkspace,
 	installCommandForLockfile,
-	markerMatchesRepo,
 	WORKSPACE_READY_PATH,
 	WORKSPACE_REPO_DIR,
-	workingBranchName,
 	type HydrateIo,
 } from './hydrate.ts';
+import { workingBranchName } from '../proxy/checkpoint.ts';
 
 async function sha256Hex(text: string): Promise<string> {
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
@@ -179,12 +178,15 @@ describe('hydrateWorkspace', () => {
 		expect(io.commands.some((command) => command.includes('git clone'))).toBe(true);
 	});
 
-	test('rehydrates when the marker is for a different repo', async () => {
+	test.each([
+		[
+			'is for a different repo',
+			JSON.stringify({ version: 1, repo: 'https://github.com/other/repo.git' }),
+		],
+		['is not valid JSON', 'nope'],
+	])('rehydrates when the marker %s', async (_name, marker) => {
 		const files = new Map<string, string>([
-			[
-				WORKSPACE_READY_PATH,
-				JSON.stringify({ version: 1, repo: 'https://github.com/other/repo.git' }),
-			],
+			[WORKSPACE_READY_PATH, marker],
 			[`${WORKSPACE_REPO_DIR}/pnpm-lock.yaml`, 'lock: 1\n'],
 		]);
 
@@ -197,18 +199,6 @@ describe('hydrateWorkspace', () => {
 
 		expect(result.skipped).toBe(false);
 		expect(io.commands.some((command) => command.includes('git clone'))).toBe(true);
-	});
-});
-
-describe('markerMatchesRepo', () => {
-	test('rejects invalid JSON and other repos', () => {
-		expect(markerMatchesRepo('nope', 'https://github.com/a/b.git')).toBe(false);
-		expect(
-			markerMatchesRepo(
-				JSON.stringify({ version: 1, repo: 'https://github.com/a/b.git' }),
-				'https://github.com/a/c.git',
-			),
-		).toBe(false);
 	});
 });
 

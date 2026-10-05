@@ -18,19 +18,6 @@ export type SlackBotClient = {
 	};
 };
 
-export type SlackClientFactory = (token: string) => SlackBotClient;
-
-function defaultSlackClient(token: string): SlackBotClient {
-	return new WebClient(token, {
-		// workerd's fetch is a method. WebClient stores globalThis.fetch and calls it
-		// unbound, which throws Illegal invocation. It also sets redirect: 'error',
-		// which workerd does not implement.
-		fetch: slackFetch,
-	});
-}
-
-let createSlackClient: SlackClientFactory = defaultSlackClient;
-
 // Lazily constructed: importing this module (e.g. from `flue run`, which has
 // no Slack token) must not build a client with an `undefined` token. The
 // caller supplies the value validated at its execution boundary.
@@ -40,7 +27,12 @@ let cached: SlackBotClient | undefined;
 
 export function getSlackClient(token: string): SlackBotClient {
 	if (!cached || cachedForToken !== token) {
-		cached = createSlackClient(token);
+		cached = new WebClient(token, {
+			// workerd's fetch is a method. WebClient stores globalThis.fetch and calls it
+			// unbound, which throws Illegal invocation. It also sets redirect: 'error',
+			// which workerd does not implement.
+			fetch: slackFetch,
+		});
 		cachedForToken = token;
 	}
 
@@ -51,12 +43,6 @@ export function getSlackClient(token: string): SlackBotClient {
 export function __resetSlackClientForTests(): void {
 	cached = undefined;
 	cachedForToken = undefined;
-}
-
-/** Test-only: replace the Slack client constructor. */
-export function __setSlackClientFactoryForTests(factory?: SlackClientFactory): void {
-	createSlackClient = factory ?? defaultSlackClient;
-	__resetSlackClientForTests();
 }
 
 export function replyInThread(

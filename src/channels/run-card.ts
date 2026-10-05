@@ -59,7 +59,7 @@ const STEP_BY_TOOL = {
 
 type SlackBlock = KnownBlock;
 
-export type SlackCardPort = {
+type SlackCardPort = {
 	post(args: {
 		channel: string;
 		threadTs: string;
@@ -76,7 +76,6 @@ type CardHandle = {
 	token?: string;
 	state: RunCardState | null;
 	persist: (state: RunCardState) => void;
-	port?: SlackCardPort;
 	chain: Promise<void>;
 	model?: string;
 	thinkingLevel?: string;
@@ -105,7 +104,6 @@ export function bindRunCard(args: {
 	token?: string;
 	state: RunCardState | null;
 	persist: (state: RunCardState) => void;
-	port?: SlackCardPort;
 	model?: string;
 	thinkingLevel?: string;
 	modelIsDefault?: boolean;
@@ -132,7 +130,6 @@ export function bindRunCard(args: {
 	handle.threadTs = args.threadTs;
 	handle.token = args.token;
 	handle.persist = args.persist;
-	handle.port = args.port;
 	handle.model = args.model;
 	handle.thinkingLevel = args.thinkingLevel;
 	handle.modelIsDefault = args.modelIsDefault;
@@ -207,9 +204,9 @@ async function deliverCardEvent(event: RoutedCardEvent, now: number): Promise<vo
 	handle.state = nextState;
 
 	try {
-		const port = handle.port ?? (handle.token ? slackCardPort(handle.token) : undefined);
+		const port = handle.token ? slackCardPort(handle.token) : undefined;
 
-		if (port !== undefined) {
+		if (port) {
 			const rendered = renderRunCard(nextState, now);
 
 			if (nextState.messageTs) {

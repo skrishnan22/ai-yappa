@@ -4,8 +4,6 @@ import { jsonValueSchema } from '../json.ts';
 import { workingBranchName } from '../proxy/checkpoint.ts';
 import type { DaytonaSandboxLike } from './daytona.ts';
 
-export { workingBranchName };
-
 export const WORKSPACE_REPO_DIR = '/workspace/repo';
 
 export const WORKSPACE_READY_PATH = '/workspace/.workspace_ready';
@@ -70,12 +68,6 @@ export function coworkerInstructions(repo: string): string {
 		'A live run card is posted by owner code. Do not try to create or edit it.',
 		'Reply with the reply_in_slack_thread tool for questions and the human-visible summary.',
 	].join(' ');
-}
-
-export function markerMatchesRepo(contents: string, repo: string): boolean {
-	const marker = parseReadyMarker(contents);
-
-	return marker !== undefined && marker.repo === repo;
 }
 
 type ReadyMarker = {
