@@ -47,6 +47,8 @@ const voteRowSchema = v.object({
 	updated_at: v.string(),
 });
 
+// Rebuilds the discriminated Question from a flat row; throws on a row whose
+// kind/status columns are inconsistent.
 function readQuestion(raw: JsonObject): Question {
 	const row = v.parse(questionRowSchema, raw);
 	let content: QuestionContent;
@@ -94,6 +96,8 @@ function readQuestion(raw: JsonObject): Question {
 
 export function createQuestionStore(db: D1Database): QuestionStore {
 	return {
+		// Close-then-insert in one batch (one D1 transaction): if the insert fails,
+		// the previous question stays open. one_open_question backs this up.
 		async openQuestion(question) {
 			await db.batch([
 				db
@@ -142,6 +146,7 @@ export function createQuestionStore(db: D1Database): QuestionStore {
 
 			const question = readQuestion(row);
 
+			// Unreachable given the WHERE clause; narrows the type without a cast.
 			if (question.status !== 'open') throw new Error('Expected an open question');
 
 			return question;
@@ -154,6 +159,8 @@ export function createQuestionStore(db: D1Database): QuestionStore {
 
 			return meta.changes === 1;
 		},
+		// Close and submit only touch an open row, so exactly one caller sees
+		// changes === 1 and wins; later callers get false.
 		async closeQuestion(questionId, closedAt) {
 			const { meta } = await db
 				.prepare(
@@ -173,6 +180,7 @@ export function createQuestionStore(db: D1Database): QuestionStore {
 
 			return meta.changes === 1;
 		},
+		// DO NOTHING keeps the first join time.
 		async upsertParticipant({ conversationId, userId, joinedAt }) {
 			await db
 				.prepare(`INSERT INTO thread_participants (conversation_id, user_id, joined_at)
@@ -196,6 +204,8 @@ export function createQuestionStore(db: D1Database): QuestionStore {
 				joinedAt: row.joined_at,
 			}));
 		},
+		// Insert or change one vote per user, only while the question is an open
+		// choice question that has this choice id. Returns false otherwise.
 		async upsertVote(vote) {
 			const { meta } = await db
 				.prepare(`INSERT INTO votes (question_id, user_id, choice_id, user_name, updated_at)

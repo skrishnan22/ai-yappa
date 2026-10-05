@@ -1,3 +1,4 @@
+-- /grill-me questions. A thread is a group when it has more than one participant.
 CREATE TABLE thread_participants (
   conversation_id TEXT NOT NULL,
   user_id TEXT NOT NULL,
@@ -15,22 +16,12 @@ CREATE TABLE questions (
   title TEXT NOT NULL,
   body TEXT,
   recommendation TEXT NOT NULL,
-  choices TEXT,
+  choices TEXT, -- JSON array of { id, label, recommended? }; NULL for open questions
   status TEXT NOT NULL CHECK (status IN ('open', 'submitted', 'closed')),
   submitted_by TEXT,
   submitted_by_name TEXT,
   created_at TEXT NOT NULL,
-  closed_at TEXT,
-  CHECK (
-    (kind = 'open' AND choices IS NULL) OR
-    (kind = 'choice' AND choices IS NOT NULL AND json_valid(choices)
-      AND json_type(choices) = 'array' AND json_array_length(choices) BETWEEN 2 AND 5)
-  ),
-  CHECK (
-    (status = 'open' AND closed_at IS NULL AND submitted_by IS NULL AND submitted_by_name IS NULL) OR
-    (status = 'closed' AND closed_at IS NOT NULL AND submitted_by IS NULL AND submitted_by_name IS NULL) OR
-    (status = 'submitted' AND closed_at IS NOT NULL AND submitted_by IS NOT NULL AND submitted_by_name IS NOT NULL)
-  )
+  closed_at TEXT
 );
 
 CREATE UNIQUE INDEX one_open_question ON questions (conversation_id) WHERE status = 'open';

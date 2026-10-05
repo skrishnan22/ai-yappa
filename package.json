@@ -10,7 +10,6 @@
 		"dev": "vite dev",
 		"build": "vite build",
 		"deploy": "vite build && wrangler deploy",
-		"db:smoke:questions": "node scripts/question-store-smoke.mjs",
 		"check:types": "tsc --noEmit",
 		"check:env": "node scripts/check-env-sync.mjs",
 		"lint": "oxlint src",

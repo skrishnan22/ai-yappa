@@ -145,23 +145,11 @@ A threaded reply that reflects work in the already-cloned repo (not clone/`ls` a
 
 ## Application database
 
-`APP_DB` and `MEMORY_DB` in `wrangler.jsonc` point to the same provisioned `slack-agent-memory` D1 database. They share the SQL migrations in `migrations/`: preferences and questions coexist in that database. `APP_DB` is the binding for question storage; the existing memory binding remains available.
-
-Run the question SQL smoke check with:
-
-```bash
-pnpm run db:smoke:questions
-```
-
-It applies every migration to a fresh temporary local D1 database, verifies participant deduplication, vote changes and first-wins submission, then removes the database. It never uses the remote database. Unit tests also exercise the production store's SQL through Node SQLite and run the same behavior suite against an in-memory fake.
-
-Before deploying code that uses new tables, apply pending migrations once through either binding:
+`APP_DB` (questions) and `MEMORY_DB` (memory) are two bindings to the same `slack-agent-memory` D1 database and share `migrations/`. Worker deploys do not apply D1 migrations; apply pending ones before deploying code that needs them:
 
 ```bash
 pnpm exec wrangler d1 migrations apply APP_DB --remote
 ```
-
-This requires D1 write permission in the database's Cloudflare account. Wrangler records applied migrations in the shared database; applying through `MEMORY_DB` sees the same history. Worker deployment does not apply D1 migrations. The question-store foundation adds no Slack behavior; question tools and ingress changes ship in later PRs.
 
 ## Deploy
 

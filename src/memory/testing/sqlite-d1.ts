@@ -6,9 +6,10 @@ import type { D1Database, D1Statement, D1Value } from '../d1.ts';
 
 const MIGRATIONS = new URL('../../../migrations/', import.meta.url);
 
-// Runs the same SQL as D1. Batch execution stays synchronous inside one
-// transaction so concurrent tests cannot interleave operations across awaits.
-export function openMigratedSqlite(): D1Database & { close(): void } {
+// Runs every migration in order against an in-memory SQLite database and
+// exposes it through the same D1 contract production code uses. Like D1,
+// batch() is one transaction: a failing statement rolls back the whole batch.
+export function openMigratedSqlite(): D1Database {
 	const db = new DatabaseSync(':memory:');
 	db.exec('PRAGMA foreign_keys = ON');
 
@@ -25,9 +26,7 @@ export function openMigratedSqlite(): D1Database & { close(): void } {
 
 			try {
 				const results = statements.map((statement) => {
-					if (!(statement instanceof SqliteStatement) || statement.db !== db) {
-						throw new Error('Batch statement belongs to a different database');
-					}
+					if (!(statement instanceof SqliteStatement)) throw new Error('Not a SQLite statement');
 
 					return statement.execute();
 				});
@@ -41,13 +40,12 @@ export function openMigratedSqlite(): D1Database & { close(): void } {
 				throw error;
 			}
 		},
-		close: () => db.close(),
 	};
 }
 
 class SqliteStatement implements D1Statement {
 	constructor(
-		readonly db: DatabaseSync,
+		private readonly db: DatabaseSync,
 		private readonly sql: string,
 		private readonly values: D1Value[] = [],
 	) {}
