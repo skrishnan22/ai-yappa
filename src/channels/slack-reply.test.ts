@@ -1,3 +1,4 @@
+import * as slack from '@slack/web-api';
 import * as v from 'valibot';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
@@ -90,9 +91,23 @@ describe('slackFetch', () => {
 describe('slack WebClient factory', () => {
 	test('importing the module does not construct a client without a token', async () => {
 		vi.stubEnv('SLACK_BOT_TOKEN', '');
-		__setSlackClientFactoryForTests(fakeClient);
-		await import('./slack-reply.ts');
-		expect(constructed).toEqual([]);
+		const WebClient = slack.WebClient;
+
+		const constructor = vi.spyOn(slack, 'WebClient').mockImplementation(function (...args) {
+			return new WebClient(...args);
+		});
+
+		vi.resetModules();
+
+		try {
+			const fresh = await import('./slack-reply.ts');
+			expect(constructor).not.toHaveBeenCalled();
+
+			fresh.getSlackClient('xoxb-test');
+			expect(constructor).toHaveBeenCalledOnce();
+		} finally {
+			constructor.mockRestore();
+		}
 	});
 
 	test('replaces the cached client when the validated token changes', () => {
