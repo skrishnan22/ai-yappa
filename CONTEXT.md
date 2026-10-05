@@ -86,6 +86,10 @@ _Avoid_: Automatic model routing
 The model and thinking level the invoker picks for an Agent Conversation with `$model:` and `$effort:` in the first mention, from the deployment's alias allowlist. Recorded once at creation; later mentions cannot change it.
 _Avoid_: Model switching, per-user default
 
+**Skill**:
+A packaged procedure in Agent Skills format (`SKILL.md`) that the Coworker loads on demand. Deployment skills live in `src/skills/`. The model activates one when a request matches its description, or a mention invokes one with `/<name>`. Skills in the bound repository's `.agents/skills/` are also in the catalog, but a repo skill with a deployment skill's name fails the session.
+_Avoid_: Command, plugin, slash command (that is `/aiyappa`)
+
 **Codex Credential**:
 The deployment's single ChatGPT subscription login (OAuth access and refresh token) that the ChatGPT Model Route bills against. One `CodexAuth` Durable Object owns it; only access tokens leave that object.
 _Avoid_: OpenAI API key, per-user login

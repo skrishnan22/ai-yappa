@@ -4,12 +4,14 @@ import { Daytona } from '@daytona/sdk';
 import {
 	observe,
 	useAgentFinish,
+	useAgentStart,
 	useDelivery,
 	useInitialData,
 	useMcpConnection,
 	useModel,
 	usePersistentState,
 	useSandbox,
+	useSkill,
 	useTool,
 	type FlueObservation,
 } from '@flue/runtime';
@@ -32,6 +34,8 @@ import {
 	hydrateWorkspace,
 	WORKSPACE_REPO_DIR,
 } from '../sandboxes/hydrate.ts';
+import { skills } from '../skills/index.ts';
+import { invokedSkills } from '../skills/invocation.ts';
 import { githubTools } from './github-tools.ts';
 import { coworkerModel, modelChoiceSchema } from './model-choice.ts';
 import { deliveredModelRoute } from './model-route.ts';
@@ -61,7 +65,8 @@ export function Coworker(props: { id: string }) {
 		throw new Error('This agent is created by the Slack channel dispatch.');
 	}
 
-	const route = deliveredModelRoute(useDelivery());
+	const delivery = useDelivery();
+	const route = deliveredModelRoute(delivery);
 	// A choice recorded by an older deploy that no longer validates falls back
 	// to the default route instead of breaking the thread.
 	const choice = v.is(modelChoiceSchema, data.modelChoice) ? data.modelChoice : undefined;
@@ -114,6 +119,38 @@ export function Coworker(props: { id: string }) {
 	})) {
 		useTool(tool);
 	}
+
+	// The model activates a skill on its own when a request matches its
+	// description; `/<name>` in a mention makes it activate that one first.
+	for (const skill of skills) {
+		useSkill(skill);
+	}
+
+	const invoked =
+		delivery.kind === 'signal' && delivery.type === 'slack.app_mention'
+			? invokedSkills(delivery.body, new Set(skills.map((skill) => skill.name)))
+			: [];
+
+	useAgentStart(({ append }) => {
+		if (invoked.length === 0) return;
+
+		append({
+			kind: 'signal',
+			type: 'skill_invoked',
+			body: `The user invoked ${invoked.map((name) => `/${name}`).join(' and ')}. Before anything else, call activate_skill for ${invoked.join(' and ')}, then follow the skill for this request.`,
+		});
+	});
+	// Same guard shape as the Slack reply: a stop without the activation goes
+	// back to work. Later renders read the appended reminder as the delivery,
+	// so this reminds once, alongside the reply guard.
+	useAgentFinish(({ response, append }) => {
+		if (hasSkillActivations(response.toolCalls, invoked.length)) return;
+		append({
+			kind: 'signal',
+			type: 'reminder',
+			body: `The user invoked ${invoked.map((name) => `/${name}`).join(' and ')}, but you have not called activate_skill. Call it now, then answer by following the skill.`,
+		});
+	});
 
 	// Optional Exa / Parallel keys — same optional-secret posture as MCP catalog.
 	for (const tool of webSearchTools(process.env)) {
@@ -177,6 +214,15 @@ export function Coworker(props: { id: string }) {
 Coworker.initialData = initialDataSchema;
 
 Coworker.agentName = 'coworker';
+
+export function hasSkillActivations(
+	toolCalls: readonly { tool: string; isError: boolean }[],
+	required: number,
+): boolean {
+	return (
+		toolCalls.filter((call) => call.tool === 'activate_skill' && !call.isError).length >= required
+	);
+}
 
 export function hasSuccessfulSlackReply(
 	toolCalls: readonly { tool: string; isError: boolean }[],
