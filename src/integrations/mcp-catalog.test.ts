@@ -112,7 +112,7 @@ describe('resolveIntegrationCatalog', () => {
 
 	test('missing optional secret omits only that connection and emits a credential-free warning', () => {
 		const result = resolveIntegrationCatalog([cloudflare, requiredLinear], {
-			LINEAR_API_KEY: 'lin-ok',
+			LINEAR_API_KEY: 'lin-secret-value',
 			// CLOUDFLARE_MCP_API_TOKEN intentionally absent
 		});
 
@@ -121,12 +121,13 @@ describe('resolveIntegrationCatalog', () => {
 				name: 'linear',
 				url: 'https://mcp.linear.app/mcp',
 				optional: false,
-				authorization: { kind: 'bearer', value: 'lin-ok' },
+				authorization: { kind: 'bearer', value: 'lin-secret-value' },
 			},
 		]);
 		expect(result.warnings).toEqual([
 			'[mcp-catalog] skipping optional MCP "cloudflare": missing CLOUDFLARE_MCP_API_TOKEN',
 		]);
+		expect(result.warnings.join('\n')).not.toContain('lin-secret-value');
 	});
 
 	test.each(['', undefined])(

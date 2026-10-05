@@ -67,6 +67,8 @@ describe('sqlCredentialRecords', () => {
 		expect(row?.record).toEqual(expect.any(String));
 		expect(row?.record).not.toContain('refresh-1');
 
+		await expect(store.list()).resolves.toEqual([{ providerId: 'openai-codex', type: 'oauth' }]);
+
 		await store.delete('openai-codex');
 
 		await expect(store.read('openai-codex')).resolves.toBeUndefined();

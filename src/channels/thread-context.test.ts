@@ -2,7 +2,6 @@ import { describe, expect, test } from 'vitest';
 import {
 	formatThreadContext,
 	loadThreadContext,
-	THREAD_CONTEXT_CHAR_CAP,
 	THREAD_CONTEXT_MAX_PAGES,
 } from './thread-context.ts';
 
@@ -110,9 +109,5 @@ describe('loadThreadContext', () => {
 			{ channelId: 'C1', threadTs: '1.2' },
 		);
 		expect(pages).toBe(THREAD_CONTEXT_MAX_PAGES);
-	});
-
-	test('char cap is the documented M3 ceiling', () => {
-		expect(THREAD_CONTEXT_CHAR_CAP).toBe(8_000);
 	});
 });

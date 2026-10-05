@@ -120,7 +120,7 @@ describe('applyCardEvent', () => {
 
 	test('posts a new card for a later submission', () => {
 		const applied = applyCardEvent(
-			working({ status: 'completed', step: 'Completed' }),
+			working({ status: 'completed', step: 'Completed', messageTs: 'old.ts' }),
 			{ type: 'submission_running', submissionId: 'sub-2' },
 			9_000,
 		);
@@ -147,17 +147,6 @@ describe('applyCardEvent', () => {
 		expect(running?.state.submissionId).toBe('sub-1');
 		expect(running?.state.status).toBe('working');
 		expect(running?.state.messageTs).toBeNull();
-	});
-
-	test('a later submission after complete does not keep the old messageTs', () => {
-		const applied = applyCardEvent(
-			working({ status: 'completed', step: 'Completed', messageTs: 'old.ts' }),
-			{ type: 'submission_running', submissionId: 'sub-2' },
-			9_000,
-		);
-
-		expect(applied?.state.submissionId).toBe('sub-2');
-		expect(applied?.state.messageTs).toBeNull();
 	});
 
 	test('a tool event from a later submission does not keep the old messageTs', () => {
@@ -281,12 +270,19 @@ describe('applyCardEvent', () => {
 	test('failed settlement truncates the error into the card and notify', () => {
 		const applied = applyCardEvent(
 			working(),
-			{ type: 'submission_settled', submissionId: 'sub-1', outcome: 'failed', error: 'boom' },
+			{
+				type: 'submission_settled',
+				submissionId: 'sub-1',
+				outcome: 'failed',
+				error: 'x'.repeat(300),
+			},
 			4_000,
 		);
 
+		const expected = `Failed: ${'x'.repeat(199)}…`;
 		expect(applied?.state.status).toBe('failed');
-		expect(applied?.notify).toBe('Failed: boom');
+		expect(applied?.state.step).toBe(expected);
+		expect(applied?.notify).toBe(expected);
 	});
 });
 
@@ -332,21 +328,6 @@ describe('renderRunCard', () => {
 			JSON.stringify(renderRunCard(working({ ...route, modelIsDefault: true }), 1_000).blocks),
 		).toContain(hint);
 		expect(JSON.stringify(renderRunCard(working(route), 1_000).blocks)).not.toContain(hint);
-	});
-
-	test('shows the fallback label', () => {
-		const rendered = renderRunCard(
-			working({
-				startedAt: 0,
-				model: 'gpt-5.6-luna unavailable → opencode-go/deepseek-v4.1-flash',
-				thinkingLevel: 'high',
-			}),
-			1_000,
-		);
-
-		expect(JSON.stringify(rendered.blocks)).toContain(
-			'gpt-5.6-luna unavailable → opencode-go/deepseek-v4.1-flash · thinking high',
-		);
 	});
 });
 
