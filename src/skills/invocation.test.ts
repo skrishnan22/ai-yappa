@@ -13,6 +13,8 @@ describe('invokedSkills', () => {
 			['grill-me', 'review'],
 		],
 		['paths and URLs', '<@U1> see /usr/bin, https://x.dev/grill-me and /grill-me/notes', []],
+		['a filename', '<@U1> please read /grill-me.md and /grill-me.v2', []],
+		['a question at the end', '<@U1> can you /grill-me?', ['grill-me']],
 		['an unknown name', '<@U1> run /deploy now', []],
 		['a code span', '<@U1> type `/grill-me` to start', []],
 	])('reads %s', (_case, text, expected) => {

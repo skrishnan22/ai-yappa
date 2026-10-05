@@ -1,7 +1,8 @@
 // `/grill-me` as its own word: it must start the text or follow whitespace,
-// and end at whitespace, the end, or sentence punctuation, so paths
-// (`/usr/bin`, `/grill-me/notes`) and URLs never match.
-const SKILL_MENTION = /(?<!\S)\/([a-z0-9]+(?:-[a-z0-9]+)*)(?![^\s.,!?;:])/gi;
+// and end at whitespace or the end, optionally after sentence punctuation.
+// Paths (`/usr/bin`, `/grill-me/notes`), filenames (`/grill-me.md`), and URLs
+// never match.
+const SKILL_MENTION = /(?<!\S)\/([a-z0-9]+(?:-[a-z0-9]+)*)(?=[.,!?;:]*(?:\s|$))/gi;
 
 /**
  * The registered skills a Slack mention invokes with `/<name>`, distinct and
