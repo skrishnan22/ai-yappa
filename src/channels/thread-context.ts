@@ -1,6 +1,7 @@
 export type ThreadMessage = {
 	user?: string;
 	bot_id?: string;
+	subtype?: string;
 	text?: string;
 };
 
@@ -42,10 +43,10 @@ export function formatThreadContext(
 	return out;
 }
 
-export async function loadThreadContext(
+export async function loadThreadMessages(
 	client: ThreadRepliesClient,
 	thread: { channelId: string; threadTs: string },
-): Promise<string | undefined> {
+): Promise<ThreadMessage[]> {
 	const messages: ThreadMessage[] = [];
 	let cursor: string | undefined;
 
@@ -73,6 +74,14 @@ export async function loadThreadContext(
 		cursor = next;
 	}
 
+	return messages;
+}
+
+export async function loadThreadContext(
+	client: ThreadRepliesClient,
+	thread: { channelId: string; threadTs: string },
+): Promise<string | undefined> {
+	const messages = await loadThreadMessages(client, thread);
 	const formatted = formatThreadContext(messages);
 
 	return formatted.length > 0 ? formatted : undefined;

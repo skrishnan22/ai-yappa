@@ -1,6 +1,8 @@
 // flue-blueprint: channel/slack@1
 import { dispatch, getAgentInstance } from '@flue/runtime';
 import { createSlackChannel, type SlackThreadRef } from '@flue/slack';
+import { handleQuestionInteraction } from '../questions/interactions.ts';
+import { workerQuestionStore, type QuestionStoreFactory } from '../questions/worker-store.ts';
 import { Coworker } from '../agents/coworker.ts';
 import { type ModelRoute, modelRouteFor } from '../agents/model-route.ts';
 import { isAllowedInvoker, repoForChannel } from '../config.ts';
@@ -46,9 +48,21 @@ export function createSlackChannelForEnv(
 	env: ServerEnv,
 	codexAuth: () => CodexAuthControl,
 	runtime: SlackRuntime = defaultSlackRuntime,
+	questionStore: QuestionStoreFactory = workerQuestionStore,
 ) {
 	const channel = createSlackChannel({
 		signingSecret: env.SLACK_SIGNING_SECRET,
+
+		interactions({ c, payload }) {
+			c.executionCtx.waitUntil(
+				handleQuestionInteraction(
+					payload,
+					questionStore,
+					getSlackClient(env.SLACK_BOT_TOKEN),
+					(ref) => channel.instanceId(ref),
+				),
+			);
+		},
 
 		commands({ payload }) {
 			return handleSlashCommand(payload, codexAuth);

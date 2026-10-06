@@ -103,6 +103,20 @@ describe('QuestionStore (D1)', () => {
 		expect(current?.id).toBe('q1');
 	});
 
+	test('reopens a closed question only while its conversation has no open question', async () => {
+		await store.openQuestion(question());
+		await store.openQuestion({ ...question('q2'), createdAt: LATER });
+		const blocked = await store.reopenQuestion('q1');
+		await close('q2', LATER);
+		const reopened = await store.reopenQuestion('q1');
+		const again = await store.reopenQuestion('q1');
+		await submit('q1', 'U1', 'Maya', LATER);
+		const submitted = await store.reopenQuestion('q1');
+		const current = await store.getQuestion('q1');
+		expect([blocked, reopened, again, submitted]).toEqual([false, true, false, false]);
+		expect(current).toMatchObject({ status: 'submitted' });
+	});
+
 	test('the database allows one open question per conversation', async () => {
 		await store.openQuestion(question());
 
@@ -183,6 +197,16 @@ describe('QuestionStore (D1)', () => {
 		const votes = await store.listVotes('q1');
 		expect([first, second]).toEqual([true, true]);
 		expect(votes).toEqual([vote('U1', 'B'), changed]);
+	});
+
+	test('a retried older click cannot overwrite a newer vote', async () => {
+		await store.openQuestion(question());
+		const newer = { ...vote('U1', 'B'), updatedAt: LATER };
+		await store.upsertVote(newer);
+		const older = await store.upsertVote(vote('U1', 'A'));
+		const votes = await store.listVotes('q1');
+		expect(older).toBe(false);
+		expect(votes).toEqual([newer]);
 	});
 
 	test('rejects votes for unknown choices and missing, submitted or open-ended questions', async () => {
