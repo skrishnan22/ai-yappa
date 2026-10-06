@@ -77,11 +77,10 @@ const SQL = {
 	listParticipants:
 		'SELECT * FROM thread_participants WHERE conversation_id = ?1 ORDER BY joined_at, user_id',
 	upsertVote: `INSERT INTO votes (question_id, user_id, choice_id, user_name, updated_at)
-		SELECT ?1, ?2, ?3, ?4, ?5 WHERE EXISTS (
-			SELECT 1 FROM questions q, json_each(q.choices) choice
-			WHERE q.id = ?1 AND q.status = 'open' AND q.kind = 'choice'
-			AND json_extract(choice.value, '$.id') = ?3
-		) ON CONFLICT (question_id, user_id) DO UPDATE SET
+		SELECT id, ?2, ?3, ?4, ?5 FROM questions
+		WHERE id = ?1 AND status = 'open' AND kind = 'choice'
+			AND EXISTS (SELECT 1 FROM json_each(choices) WHERE value ->> 'id' = ?3)
+		ON CONFLICT (question_id, user_id) DO UPDATE SET
 		choice_id = excluded.choice_id, user_name = excluded.user_name, updated_at = excluded.updated_at`,
 	listVotes: 'SELECT * FROM votes WHERE question_id = ?1 ORDER BY user_id',
 };
