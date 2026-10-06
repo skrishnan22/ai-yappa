@@ -1,6 +1,6 @@
 import * as v from 'valibot';
 import type { JsonObject } from '../json.ts';
-import type { D1Database, D1Value } from '../memory/d1.ts';
+import type { D1Database, D1Statement, D1Value } from '../memory/d1.ts';
 import type {
 	OpenQuestion,
 	Question,
@@ -63,6 +63,29 @@ const voteRowSchema = v.object({
 	updated_at: v.string(),
 });
 
+const SQL = {
+	closeOpenQuestion:
+		"UPDATE questions SET status = 'closed', closed_at = ?2 WHERE conversation_id = ?1 AND status = 'open'",
+	questionById: 'SELECT * FROM questions WHERE id = ?1',
+	openQuestion: "SELECT * FROM questions WHERE conversation_id = ?1 AND status = 'open'",
+	setMessageTs: 'UPDATE questions SET message_ts = ?2 WHERE id = ?1',
+	finishQuestion: `UPDATE questions
+		SET status = ?2, closed_at = ?3, submitted_by = ?4, submitted_by_name = ?5
+		WHERE id = ?1 AND status = 'open'`,
+	addParticipant: `INSERT INTO thread_participants (conversation_id, user_id, joined_at)
+		VALUES (?1, ?2, ?3) ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+	listParticipants:
+		'SELECT * FROM thread_participants WHERE conversation_id = ?1 ORDER BY joined_at, user_id',
+	upsertVote: `INSERT INTO votes (question_id, user_id, choice_id, user_name, updated_at)
+		SELECT ?1, ?2, ?3, ?4, ?5 WHERE EXISTS (
+			SELECT 1 FROM questions q, json_each(q.choices) choice
+			WHERE q.id = ?1 AND q.status = 'open' AND q.kind = 'choice'
+			AND json_extract(choice.value, '$.id') = ?3
+		) ON CONFLICT (question_id, user_id) DO UPDATE SET
+		choice_id = excluded.choice_id, user_name = excluded.user_name, updated_at = excluded.updated_at`,
+	listVotes: 'SELECT * FROM votes WHERE question_id = ?1 ORDER BY user_id',
+};
+
 // Column values for a new question; readQuestion is the inverse.
 function toRow(question: OpenQuestion) {
 	return {
@@ -121,12 +144,8 @@ function readQuestion(raw: JsonObject): Question {
 }
 
 export function createQuestionStore(db: D1Database): QuestionStore {
-	async function findQuestion(where: string, value: string) {
-		const { results } = await db
-			.prepare(`SELECT * FROM questions WHERE ${where}`)
-			.bind(value)
-			.all();
-
+	async function firstQuestion(statement: D1Statement) {
+		const { results } = await statement.all();
 		const [row] = results;
 
 		return row ? readQuestion(row) : undefined;
@@ -139,28 +158,20 @@ export function createQuestionStore(db: D1Database): QuestionStore {
 		async openQuestion(question) {
 			const row = toRow(question);
 			const columns = Object.keys(row);
+			const placeholders = columns.map(() => '?').join(', ');
 
 			await db.batch([
+				db.prepare(SQL.closeOpenQuestion).bind(question.conversationId, question.createdAt),
 				db
-					.prepare(
-						"UPDATE questions SET status = 'closed', closed_at = ?2 WHERE conversation_id = ?1 AND status = 'open'",
-					)
-					.bind(question.conversationId, question.createdAt),
-				db
-					.prepare(
-						`INSERT INTO questions (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
-					)
+					.prepare(`INSERT INTO questions (${columns.join(', ')}) VALUES (${placeholders})`)
 					.bind(...Object.values(row)),
 			]);
 		},
-		getQuestion: (questionId) => findQuestion('id = ?1', questionId),
+		getQuestion: (questionId) => firstQuestion(db.prepare(SQL.questionById).bind(questionId)),
 		getOpenQuestion: (conversationId) =>
-			findQuestion("conversation_id = ?1 AND status = 'open'", conversationId),
+			firstQuestion(db.prepare(SQL.openQuestion).bind(conversationId)),
 		async setMessageTs(questionId, messageTs) {
-			const { meta } = await db
-				.prepare('UPDATE questions SET message_ts = ?2 WHERE id = ?1')
-				.bind(questionId, messageTs)
-				.run();
+			const { meta } = await db.prepare(SQL.setMessageTs).bind(questionId, messageTs).run();
 
 			return meta.changes === 1;
 		},
@@ -169,8 +180,7 @@ export function createQuestionStore(db: D1Database): QuestionStore {
 			const submitter = end.status === 'submitted' ? end : undefined;
 
 			const { meta } = await db
-				.prepare(`UPDATE questions SET status = ?2, closed_at = ?3, submitted_by = ?4,
-				submitted_by_name = ?5 WHERE id = ?1 AND status = 'open'`)
+				.prepare(SQL.finishQuestion)
 				.bind(
 					questionId,
 					end.status,
@@ -184,20 +194,10 @@ export function createQuestionStore(db: D1Database): QuestionStore {
 		},
 		// DO NOTHING keeps the first join time.
 		async upsertParticipant({ conversationId, userId, joinedAt }) {
-			await db
-				.prepare(`INSERT INTO thread_participants (conversation_id, user_id, joined_at)
-				VALUES (?1, ?2, ?3) ON CONFLICT (conversation_id, user_id) DO NOTHING`)
-				.bind(conversationId, userId, joinedAt)
-				.run();
+			await db.prepare(SQL.addParticipant).bind(conversationId, userId, joinedAt).run();
 		},
 		async listParticipants(conversationId) {
-			const { results } = await db
-				.prepare(
-					'SELECT * FROM thread_participants WHERE conversation_id = ?1 ORDER BY joined_at, user_id',
-				)
-				.bind(conversationId)
-				.all();
-
+			const { results } = await db.prepare(SQL.listParticipants).bind(conversationId).all();
 			const rows = v.parse(v.array(participantRowSchema), results);
 
 			return rows.map((row) => ({
@@ -210,24 +210,14 @@ export function createQuestionStore(db: D1Database): QuestionStore {
 		// choice question that has this choice id. Returns false otherwise.
 		async upsertVote(vote) {
 			const { meta } = await db
-				.prepare(`INSERT INTO votes (question_id, user_id, choice_id, user_name, updated_at)
-				SELECT ?1, ?2, ?3, ?4, ?5 WHERE EXISTS (
-					SELECT 1 FROM questions q, json_each(q.choices) choice
-					WHERE q.id = ?1 AND q.status = 'open' AND q.kind = 'choice'
-					AND json_extract(choice.value, '$.id') = ?3
-				) ON CONFLICT (question_id, user_id) DO UPDATE SET
-				choice_id = excluded.choice_id, user_name = excluded.user_name, updated_at = excluded.updated_at`)
+				.prepare(SQL.upsertVote)
 				.bind(vote.questionId, vote.userId, vote.choiceId, vote.userName, vote.updatedAt)
 				.run();
 
 			return meta.changes === 1;
 		},
 		async listVotes(questionId) {
-			const { results } = await db
-				.prepare('SELECT * FROM votes WHERE question_id = ?1 ORDER BY user_id')
-				.bind(questionId)
-				.all();
-
+			const { results } = await db.prepare(SQL.listVotes).bind(questionId).all();
 			const rows = v.parse(v.array(voteRowSchema), results);
 
 			return rows.map((row) => ({
