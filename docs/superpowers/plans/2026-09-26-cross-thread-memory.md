@@ -4,7 +4,7 @@
 
 **Goal:** Give the Coworker memory across Slack threads: per-person preferences it can save and forget, and searchable digests of past conversations scoped to what the current audience could already see.
 
-**Architecture:** One D1 database (`MEMORY_DB`) holds two tables: `memories` (Person Preferences) and `conversation_digests` (Conversation Digests, FTS5-indexed). The Coworker loads the invoker's preferences at intake (`useAgentStart`), accumulates a digest in `usePersistentState` while a response runs, and flushes it in `useAgentFinish`. Four model tools (`remember`, `forget`, `search_past_conversations`, `read_past_conversation`) bind identity and scope from trusted state, never from model arguments. A pure visibility rule plus a cached Slack `conversations.info` lookup enforces scope.
+**Architecture:** One D1 database (`APP_DB`) holds two tables: `memories` (Person Preferences) and `conversation_digests` (Conversation Digests, FTS5-indexed). The Coworker loads the invoker's preferences at intake (`useAgentStart`), accumulates a digest in `usePersistentState` while a response runs, and flushes it in `useAgentFinish`. Four model tools (`remember`, `forget`, `search_past_conversations`, `read_past_conversation`) bind identity and scope from trusted state, never from model arguments. A pure visibility rule plus a cached Slack `conversations.info` lookup enforces scope.
 
 **Tech Stack:** TypeScript, Flue (`@flue/runtime` hooks), Cloudflare D1 + FTS5, Slack Web API, Valibot, Vitest with `node:sqlite` as a D1 stand-in.
 
@@ -459,10 +459,10 @@ Ask the human to run `npx wrangler d1 create slack-agent-memory` (it needs their
 
 ```jsonc
 	// Cross-thread memory (Person Preferences + Conversation Digests).
-	// Apply migrations with: npx wrangler d1 migrations apply MEMORY_DB --remote
+	// Apply migrations with: npx wrangler d1 migrations apply APP_DB --remote
 	"d1_databases": [
 		{
-			"binding": "MEMORY_DB",
+			"binding": "APP_DB",
 			"database_name": "slack-agent-memory",
 			"database_id": "<the id printed by wrangler d1 create>",
 			"migrations_dir": "migrations",
@@ -845,7 +845,7 @@ Expected: PASS (6 tests). If the operator-laden test finds nothing for `checkout
 
 - [ ] **Step 6: Apply migrations locally to confirm D1 accepts the SQL**
 
-Run: `npx wrangler d1 migrations apply MEMORY_DB --local`
+Run: `npx wrangler d1 migrations apply APP_DB --local`
 Expected: both migrations apply with no error. This checks that D1 accepts FTS5 and the triggers, which `node:sqlite` alone doesn't prove.
 
 - [ ] **Step 7: Run all checks, then commit**
@@ -1156,7 +1156,7 @@ Include this in the PR body: the Slack app must be reinstalled after merge so th
 
 ## PR 5 — Wire D1 into the Coworker and add preference tools
 
-### Task 5: Reach `MEMORY_DB` from agent code
+### Task 5: Reach `APP_DB` from agent code
 
 **Files:**
 - Create: `src/cloudflare-workers.d.ts`
@@ -1164,7 +1164,7 @@ Include this in the PR body: the Slack app must be reinstalled after merge so th
 
 **Interfaces:**
 - Consumes: `D1Database` from Task 2.
-- Produces: `memoryDatabase(): Promise<D1Database | undefined>`; `interface WorkerBindings { MEMORY_DB?: D1Database; MEMORY_DIGEST_RETENTION_DAYS?: string }` exported from module `cloudflare:workers`.
+- Produces: `memoryDatabase(): Promise<D1Database | undefined>`; `interface WorkerBindings { APP_DB?: D1Database; MEMORY_DIGEST_RETENTION_DAYS?: string }` exported from module `cloudflare:workers`.
 
 - [ ] **Step 1: Declare the Worker module**
 
@@ -1189,7 +1189,7 @@ import type { D1Database } from './d1.ts';
 
 declare module 'cloudflare:workers' {
 	interface WorkerBindings {
-		MEMORY_DB?: D1Database;
+		APP_DB?: D1Database;
 	}
 }
 
@@ -1199,7 +1199,7 @@ export async function memoryDatabase(): Promise<D1Database | undefined> {
 	try {
 		const workers = await import('cloudflare:workers');
 
-		return workers.env.MEMORY_DB;
+		return workers.env.APP_DB;
 	} catch {
 		return undefined;
 	}
@@ -1221,9 +1221,9 @@ const WORKERS_MODULE = 'cloudflare:workers';
 
 export async function memoryDatabase(): Promise<D1Database | undefined> {
 	try {
-		const workers: { env: { MEMORY_DB?: D1Database } } = await import(/* @vite-ignore */ WORKERS_MODULE);
+		const workers: { env: { APP_DB?: D1Database } } = await import(/* @vite-ignore */ WORKERS_MODULE);
 
-		return workers.env.MEMORY_DB;
+		return workers.env.APP_DB;
 	} catch {
 		return undefined;
 	}
@@ -1607,10 +1607,10 @@ _Avoid_: User profile, personalization, memory (unqualified)
 
 Run: `npm test && npm run check:types && npm run lint && npm run fmt:check`
 
-Then, with the human running `npm run dev` plus the tunnel and `npx wrangler d1 migrations apply MEMORY_DB --local`:
+Then, with the human running `npm run dev` plus the tunnel and `npx wrangler d1 migrations apply APP_DB --local`:
 1. In a Configured Channel, mention the bot: "remember that I prefer small PRs". Expect a `remember` step on the run card and a confirmation reply.
 2. Start a **new** thread and ask "what do you remember about me?" Expect it to cite the preference.
-3. Ask it to forget that preference. Expect a `forget` step. `npx wrangler d1 execute MEMORY_DB --local --command "SELECT id, content, deleted_at FROM memories"` should show `content` as null.
+3. Ask it to forget that preference. Expect a `forget` step. `npx wrangler d1 execute APP_DB --local --command "SELECT id, content, deleted_at FROM memories"` should show `content` as null.
 
 - [ ] **Step 11: Commit**
 
@@ -2022,7 +2022,7 @@ Run: `npm test && npm run check:types && npm run lint && npm run fmt:check`
 
 Then, with `npm run dev`:
 1. In a public Configured Channel, ask the bot a small question and wait for the reply.
-2. `npx wrangler d1 execute MEMORY_DB --local --command "SELECT id, channel_visibility, invoker_user_ids, substr(requests,1,80), substr(replies,1,80), tools_used, pr_url FROM conversation_digests"` should show exactly one row. `channel_visibility` is `public`, `invoker_user_ids` is your Slack ID, and `replies` matches what Slack shows.
+2. `npx wrangler d1 execute APP_DB --local --command "SELECT id, channel_visibility, invoker_user_ids, substr(requests,1,80), substr(replies,1,80), tools_used, pr_url FROM conversation_digests"` should show exactly one row. `channel_visibility` is `public`, `invoker_user_ids` is your Slack ID, and `replies` matches what Slack shows.
 3. Ask a follow-up in the same thread. Expect a second row with the same `conversation_id` and a different `id`.
 4. If `replies` is empty but Slack shows a reply, the updater form did not see the tool's write. Stop and report it. Don't paper over it: the design depends on the call-time semantics of `usePersistentState` updaters.
 
@@ -2432,16 +2432,16 @@ Replace `export {};` in `src/cloudflare.ts` with:
 
 ```ts
 import type { WorkerBindings } from 'cloudflare:workers';
-// Side-effect import: brings the MEMORY_DB augmentation of WorkerBindings into scope.
+// Side-effect import: brings the APP_DB augmentation of WorkerBindings into scope.
 import './memory/binding.ts';
 import { purgeExpiredDigests } from './memory/retention.ts';
 
 export default {
 	// Daily Conversation Digest retention. Person Preferences never expire.
 	async scheduled(_controller: ScheduledController, env: WorkerBindings) {
-		if (env.MEMORY_DB === undefined) return;
+		if (env.APP_DB === undefined) return;
 
-		const deleted = await purgeExpiredDigests(env.MEMORY_DB, env.MEMORY_DIGEST_RETENTION_DAYS, new Date());
+		const deleted = await purgeExpiredDigests(env.APP_DB, env.MEMORY_DIGEST_RETENTION_DAYS, new Date());
 
 		console.info(`memory: purged ${deleted} expired conversation digests`);
 	},
@@ -2468,16 +2468,16 @@ Add a `## Memory` section to `README.md`:
 ```markdown
 ## Memory
 
-Cross-thread memory lives in the `MEMORY_DB` D1 database (spec: `docs/superpowers/specs/2026-09-26-cross-thread-memory-design.md`).
+Cross-thread memory lives in the `APP_DB` D1 database (spec: `docs/superpowers/specs/2026-09-26-cross-thread-memory-design.md`).
 
-- **Migrations:** `npx wrangler d1 migrations apply MEMORY_DB --local` for dev, `--remote` before deploying a change that adds one.
+- **Migrations:** `npx wrangler d1 migrations apply APP_DB --local` for dev, `--remote` before deploying a change that adds one.
 - **Person Preferences** (`memories`): saved and forgotten by users through the bot. Never expire.
 - **Conversation Digests** (`conversation_digests`): one row per answered response. Deleted after `MEMORY_DIGEST_RETENTION_DAYS` (default 180) by the daily cron.
 - **Guest channels:** add channels that contain Slack guests to `guestChannelIds` in `src/config.ts`; they then only see their own history.
 - **Purge one thread from recall:**
-  `npx wrangler d1 execute MEMORY_DB --remote --command "DELETE FROM conversation_digests WHERE conversation_id = '<conversation id>'"`
+  `npx wrangler d1 execute APP_DB --remote --command "DELETE FROM conversation_digests WHERE conversation_id = '<conversation id>'"`
 - **Erase one person's preferences:**
-  `npx wrangler d1 execute MEMORY_DB --remote --command "UPDATE memories SET content = NULL, deleted_at = datetime('now'), updated_at = datetime('now') WHERE subject_user_id = '<Slack user id>' AND deleted_at IS NULL"`
+  `npx wrangler d1 execute APP_DB --remote --command "UPDATE memories SET content = NULL, deleted_at = datetime('now'), updated_at = datetime('now') WHERE subject_user_id = '<Slack user id>' AND deleted_at IS NULL"`
 - Slack scopes `channels:read` and `groups:read` are required for visibility checks; without them recall only returns the current channel's history.
 ```
 
@@ -2488,7 +2488,7 @@ Append to `SLACK_AGENT_SPEC.md` §11, after the last dated note:
 ```markdown
 ### Cross-thread memory (2026-09-26)
 
-Design in `docs/superpowers/specs/2026-09-26-cross-thread-memory-design.md`. One D1 database (`MEMORY_DB`) holds Person Preferences (`memories`) and Conversation Digests (`conversation_digests`, FTS5). Signal attributes now carry the per-message Slack `userId`; the Coworker records it at intake in `usePersistentState('memory-invoker')`, and memory tools bind subject, channel, and scope from that trusted state, never model input (D13). Model tools: `remember`, `forget`, `search_past_conversations`, `read_past_conversation`. Recall shows a past conversation only if everyone who can read the current thread could already read it: same channel always; otherwise public channels only, re-checked live via `conversations.info` (10-minute cache, fail closed); Slack Connect and operator-listed guest channels see only their own history. Digests are deterministic per answered response (requests, posted replies, tool names, PR URL), flushed in `useAgentFinish`, and retained 180 days by a daily cron. Repo knowledge is proposed as `AGENTS.md` edits through the normal PR flow. New bot scopes: `channels:read`, `groups:read`.
+Design in `docs/superpowers/specs/2026-09-26-cross-thread-memory-design.md`. One D1 database (`APP_DB`) holds Person Preferences (`memories`) and Conversation Digests (`conversation_digests`, FTS5). Signal attributes now carry the per-message Slack `userId`; the Coworker records it at intake in `usePersistentState('memory-invoker')`, and memory tools bind subject, channel, and scope from that trusted state, never model input (D13). Model tools: `remember`, `forget`, `search_past_conversations`, `read_past_conversation`. Recall shows a past conversation only if everyone who can read the current thread could already read it: same channel always; otherwise public channels only, re-checked live via `conversations.info` (10-minute cache, fail closed); Slack Connect and operator-listed guest channels see only their own history. Digests are deterministic per answered response (requests, posted replies, tool names, PR URL), flushed in `useAgentFinish`, and retained 180 days by a daily cron. Repo knowledge is proposed as `AGENTS.md` edits through the normal PR flow. New bot scopes: `channels:read`, `groups:read`.
 ```
 
 - [ ] **Step 7: Run all checks and commit**

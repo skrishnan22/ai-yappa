@@ -42,5 +42,7 @@ declare module 'cloudflare:workers' {
 	}
 
 	// The Worker's bindings, as declared in wrangler.jsonc.
-	export const env: import('./integrations/codex-auth/codex-auth-binding.ts').CodexAuthBinding;
+	export const env: import('./integrations/codex-auth/codex-auth-binding.ts').CodexAuthBinding & {
+		readonly APP_DB: import('./memory/d1.ts').D1Database;
+	};
 }
