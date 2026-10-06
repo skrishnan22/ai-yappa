@@ -161,8 +161,8 @@ Add to `coworkerInstructions`: memory exists and how to use it; save a preferenc
 ### 7. Retention and operations
 
 - A daily scheduled handler in `src/cloudflare.ts` deletes digests older than `MEMORY_DIGEST_RETENTION_DAYS` (default 180). Preferences do not expire.
-- README documents the operator purge for one conversation (`wrangler d1 execute MEMORY_DB --remote --command "DELETE FROM conversation_digests WHERE conversation_id = '…'"`); the FTS delete trigger keeps the index in sync.
-- `wrangler.jsonc` gains one D1 binding (`MEMORY_DB`) and one cron trigger; migrations live in `migrations/`.
+- README documents the operator purge for one conversation (`wrangler d1 execute APP_DB --remote --command "DELETE FROM conversation_digests WHERE conversation_id = '…'"`); the FTS delete trigger keeps the index in sync.
+- `wrangler.jsonc` gains one D1 binding (`APP_DB`) and one cron trigger; migrations live in `migrations/`.
 
 ### 8. Error handling
 
@@ -172,7 +172,7 @@ Add to `coworkerInstructions`: memory exists and how to use it; save a preferenc
 | D1 write fails in `remember` / `forget` | Tool returns an error; the agent tells the user |
 | Digest flush fails | Log; clear accumulator; Submission settles normally |
 | Slack visibility lookup fails or is ambiguous | Exclude the result |
-| `MEMORY_DB` binding absent (e.g. `flue run`) | Intake skips the profile; memory tools stay registered but report that memory is unavailable; agent otherwise runs as today |
+| `APP_DB` binding absent (e.g. `flue run`) | Intake skips the profile; memory tools stay registered but report that memory is unavailable; agent otherwise runs as today |
 
 Memory is best-effort and never blocks work; scoping fails closed.
 

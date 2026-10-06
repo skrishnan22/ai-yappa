@@ -145,7 +145,7 @@ A threaded reply that reflects work in the already-cloned repo (not clone/`ls` a
 
 ## Application database
 
-`APP_DB` (questions) and `MEMORY_DB` (memory) are two bindings to the same `slack-agent-memory` D1 database and share `migrations/`. Worker deploys do not apply D1 migrations; apply pending ones before deploying code that needs them:
+Memory and questions share one D1 database, bound as `APP_DB` (named `slack-agent-memory` in Cloudflare), with migrations in `migrations/`. Worker deploys do not apply D1 migrations; apply pending ones before deploying code that needs them:
 
 ```bash
 pnpm exec wrangler d1 migrations apply APP_DB --remote

@@ -15,7 +15,7 @@ Implementation source of truth: `SLACK_AGENT_SPEC.md`. Milestone scope: `SLACK_A
 - `src/integrations/mcp-catalog.ts` — deploy-time Integration Catalog; Coworker resolves Worker secrets at render and mounts via `useMcpConnection`.
 - `src/integrations/codex-auth/` — `CodexAuth` Durable Object (one instance, `getByName('default')`) owning the encrypted Codex Credential and pi's locked OAuth refresh. Only access tokens leave it. Exported from `src/cloudflare.ts`.
 - `src/integrations/web-search/` — Exa/Parallel REST adapters + optimistic failover router behind native `web_search` / `web_fetch`.
-- `src/questions/` — `QuestionStore` (D1) for `/grill-me` questions, participants, and votes. `APP_DB` and `MEMORY_DB` bind the same database; migrations live in `migrations/`. Tests run the real SQL on `node:sqlite` (`src/memory/testing/sqlite-d1.ts`).
+- `src/questions/` — `QuestionStore` (D1) for `/grill-me` questions, participants, and votes. Stored in the app's single D1 database (`APP_DB`) beside memory; migrations live in `migrations/`. Tests run the real SQL on `node:sqlite` (`src/memory/testing/sqlite-d1.ts`).
 - `src/config.ts` — channel→repo map, invoker allowlist, and Codex admin list. Fail closed when empty.
 - `src/app.ts` — route map. Slack channel only.
 - `src/cloudflare.ts` — Worker-level exports and non-HTTP handlers.

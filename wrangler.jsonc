@@ -34,18 +34,12 @@
 		{ "tag": "v1", "new_sqlite_classes": ["FlueCoworkerAgent"] },
 		{ "tag": "v2", "new_sqlite_classes": ["CodexAuth"] },
 	],
-	// APP_DB (questions) and MEMORY_DB (Person Preferences + Conversation
-	// Digests) bind one database and share its migration history.
+	// The app's one D1 database: memory (Person Preferences, Conversation
+	// Digests) and /grill-me questions. It keeps its original Cloudflare name.
 	// Apply migrations with: pnpm exec wrangler d1 migrations apply APP_DB --remote
 	"d1_databases": [
 		{
 			"binding": "APP_DB",
-			"database_name": "slack-agent-memory",
-			"database_id": "d89b5f6b-5b02-41b2-aca0-85ff1923b6a5",
-			"migrations_dir": "migrations",
-		},
-		{
-			"binding": "MEMORY_DB",
 			"database_name": "slack-agent-memory",
 			"database_id": "d89b5f6b-5b02-41b2-aca0-85ff1923b6a5",
 			"migrations_dir": "migrations",
