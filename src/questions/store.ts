@@ -1,6 +1,6 @@
 export type QuestionChoice = { id: string; label: string; recommended?: boolean };
 
-export type QuestionContent = { kind: 'open' } | { kind: 'choice'; choices: QuestionChoice[] };
+export type QuestionKind = { kind: 'open' } | { kind: 'choice'; choices: QuestionChoice[] };
 
 export type QuestionState =
 	| { status: 'open' }
@@ -17,10 +17,13 @@ export type Question = {
 	body?: string;
 	recommendation: string;
 	createdAt: string;
-} & QuestionContent &
+} & QuestionKind &
 	QuestionState;
 
 export type OpenQuestion = Extract<Question, { status: 'open' }>;
+
+// How an open question ends: closed (replaced or withdrawn) or submitted.
+export type FinishedState = Exclude<QuestionState, { status: 'open' }>;
 
 export type Participant = { conversationId: string; userId: string; joinedAt: string };
 
@@ -32,21 +35,14 @@ export type Vote = {
 	updatedAt: string;
 };
 
-export type SubmitQuestion = {
-	questionId: string;
-	userId: string;
-	userName: string;
-	closedAt: string;
-};
-
 // Callers supply identity from trusted thread state and perform authorization.
 export type QuestionStore = {
 	openQuestion(question: OpenQuestion): Promise<void>;
 	getQuestion(questionId: string): Promise<Question | undefined>;
-	getOpenQuestion(conversationId: string): Promise<OpenQuestion | undefined>;
+	getOpenQuestion(conversationId: string): Promise<Question | undefined>;
 	setMessageTs(questionId: string, messageTs: string): Promise<boolean>;
-	closeQuestion(questionId: string, closedAt: string): Promise<boolean>;
-	submitQuestion(args: SubmitQuestion): Promise<boolean>;
+	// First wins: true only for the caller that moved the question out of open.
+	finishQuestion(questionId: string, end: FinishedState): Promise<boolean>;
 	upsertParticipant(participant: Participant): Promise<void>;
 	listParticipants(conversationId: string): Promise<Participant[]>;
 	upsertVote(vote: Vote): Promise<boolean>;

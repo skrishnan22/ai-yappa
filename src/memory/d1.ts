@@ -1,7 +1,7 @@
 import type { JsonObject } from '../json.ts';
 
-// The subset of Cloudflare D1 this app uses. Declared here so tests can run the
-// real SQL on node:sqlite and so nothing depends on @cloudflare/workers-types.
+// The subset of Cloudflare D1 this app uses, declared here so nothing depends on
+// @cloudflare/workers-types.
 export type D1Value = string | number | null;
 
 export type D1Statement = {

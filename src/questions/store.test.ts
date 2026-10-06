@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'vitest';
 import type { D1Database } from '../memory/d1.ts';
-import { openMigratedSqlite } from '../memory/testing/sqlite-d1.ts';
+import { openTestDatabase } from '../testing/d1.ts';
 import { createQuestionStore } from './d1-store.ts';
 import type { OpenQuestion, QuestionStore, Vote } from './store.ts';
 
@@ -49,13 +49,26 @@ describe('QuestionStore (D1)', () => {
 	let db: D1Database;
 	let store: QuestionStore;
 
-	beforeEach(() => {
-		db = openMigratedSqlite();
+	beforeEach(async () => {
+		db = await openTestDatabase();
 		store = createQuestionStore(db);
 	});
 
-	const submit = (questionId: string, userId: string, userName: string, closedAt: string) =>
-		store.submitQuestion({ questionId, userId, userName, closedAt });
+	const submit = (
+		questionId: string,
+		submittedBy: string,
+		submittedByName: string,
+		closedAt: string,
+	) =>
+		store.finishQuestion(questionId, {
+			status: 'submitted',
+			closedAt,
+			submittedBy,
+			submittedByName,
+		});
+
+	const close = (questionId: string, closedAt: string) =>
+		store.finishQuestion(questionId, { status: 'closed', closedAt });
 
 	test('round-trips choice and open-ended questions', async () => {
 		await store.openQuestion(question());
@@ -104,7 +117,7 @@ describe('QuestionStore (D1)', () => {
 
 	test('records the posted message timestamp, including after closure', async () => {
 		await store.openQuestion(question());
-		await store.closeQuestion('q1', LATER);
+		await close('q1', LATER);
 		const recorded = await store.setMessageTs('q1', '1710000000.123456');
 		const missing = await store.setMessageTs('missing', '1');
 		const saved = await store.getQuestion('q1');
@@ -116,10 +129,10 @@ describe('QuestionStore (D1)', () => {
 		await store.openQuestion(question());
 		const first = await submit('q1', 'U1', 'Maya', LATER);
 		const second = await submit('q1', 'U2', 'Raj', NOW);
-		const close = await store.closeQuestion('q1', NOW);
+		const closeAfter = await close('q1', NOW);
 		const open = await store.getOpenQuestion('conv-a');
 		const saved = await store.getQuestion('q1');
-		expect([first, second, close]).toEqual([true, false, false]);
+		expect([first, second, closeAfter]).toEqual([true, false, false]);
 		expect(open).toBeUndefined();
 		expect(saved).toMatchObject({
 			status: 'submitted',
@@ -131,9 +144,9 @@ describe('QuestionStore (D1)', () => {
 
 	test('a closed or missing question cannot be closed again or submitted', async () => {
 		await store.openQuestion(question());
-		const first = await store.closeQuestion('q1', LATER);
-		const again = await store.closeQuestion('q1', NOW);
-		const closeMissing = await store.closeQuestion('missing', NOW);
+		const first = await close('q1', LATER);
+		const again = await close('q1', NOW);
+		const closeMissing = await close('missing', NOW);
 		const submitClosed = await submit('q1', 'U1', 'Maya', NOW);
 		const submitMissing = await submit('missing', 'U1', 'Maya', NOW);
 		const saved = await store.getQuestion('q1');
@@ -184,6 +197,24 @@ describe('QuestionStore (D1)', () => {
 		const votes = await store.listVotes('q1');
 		expect([unknownChoice, missing, submitted, open]).toEqual([false, false, false, false]);
 		expect(votes).toEqual([vote()]);
+	});
+
+	test.each([
+		[
+			'duplicate choice ids',
+			[
+				{ id: 'A', label: 'KV' },
+				{ id: 'A', label: 'D1' },
+			],
+			/unique/,
+		],
+		['too few choices', [{ id: 'A', label: 'KV' }], /length/],
+	])('refuses to store %s', async (_label, choices, error) => {
+		await expect(store.openQuestion({ ...question(), kind: 'choice', choices })).rejects.toThrow(
+			error,
+		);
+		const saved = await store.getQuestion('q1');
+		expect(saved).toBeUndefined();
 	});
 
 	test.each([

@@ -1,7 +1,33 @@
 import * as v from 'valibot';
 import type { JsonObject } from '../json.ts';
-import type { D1Database } from '../memory/d1.ts';
-import type { Question, QuestionContent, QuestionState, QuestionStore } from './store.ts';
+import type { D1Database, D1Value } from '../memory/d1.ts';
+import type {
+	OpenQuestion,
+	Question,
+	QuestionKind,
+	QuestionState,
+	QuestionStore,
+} from './store.ts';
+
+// Votes store only the choice id, so ids must be unique within a question.
+// Applied on write and on read, so every stored question stays readable.
+const choicesSchema = v.pipe(
+	v.array(
+		v.object({
+			id: v.string(),
+			label: v.string(),
+			recommended: v.optional(v.boolean()),
+		}),
+	),
+	v.minLength(2),
+	v.maxLength(5),
+	v.check(
+		(choices) => new Set(choices.map((choice) => choice.id)).size === choices.length,
+		'Choice ids must be unique',
+	),
+);
+
+const choicesJsonSchema = v.pipe(v.string(), v.parseJson(), choicesSchema);
 
 const questionRowSchema = v.object({
 	id: v.string(),
@@ -21,17 +47,7 @@ const questionRowSchema = v.object({
 	closed_at: v.nullable(v.string()),
 });
 
-const choicesSchema = v.pipe(
-	v.array(
-		v.object({
-			id: v.string(),
-			label: v.string(),
-			recommended: v.optional(v.boolean()),
-		}),
-	),
-	v.minLength(2),
-	v.maxLength(5),
-);
+type QuestionRow = v.InferOutput<typeof questionRowSchema>;
 
 const participantRowSchema = v.object({
 	conversation_id: v.string(),
@@ -47,37 +63,47 @@ const voteRowSchema = v.object({
 	updated_at: v.string(),
 });
 
-// Rebuilds the discriminated Question from a flat row; throws on a row whose
-// kind/status columns are inconsistent.
+// Column values for a new question; readQuestion is the inverse.
+function toRow(question: OpenQuestion) {
+	return {
+		id: question.id,
+		conversation_id: question.conversationId,
+		channel_id: question.channelId,
+		thread_ts: question.threadTs,
+		message_ts: question.messageTs ?? null,
+		kind: question.kind,
+		title: question.title,
+		body: question.body ?? null,
+		recommendation: question.recommendation,
+		choices:
+			question.kind === 'choice' ? JSON.stringify(v.parse(choicesSchema, question.choices)) : null,
+		status: 'open',
+		created_at: question.createdAt,
+	} satisfies Record<string, D1Value>;
+}
+
+function readState(row: QuestionRow): QuestionState {
+	if (row.status === 'open') return { status: 'open' };
+
+	const closedAt = v.parse(v.string(), row.closed_at);
+
+	if (row.status === 'closed') return { status: 'closed', closedAt };
+
+	return {
+		status: 'submitted',
+		closedAt,
+		submittedBy: v.parse(v.string(), row.submitted_by),
+		submittedByName: v.parse(v.string(), row.submitted_by_name),
+	};
+}
+
 function readQuestion(raw: JsonObject): Question {
 	const row = v.parse(questionRowSchema, raw);
-	let content: QuestionContent;
 
-	if (row.kind === 'choice') {
-		const json: unknown = JSON.parse(v.parse(v.string(), row.choices));
-		content = { kind: 'choice', choices: v.parse(choicesSchema, json) };
-	} else {
-		content = { kind: 'open' };
-	}
-
-	let state: QuestionState;
-
-	switch (row.status) {
-		case 'open':
-			state = { status: 'open' };
-			break;
-		case 'closed':
-			state = { status: 'closed', closedAt: v.parse(v.string(), row.closed_at) };
-			break;
-		case 'submitted':
-			state = {
-				status: 'submitted',
-				closedAt: v.parse(v.string(), row.closed_at),
-				submittedBy: v.parse(v.string(), row.submitted_by),
-				submittedByName: v.parse(v.string(), row.submitted_by_name),
-			};
-			break;
-	}
+	const kind: QuestionKind =
+		row.kind === 'choice'
+			? { kind: 'choice', choices: v.parse(choicesJsonSchema, row.choices) }
+			: { kind: 'open' };
 
 	return {
 		id: row.id,
@@ -89,16 +115,31 @@ function readQuestion(raw: JsonObject): Question {
 		body: row.body ?? undefined,
 		recommendation: row.recommendation,
 		createdAt: row.created_at,
-		...content,
-		...state,
+		...kind,
+		...readState(row),
 	};
 }
 
 export function createQuestionStore(db: D1Database): QuestionStore {
+	async function findQuestion(where: string, value: string) {
+		const { results } = await db
+			.prepare(`SELECT * FROM questions WHERE ${where}`)
+			.bind(value)
+			.all();
+
+		const [row] = results;
+
+		return row ? readQuestion(row) : undefined;
+	}
+
 	return {
-		// Close-then-insert in one batch (one D1 transaction): if the insert fails,
-		// the previous question stays open. one_open_question backs this up.
+		// Close-then-insert in one batch, which D1 runs as one transaction: if the
+		// insert fails, the previous question stays open. The insert alone would
+		// hit one_open_question while the previous question is still open.
 		async openQuestion(question) {
+			const row = toRow(question);
+			const columns = Object.keys(row);
+
 			await db.batch([
 				db
 					.prepare(
@@ -106,51 +147,15 @@ export function createQuestionStore(db: D1Database): QuestionStore {
 					)
 					.bind(question.conversationId, question.createdAt),
 				db
-					.prepare(`INSERT INTO questions
-					(id, conversation_id, channel_id, thread_ts, message_ts, kind, title, body, recommendation, choices, status, created_at)
-					VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'open', ?11)`)
-					.bind(
-						question.id,
-						question.conversationId,
-						question.channelId,
-						question.threadTs,
-						question.messageTs ?? null,
-						question.kind,
-						question.title,
-						question.body ?? null,
-						question.recommendation,
-						question.kind === 'choice' ? JSON.stringify(question.choices) : null,
-						question.createdAt,
-					),
+					.prepare(
+						`INSERT INTO questions (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
+					)
+					.bind(...Object.values(row)),
 			]);
 		},
-		async getQuestion(questionId) {
-			const { results } = await db
-				.prepare('SELECT * FROM questions WHERE id = ?1')
-				.bind(questionId)
-				.all();
-
-			const [row] = results;
-
-			return row ? readQuestion(row) : undefined;
-		},
-		async getOpenQuestion(conversationId) {
-			const { results } = await db
-				.prepare("SELECT * FROM questions WHERE conversation_id = ?1 AND status = 'open'")
-				.bind(conversationId)
-				.all();
-
-			const [row] = results;
-
-			if (!row) return undefined;
-
-			const question = readQuestion(row);
-
-			// Unreachable given the WHERE clause; narrows the type without a cast.
-			if (question.status !== 'open') throw new Error('Expected an open question');
-
-			return question;
-		},
+		getQuestion: (questionId) => findQuestion('id = ?1', questionId),
+		getOpenQuestion: (conversationId) =>
+			findQuestion("conversation_id = ?1 AND status = 'open'", conversationId),
 		async setMessageTs(questionId, messageTs) {
 			const { meta } = await db
 				.prepare('UPDATE questions SET message_ts = ?2 WHERE id = ?1')
@@ -159,23 +164,20 @@ export function createQuestionStore(db: D1Database): QuestionStore {
 
 			return meta.changes === 1;
 		},
-		// Close and submit only touch an open row, so exactly one caller sees
-		// changes === 1 and wins; later callers get false.
-		async closeQuestion(questionId, closedAt) {
-			const { meta } = await db
-				.prepare(
-					"UPDATE questions SET status = 'closed', closed_at = ?2 WHERE id = ?1 AND status = 'open'",
-				)
-				.bind(questionId, closedAt)
-				.run();
+		// Only an open row matches, so exactly one caller sees changes === 1.
+		async finishQuestion(questionId, end) {
+			const submitter = end.status === 'submitted' ? end : undefined;
 
-			return meta.changes === 1;
-		},
-		async submitQuestion({ questionId, userId, userName, closedAt }) {
 			const { meta } = await db
-				.prepare(`UPDATE questions SET status = 'submitted', submitted_by = ?2,
-				submitted_by_name = ?3, closed_at = ?4 WHERE id = ?1 AND status = 'open'`)
-				.bind(questionId, userId, userName, closedAt)
+				.prepare(`UPDATE questions SET status = ?2, closed_at = ?3, submitted_by = ?4,
+				submitted_by_name = ?5 WHERE id = ?1 AND status = 'open'`)
+				.bind(
+					questionId,
+					end.status,
+					end.closedAt,
+					submitter?.submittedBy ?? null,
+					submitter?.submittedByName ?? null,
+				)
 				.run();
 
 			return meta.changes === 1;

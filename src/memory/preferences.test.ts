@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import type { Clock } from './d1.ts';
+import { openTestDatabase } from '../testing/d1.ts';
 import { createPreferenceStore, PREFERENCE_LIMIT, PREFERENCE_MAX_CHARS } from './preferences.ts';
-import { openMigratedSqlite } from './testing/sqlite-d1.ts';
 
 function testClock(): Clock {
 	let seq = 0;
@@ -14,7 +14,8 @@ function testClock(): Clock {
 
 describe('PreferenceStore', () => {
 	test('saves, lists, and forgets a preference for its subject only', async () => {
-		const store = createPreferenceStore(openMigratedSqlite(), testClock());
+		const db = await openTestDatabase();
+		const store = createPreferenceStore(db, testClock());
 
 		const saved = await store.add('U_A', 'Prefers small PRs', 'conv-1');
 		const subjectPreferences = await store.list('U_A');
@@ -36,7 +37,8 @@ describe('PreferenceStore', () => {
 	});
 
 	test('rejects empty and oversized content', async () => {
-		const store = createPreferenceStore(openMigratedSqlite(), testClock());
+		const db = await openTestDatabase();
+		const store = createPreferenceStore(db, testClock());
 
 		const emptyResult = await store.add('U_A', '   ', 'conv-1');
 		const oversizedResult = await store.add('U_A', 'x'.repeat(PREFERENCE_MAX_CHARS + 1), 'conv-1');
@@ -49,7 +51,8 @@ describe('PreferenceStore', () => {
 	});
 
 	test('enforces the per-person limit', async () => {
-		const store = createPreferenceStore(openMigratedSqlite(), testClock());
+		const db = await openTestDatabase();
+		const store = createPreferenceStore(db, testClock());
 
 		for (let i = 0; i < PREFERENCE_LIMIT; i++) {
 			const result = await store.add('U_A', `pref ${i}`, 'conv-1');
@@ -68,7 +71,8 @@ describe('PreferenceStore', () => {
 	});
 
 	test('counts Unicode code points toward the content limit', async () => {
-		const store = createPreferenceStore(openMigratedSqlite(), testClock());
+		const db = await openTestDatabase();
+		const store = createPreferenceStore(db, testClock());
 
 		const atLimit = await store.add('U_A', '😀'.repeat(PREFERENCE_MAX_CHARS), 'conv-1');
 		const overLimit = await store.add('U_A', '😀'.repeat(PREFERENCE_MAX_CHARS + 1), 'conv-1');
@@ -78,7 +82,7 @@ describe('PreferenceStore', () => {
 	});
 
 	test('concurrent identical saves reuse one id and preserve original provenance', async () => {
-		const db = openMigratedSqlite();
+		const db = await openTestDatabase();
 		const store = createPreferenceStore(db, testClock());
 
 		const [first, second] = await Promise.all([
@@ -105,7 +109,8 @@ describe('PreferenceStore', () => {
 	});
 
 	test('concurrent distinct saves cannot exceed the per-person limit', async () => {
-		const store = createPreferenceStore(openMigratedSqlite(), testClock());
+		const db = await openTestDatabase();
+		const store = createPreferenceStore(db, testClock());
 
 		const results = await Promise.all(
 			Array.from({ length: PREFERENCE_LIMIT + 1 }, (_, i) =>
@@ -121,7 +126,8 @@ describe('PreferenceStore', () => {
 	});
 
 	test('forgotten content can be saved again with a new id', async () => {
-		const store = createPreferenceStore(openMigratedSqlite(), testClock());
+		const db = await openTestDatabase();
+		const store = createPreferenceStore(db, testClock());
 
 		const first = await store.add('U_A', 'Prefers small PRs', 'conv-1');
 
@@ -138,7 +144,8 @@ describe('PreferenceStore', () => {
 	});
 
 	test('saving the same preference twice returns the existing id', async () => {
-		const store = createPreferenceStore(openMigratedSqlite(), testClock());
+		const db = await openTestDatabase();
+		const store = createPreferenceStore(db, testClock());
 
 		const first = await store.add('U_A', 'Prefers small PRs', 'conv-1');
 		const second = await store.add('U_A', '  Prefers small PRs ', 'conv-2');
@@ -149,7 +156,8 @@ describe('PreferenceStore', () => {
 	});
 
 	test('re-saving an existing preference at the cap returns the existing id', async () => {
-		const store = createPreferenceStore(openMigratedSqlite(), testClock());
+		const db = await openTestDatabase();
+		const store = createPreferenceStore(db, testClock());
 
 		let firstId: string | undefined;
 
@@ -169,7 +177,7 @@ describe('PreferenceStore', () => {
 	});
 
 	test('forgetting erases the content but keeps a tombstone', async () => {
-		const db = openMigratedSqlite();
+		const db = await openTestDatabase();
 		const store = createPreferenceStore(db, testClock());
 
 		await store.add('U_A', 'secret-ish detail', 'conv-1');
