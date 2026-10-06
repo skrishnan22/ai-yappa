@@ -185,4 +185,28 @@ describe('QuestionStore (D1)', () => {
 		expect([unknownChoice, missing, submitted, open]).toEqual([false, false, false, false]);
 		expect(votes).toEqual([vote()]);
 	});
+
+	test.each([
+		['a choice question without choices', 'choice', null, 'open', null, null],
+		[
+			'a choice question with one choice',
+			'choice',
+			'[{"id":"A","label":"KV"}]',
+			'open',
+			null,
+			null,
+		],
+		['malformed choices JSON', 'choice', 'not-json', 'open', null, null],
+		['choices on an open-ended question', 'open', '[]', 'open', null, null],
+		['a closed question without a close time', 'open', null, 'closed', null, null],
+		['a submitted question without attribution', 'open', null, 'submitted', LATER, null],
+	])('the database rejects %s', async (_label, kind, choices, status, closedAt, submittedBy) => {
+		const insert = db
+			.prepare(`INSERT INTO questions
+			(id, conversation_id, channel_id, thread_ts, kind, title, recommendation, choices, status, created_at, closed_at, submitted_by)
+			VALUES ('bad', 'conv-a', 'C1', '1', ?1, 'Why?', 'Explain.', ?2, ?3, ?4, ?5, ?6)`)
+			.bind(kind, choices, status, NOW, closedAt, submittedBy);
+
+		await expect(insert.run()).rejects.toThrow(/CHECK constraint failed|malformed JSON/);
+	});
 });

@@ -16,12 +16,25 @@ CREATE TABLE questions (
   title TEXT NOT NULL,
   body TEXT,
   recommendation TEXT NOT NULL,
-  choices TEXT, -- JSON array of { id, label, recommended? }; NULL for open questions
+  choices TEXT, -- JSON array of { id, label, recommended? }
   status TEXT NOT NULL CHECK (status IN ('open', 'submitted', 'closed')),
   submitted_by TEXT,
   submitted_by_name TEXT,
   created_at TEXT NOT NULL,
-  closed_at TEXT
+  closed_at TEXT,
+  -- Each CHECK lists the allowed row shapes; a write matching none is rejected.
+  -- The 5-choice maximum is a product limit enforced by ask_question, not here.
+  CONSTRAINT question_choices CHECK (
+    (kind = 'open' AND choices IS NULL) OR
+    (kind = 'choice' AND choices IS NOT NULL AND json_valid(choices) AND json_type(choices) = 'array'
+      AND json_array_length(choices) >= 2)
+  ),
+  CONSTRAINT question_state CHECK (
+    (status = 'open' AND closed_at IS NULL AND submitted_by IS NULL AND submitted_by_name IS NULL) OR
+    (status = 'closed' AND closed_at IS NOT NULL AND submitted_by IS NULL AND submitted_by_name IS NULL) OR
+    (status = 'submitted' AND closed_at IS NOT NULL AND submitted_by IS NOT NULL
+      AND submitted_by_name IS NOT NULL)
+  )
 );
 
 CREATE UNIQUE INDEX one_open_question ON questions (conversation_id) WHERE status = 'open';

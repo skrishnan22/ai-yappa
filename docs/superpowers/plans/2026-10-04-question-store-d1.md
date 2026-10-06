@@ -23,9 +23,9 @@
 
 - [x] `src/questions/store.ts`: `Question` (discriminated on `kind` and `status`), `Participant`, `Vote`, `QuestionStore`.
 - [x] `src/memory/d1.ts` + `src/memory/testing/sqlite-d1.ts`: add `batch()`; the SQLite adapter runs a batch synchronously in one transaction and rolls back on failure.
-- [x] `migrations/0003_questions.sql`: the spec's three tables and `one_open_question`.
+- [x] `migrations/0003_questions.sql`: the spec's three tables, `one_open_question`, and named CHECKs tying `kind` to `choices` and `status` to the close/submit columns.
 - [x] `src/questions/d1-store.ts`: `createQuestionStore(db)`.
-- [x] `src/questions/store.test.ts`: round-trip, replacement and rollback, one-open index, first-wins submit/close, participant dedup, vote change and rejection.
+- [x] `src/questions/store.test.ts`: round-trip, replacement and rollback, one-open index, row-shape CHECKs, first-wins submit/close, participant dedup, vote change and rejection.
 - [x] `wrangler.jsonc`, `src/cloudflare-workers.d.ts`, README, AGENTS.md: single `APP_DB` binding and the pre-deploy migration command `pnpm exec wrangler d1 migrations apply APP_DB --remote`.
 
 No remote migration or Worker deployment is part of this PR.
