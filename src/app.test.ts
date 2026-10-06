@@ -2,6 +2,12 @@ import { createHmac } from 'node:crypto';
 import { describe, expect, test } from 'vitest';
 import app from './app.ts';
 
+const executionContext = {
+	waitUntil(_promise: Promise<unknown>) {},
+	passThroughOnException() {},
+	props: {},
+};
+
 const body = JSON.stringify({ type: 'url_verification', challenge: 'test-challenge' });
 
 function env(signingSecret: string) {
@@ -31,15 +37,27 @@ function signedRequest(secret: string, timestamp: string): Request {
 describe('Slack HTTP boundary', () => {
 	test('validates bindings and uses the current signing secret per request', async () => {
 		const timestamp = Math.floor(Date.now() / 1000).toString();
-		const first = await app.fetch(signedRequest('first-secret', timestamp), env('first-secret'));
+
+		const first = await app.fetch(
+			signedRequest('first-secret', timestamp),
+			env('first-secret'),
+			executionContext,
+		);
+
 		expect(first.status).toBe(200);
 
-		const second = await app.fetch(signedRequest('second-secret', timestamp), env('second-secret'));
+		const second = await app.fetch(
+			signedRequest('second-secret', timestamp),
+			env('second-secret'),
+			executionContext,
+		);
+
 		expect(second.status).toBe(200);
 
 		const oldSignature = await app.fetch(
 			signedRequest('first-secret', timestamp),
 			env('second-secret'),
+			executionContext,
 		);
 
 		expect(oldSignature.status).toBe(401);

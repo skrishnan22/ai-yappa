@@ -16,6 +16,7 @@ import {
 	type FlueObservation,
 } from '@flue/runtime';
 import * as v from 'valibot';
+import { questionTools } from '../questions/tools.ts';
 import { jsonValueSchema } from '../json.ts';
 import {
 	bindRunCard,
@@ -79,14 +80,22 @@ export function Coworker(props: { id: string }) {
 	const agentEnv = loadAgentEnv();
 
 	useTool(replyInThread(data, agentEnv.SLACK_BOT_TOKEN));
+
+	const questions = questionTools(
+		{ conversationId: props.id, ...data },
+		{ token: agentEnv.SLACK_BOT_TOKEN },
+	);
+
+	useTool(questions.askQuestion);
+	useTool(questions.closeQuestion);
 	// Assistant text never reaches Slack. If the model would stop without a
-	// non-error reply_in_slack_thread call, send it back to work in this response.
+	// non-error reply_in_slack_thread or ask_question call, send it back to work in this response.
 	useAgentFinish(({ response, append }) => {
 		if (hasSuccessfulSlackReply(response.toolCalls)) return;
 		append({
 			kind: 'signal',
 			type: 'reminder',
-			body: 'You ended without calling reply_in_slack_thread — nothing reached the user. Call it now with your answer.',
+			body: 'You ended without calling reply_in_slack_thread or ask_question — nothing reached the user. Call one now with your answer or question.',
 		});
 	});
 	const [runCard, setRunCard] = usePersistentState<RunCardState | null>('run-card', null);
@@ -227,7 +236,10 @@ export function hasSkillActivations(
 export function hasSuccessfulSlackReply(
 	toolCalls: readonly { tool: string; isError: boolean }[],
 ): boolean {
-	return toolCalls.some((call) => call.tool === 'reply_in_slack_thread' && !call.isError);
+	return toolCalls.some(
+		(call) =>
+			(call.tool === 'reply_in_slack_thread' || call.tool === 'ask_question') && !call.isError,
+	);
 }
 
 function cardEventFromObservation(event: FlueObservation): CardEvent | undefined {

@@ -245,3 +245,11 @@ OTLP export charges. Recheck both figures after October 1, 2026.
 - `SLACK_AGENT_SPEC.md` — v1 design
 - `SLACK_AGENT_HANDOFF.md` — M1 acceptance
 - [Flue docs](https://flueframework.com/docs/) or `pnpm flue docs`
+
+### Question controls
+
+Enable **Interactivity & Shortcuts** in Slack settings and set its Request URL to `https://<host>/channels/slack/interactions`. The manifest includes a placeholder host; replace it before importing or update the URL in Slack settings.
+
+`ask_question` posts one thread-bound question with a recommendation and optional vote buttons; `close_question` removes its buttons. Anyone in that Slack surface can vote. Buttons only record votes; reply in the thread to continue the conversation. Submit and automatic group listening are deferred to subsequent PRs.
+
+Apply the shared D1 migrations, including `0003_questions.sql`, before deploying question tools. Live Slack delivery still requires a deployed Worker, configured interactivity URL, and Slack credentials.

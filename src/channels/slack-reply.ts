@@ -1,5 +1,5 @@
 import { defineTool } from '@flue/runtime';
-import { WebClient } from '@slack/web-api';
+import { WebClient, type WebClientOptions } from '@slack/web-api';
 import * as v from 'valibot';
 import { jsonObjectSchema } from '../json.ts';
 import { replyBlocksSchema } from './slack-blocks.ts';
@@ -12,37 +12,58 @@ export type SlackBotClient = {
 	chat: {
 		postMessage: WebClient['chat']['postMessage'];
 		update: WebClient['chat']['update'];
+		postEphemeral: WebClient['chat']['postEphemeral'];
 	};
 	conversations: {
 		replies: WebClient['conversations']['replies'];
 	};
 };
 
+function createSlackClient(token: string, options: WebClientOptions = {}): SlackBotClient {
+	return new WebClient(token, {
+		// workerd's fetch is a method. WebClient stores globalThis.fetch and calls it
+		// unbound, which throws Illegal invocation. It also sets redirect: 'error',
+		// which workerd does not implement.
+		fetch: slackFetch,
+		...options,
+	});
+}
+
+type CachedClient = { token: string; client: SlackBotClient };
+
 // Lazily constructed: importing this module (e.g. from `flue run`, which has
 // no Slack token) must not build a client with an `undefined` token. The
 // caller supplies the value validated at its execution boundary.
-let cachedForToken: string | undefined;
+let cached: CachedClient | undefined;
 
-let cached: SlackBotClient | undefined;
+let cachedWithoutRetries: CachedClient | undefined;
 
 export function getSlackClient(token: string): SlackBotClient {
-	if (!cached || cachedForToken !== token) {
-		cached = new WebClient(token, {
-			// workerd's fetch is a method. WebClient stores globalThis.fetch and calls it
-			// unbound, which throws Illegal invocation. It also sets redirect: 'error',
-			// which workerd does not implement.
-			fetch: slackFetch,
-		});
-		cachedForToken = token;
-	}
+	if (cached?.token !== token) cached = { token, client: createSlackClient(token) };
 
-	return cached;
+	return cached.client;
 }
 
-/** Test-only: drop the cached client so token stubs take effect. */
+// For writes whose caller reconciles an unknown outcome: a timed-out request may
+// already have reached Slack, so retrying it could post twice. Reads keep retries.
+export function getSlackClientWithoutRetries(token: string): SlackBotClient {
+	if (cachedWithoutRetries?.token !== token) {
+		cachedWithoutRetries = {
+			token,
+			client: createSlackClient(token, {
+				retryConfig: { retries: 0 },
+				rejectRateLimitedCalls: true,
+			}),
+		};
+	}
+
+	return cachedWithoutRetries.client;
+}
+
+/** Test-only: drop the cached clients so token stubs take effect. */
 export function __resetSlackClientForTests(): void {
 	cached = undefined;
-	cachedForToken = undefined;
+	cachedWithoutRetries = undefined;
 }
 
 export function replyInThread(

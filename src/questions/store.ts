@@ -43,6 +43,9 @@ export type QuestionStore = {
 	setMessageTs(questionId: string, messageTs: string): Promise<boolean>;
 	// First wins: true only for the caller that moved the question out of open.
 	finishQuestion(questionId: string, end: FinishedState): Promise<boolean>;
+	// Undo a replacement whose successor never posted. Only a closed question
+	// reopens, and only while its conversation has no other open question.
+	reopenQuestion(questionId: string): Promise<boolean>;
 	upsertParticipant(participant: Participant): Promise<void>;
 	listParticipants(conversationId: string): Promise<Participant[]>;
 	upsertVote(vote: Vote): Promise<boolean>;

@@ -21,6 +21,7 @@
 | 0015 Daytona for sandbox compute | Holds (spec D2). Direct Durable Object control; container filesystem persists across stop/start; Git remains recovery truth |
 | 0016 Simplify GitHub authorization inside the Worker | Holds (spec D13, D14) for **native** Credential Proxy ops. Direct trusted context policy with bounded checkpoint-token exposure |
 | 0017 Open MCP catalog with deployment secrets | Holds, amended for per-row Basic auth and fixed tool allowlists. Langfuse mounts read-only trace-analysis tools; existing open Bearer mounts are unchanged |
-| 0019 Model-authored Block Kit replies | Holds. Markdown by default; native model-authored blocks validated at the posting boundary. App-callback controls require implemented handlers |
+| 0019 Model-authored Block Kit replies | Holds. Markdown by default; native model-authored blocks validated at the posting boundary. Owner-rendered question controls are covered by ADR 0022; model-authored callback controls remain rejected |
 | 0020 ChatGPT subscription Model Route | Holds, except decision 6 (superseded by ADR 0021). `openai-codex` via a single `CodexAuth` Durable Object; OpenCode Go when no usable credential. Amends spec §4.1 for the admin-only `/aiyappa openai` slash command |
 | 0021 Per-conversation Model Choice | Holds. `$model:` / `$effort:` in the first mention pick from `modelAliases`; a ChatGPT pick is refused while ChatGPT is not usable and falls back mid-thread |
+| 0022 Owner-rendered question controls | Holds. Thread-bound question tools and verified vote handlers. Submit/dispatch and listening are deferred |

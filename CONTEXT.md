@@ -43,7 +43,7 @@ A durable compact representation of older messages or events tied to their exact
 _Avoid_: Canonical history, deleted history
 
 **Agent Invocation**:
-An explicit `@mention` of the bot, or an agent-provided interactive control. Ordinary unmentioned Slack replies in a thread the bot has never joined are ignored. Unmentioned replies in an already-tracked thread continue that conversation.
+An explicit `@mention` of the bot, or a control that submits an answer to the agent. Voting alone is not an Agent Invocation. Ordinary unmentioned Slack replies in a thread the bot has never joined are ignored. Unmentioned replies in an already-tracked thread continue that conversation.
 _Avoid_: Thread reply, channel message
 
 **Submission**:
@@ -51,7 +51,7 @@ The Flue-owned durable unit of work admitted from one Agent Invocation. It settl
 _Avoid_: Agent Run, session, task
 
 **Pending Question**:
-A durable question left on an Agent Conversation after the asking Submission completes. A later Submission may answer it for up to seven days, after which it expires.
+A durable question left on an Agent Conversation after the asking Submission completes. One question remains open until it is replaced, submitted, or explicitly closed. There is currently no expiry timer. A later Submission may answer it.
 _Avoid_: Awaiting process, suspended Submission, open request
 
 **Submission Queue**:
@@ -137,3 +137,9 @@ _Avoid_: Sandbox CLI, Credential Proxy operation, personal integration
 **Sandbox Lease**:
 A temporary attachment of Sandbox compute to one Agent Conversation. It is reused during active work, kept running for at most fifteen idle minutes by default, then stopped while its filesystem is retained. Starting or replacing it does not change conversation identity; no process is expected to survive a stop.
 _Avoid_: Sandbox ownership, permanent VM, session
+
+**Participant**:
+A person who has spoken in a conversation or voted on one of its questions.
+
+**Vote**:
+A participant’s latest choice on a question. Votes are discussion evidence; recording one does not start a Submission.

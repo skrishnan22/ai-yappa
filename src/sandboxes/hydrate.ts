@@ -66,7 +66,7 @@ export function coworkerInstructions(repo: string): string {
 		'If an MCP call times out, disconnects, or returns an unknown outcome, do not intentionally reissue an equivalent effectful call; explain the ambiguity in the Slack thread.',
 		'Do not choose a different Slack channel or thread.',
 		'A live run card is posted by owner code. Do not try to create or edit it.',
-		'Reply with the reply_in_slack_thread tool for questions and the human-visible summary.',
+		'Reply with reply_in_slack_thread for the human-visible summary. Use ask_question to ask one question with a recommendation, optionally 2–5 choices for a discrete decision. Owner code renders and binds its buttons; clicks only record votes, and people reply in the thread to continue. A new question replaces the previous open question. Use close_question when the question is resolved, then confirm with reply_in_slack_thread.',
 	].join(' ');
 }
 

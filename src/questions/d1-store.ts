@@ -72,6 +72,11 @@ const SQL = {
 	finishQuestion: `UPDATE questions
 		SET status = ?2, closed_at = ?3, submitted_by = ?4, submitted_by_name = ?5
 		WHERE id = ?1 AND status = 'open'`,
+	reopenQuestion: `UPDATE questions SET status = 'open', closed_at = NULL
+		WHERE id = ?1 AND status = 'closed' AND NOT EXISTS (
+			SELECT 1 FROM questions open WHERE open.conversation_id = questions.conversation_id
+				AND open.status = 'open'
+		)`,
 	addParticipant: `INSERT INTO thread_participants (conversation_id, user_id, joined_at)
 		VALUES (?1, ?2, ?3) ON CONFLICT (conversation_id, user_id) DO NOTHING`,
 	listParticipants:
@@ -81,7 +86,8 @@ const SQL = {
 		WHERE id = ?1 AND status = 'open' AND kind = 'choice'
 			AND EXISTS (SELECT 1 FROM json_each(choices) WHERE value ->> 'id' = ?3)
 		ON CONFLICT (question_id, user_id) DO UPDATE SET
-		choice_id = excluded.choice_id, user_name = excluded.user_name, updated_at = excluded.updated_at`,
+		choice_id = excluded.choice_id, user_name = excluded.user_name, updated_at = excluded.updated_at
+		WHERE excluded.updated_at >= votes.updated_at`,
 	listVotes: 'SELECT * FROM votes WHERE question_id = ?1 ORDER BY user_id',
 };
 
@@ -191,6 +197,11 @@ export function createQuestionStore(db: D1Database): QuestionStore {
 
 			return meta.changes === 1;
 		},
+		async reopenQuestion(questionId) {
+			const { meta } = await db.prepare(SQL.reopenQuestion).bind(questionId).run();
+
+			return meta.changes === 1;
+		},
 		// DO NOTHING keeps the first join time.
 		async upsertParticipant({ conversationId, userId, joinedAt }) {
 			await db.prepare(SQL.addParticipant).bind(conversationId, userId, joinedAt).run();
@@ -206,7 +217,8 @@ export function createQuestionStore(db: D1Database): QuestionStore {
 			}));
 		},
 		// Insert or change one vote per user, only while the question is an open
-		// choice question that has this choice id. Returns false otherwise.
+		// choice question that has this choice id, and never with an older click
+		// than the stored one (Slack retries). Returns false otherwise.
 		async upsertVote(vote) {
 			const { meta } = await db
 				.prepare(SQL.upsertVote)
