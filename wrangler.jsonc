@@ -35,7 +35,7 @@
 		{ "tag": "v2", "new_sqlite_classes": ["CodexAuth"] },
 	],
 	// The app's one D1 database: memory (Person Preferences, Conversation
-	// Digests) and /grill-me questions. It keeps its original Cloudflare name.
+	// Digests) and planning decisions. It keeps its original Cloudflare name.
 	// Apply migrations with: pnpm exec wrangler d1 migrations apply APP_DB --remote
 	"d1_databases": [
 		{
