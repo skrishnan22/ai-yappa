@@ -4,9 +4,16 @@ import type { D1Database, D1Statement } from '../memory/d1.ts';
 import type { CardRevision, CardWording, PlanningStore } from './decision-log.ts';
 
 // Decisions store only the choice id, so ids must be unique within a card.
+// Ids become Slack option values, which Slack caps at 150 characters.
 // Applied on write and on read, so every stored card stays readable.
-const choicesSchema = v.pipe(
-	v.array(v.object({ id: v.string(), label: v.string() })),
+export const choicesSchema = v.pipe(
+	v.array(
+		v.object({
+			id: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
+			// A blank label renders as an empty Decide option.
+			label: v.pipe(v.string(), v.trim(), v.minLength(1)),
+		}),
+	),
 	v.minLength(2),
 	v.maxLength(5),
 	v.check(

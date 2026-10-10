@@ -4,22 +4,22 @@ Status: draft for implementation. This supersedes the exploratory working note; 
 
 ## 1. Decisions (fixed for v1)
 
-| # | Decision | Rationale (one line) |
-|---|----------|----------------------|
-| D1 | Separate repository, application, and infrastructure from Codevil | Clean slate; Codevil contributes lessons only |
-| D2 | Sandbox provider: **Daytona container Sandboxes** | Direct Cloudflare-runtime SDK support; stop/start preserves the hydrated filesystem; RAM/process continuity is not required |
-| D3 | Control plane: **Cloudflare + Flue** ([flueframework.com](https://flueframework.com/docs/guide/getting-started/)) | Flue agents are addressable with persistent conversations on the Cloudflare runtime — conversation affinity, ownership, and persistence come from the framework |
-| D4 | One conversation → one workspace → one working branch → one active submission | Coherent multi-step work; no cross-sandbox synchronization |
-| D5 | Agent reasoning loop runs **outside** the sandbox | Sandbox is hands, not brain; no canonical state or credentials inside |
-| D6 | Reusable credentials never enter the sandbox; a credential proxy performs trusted operations | The sole exception is a short-lived, repo-scoped GitHub token injected into one push process |
-| D7 | v1 trigger: **explicit Slack invocation only** | One full vertical loop with a human present; GitHub issue-comment mention is v2, alert-thread invocation is v3 (§9) |
-| D8 | Workspace correctness comes from **git checkpoints**, never provider disk | Sandbox death/expiry is routine, not exceptional |
-| D9 | Lost command responses become **Unknown Tool Outcome**, resolved by evidence | Never auto-fail or auto-retry a possibly-succeeded command |
-| D10 | MCP action authority is deployment-defined by server capabilities, credential scopes, and mounted tools; the harness imposes no universal no-write/no-deploy rule | The deployment operator chooses the authority envelope, and the model may exercise all of it |
-| D11 | Integration tools are **brain-side** via the credential proxy; the sandbox gets only workspace tools | Reading issues/alerts/logs needs no sandbox round-trip; only git push needs a credential-shaped thing inside |
-| D12 | Two submission types: **code-change** and **investigation** (read-only operations) | Alert-triggered work is investigate-and-report; smaller blast radius, easier to auto-trigger later |
-| D13 | GitHub authorization is deterministic trusted Worker policy, not a signed internal token | Repository and submission type come from trusted conversation context; the model supplies only typed operation parameters |
-| D14 | No model-callable tool returns a credential or accepts repository, permission, destination, or arbitrary-header fields | `vendPushToken` is internal checkpoint machinery; prompt injection can request named operations, never choose their authority |
+| #   | Decision                                                                                                                                                          | Rationale (one line)                                                                                                                                            |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | Separate repository, application, and infrastructure from Codevil                                                                                                 | Clean slate; Codevil contributes lessons only                                                                                                                   |
+| D2  | Sandbox provider: **Daytona container Sandboxes**                                                                                                                 | Direct Cloudflare-runtime SDK support; stop/start preserves the hydrated filesystem; RAM/process continuity is not required                                     |
+| D3  | Control plane: **Cloudflare + Flue** ([flueframework.com](https://flueframework.com/docs/guide/getting-started/))                                                 | Flue agents are addressable with persistent conversations on the Cloudflare runtime — conversation affinity, ownership, and persistence come from the framework |
+| D4  | One conversation → one workspace → one working branch → one active submission                                                                                     | Coherent multi-step work; no cross-sandbox synchronization                                                                                                      |
+| D5  | Agent reasoning loop runs **outside** the sandbox                                                                                                                 | Sandbox is hands, not brain; no canonical state or credentials inside                                                                                           |
+| D6  | Reusable credentials never enter the sandbox; a credential proxy performs trusted operations                                                                      | The sole exception is a short-lived, repo-scoped GitHub token injected into one push process                                                                    |
+| D7  | v1 trigger: **explicit Slack invocation only**                                                                                                                    | One full vertical loop with a human present; GitHub issue-comment mention is v2, alert-thread invocation is v3 (§9)                                             |
+| D8  | Workspace correctness comes from **git checkpoints**, never provider disk                                                                                         | Sandbox death/expiry is routine, not exceptional                                                                                                                |
+| D9  | Lost command responses become **Unknown Tool Outcome**, resolved by evidence                                                                                      | Never auto-fail or auto-retry a possibly-succeeded command                                                                                                      |
+| D10 | MCP action authority is deployment-defined by server capabilities, credential scopes, and mounted tools; the harness imposes no universal no-write/no-deploy rule | The deployment operator chooses the authority envelope, and the model may exercise all of it                                                                    |
+| D11 | Integration tools are **brain-side** via the credential proxy; the sandbox gets only workspace tools                                                              | Reading issues/alerts/logs needs no sandbox round-trip; only git push needs a credential-shaped thing inside                                                    |
+| D12 | Two submission types: **code-change** and **investigation** (read-only operations)                                                                                | Alert-triggered work is investigate-and-report; smaller blast radius, easier to auto-trigger later                                                              |
+| D13 | GitHub authorization is deterministic trusted Worker policy, not a signed internal token                                                                          | Repository and submission type come from trusted conversation context; the model supplies only typed operation parameters                                       |
+| D14 | No model-callable tool returns a credential or accepts repository, permission, destination, or arbitrary-header fields                                            | `vendPushToken` is internal checkpoint machinery; prompt injection can request named operations, never choose their authority                                   |
 
 ## 2. Architecture
 
@@ -79,6 +79,8 @@ Submissions have a type (D12):
 - `app_mention` in a channel → create conversation + thread; message in an existing tracked thread → route to that conversation. No slash command for conversations (slash commands don't live in threads, which breaks thread-as-identity). Deployment administration that is not thread-scoped may use one: `/aiyappa openai` connects the ChatGPT subscription (ADR 0020).
 - **Repo resolution**: channel → default repo mapping, configured when the agent is added to a channel; an explicit `repo:` argument in the invocation overrides it. Invocation without a resolvable repo gets an immediate in-thread setup prompt.
 - **Channel members**: any human member of the workspace may start or continue a conversation in a bound channel. Users from another organization in a Slack Connect channel get a polite refusal (ADR 0022).
+- `POST /channels/slack/interactions` receives block actions (Decide, Reopen) and the Decide modal submission, signature-verified like events. It writes the decision log, then dispatches a continuation. See Planning decisions.
+- While a planning session is active in a thread, unmentioned replies are dropped; mentions still dispatch.
 - Responsibilities end at routing; no business logic.
 
 ### 4.2 Conversation owner (Flue agent)
@@ -86,7 +88,7 @@ Submissions have a type (D12):
 The owner is a Flue agent (`'use agent'` function) deployed on the Cloudflare runtime target and reached only through Slack channel dispatch; it has no public `createAgentRouter()` mount. The Flue agent ID **is** the conversation ID (derived from the Slack thread), which gives addressability and persistent conversation state from the framework; the reasoning loop is the Flue agent itself, with proxy operations and sandbox commands exposed as Flue tools. Owns everything listed in D3–D5. Key invariants:
 
 - **One active submission.** New requests while working are queued and acknowledged in-thread ("queued behind current task").
-- **Steering vs new submissions.** A thread message during active work is classified as *steering* (correction/context for the current task — injected into the reasoning loop at the next step) or a *new submission* (queued). Classification is done by the reasoning loop itself with a cheap prompt; when ambiguous, treat as steering and say so in-thread.
+- **Steering vs new submissions.** A thread message during active work is classified as _steering_ (correction/context for the current task — injected into the reasoning loop at the next step) or a _new submission_ (queued). Classification is done by the reasoning loop itself with a cheap prompt; when ambiguous, treat as steering and say so in-thread.
 - **Fenced sandbox lease.** Every lease carries a monotonically increasing fencing token; commands are stamped with it; a superseded sandbox's late responses are discarded.
 - **Append-only event log.** Every state transition, command issued, and outcome (including Unknown) is an event. The progress card is a projection of this log.
 
@@ -94,13 +96,13 @@ The owner is a Flue agent (`'use agent'` function) deployed on the Cloudflare ru
 
 ```ts
 interface SandboxAdapter {
-  create(spec: SandboxSpec): Promise<SandboxHandle>;      // snapshot/image, cpu/mem/disk, volumes, lifecycle/network policy
-  attach(id: SandboxId): Promise<SandboxHandle | null>;   // reconnect after owner restart
-  exec(handle, cmd: Command): AsyncStream<ExecEvent>;     // cmd carries commandId + fencing token
-  stop(handle): Promise<void>;                            // release compute; preserve container filesystem; clear RAM/processes
-  start(id: SandboxId): Promise<SandboxHandle | null>;    // start the same retained container, including from archive
-  snapshotFs(handle): Promise<SnapshotId>;
-  terminate(handle): Promise<void>;                       // delete provider compute and retained state
+	create(spec: SandboxSpec): Promise<SandboxHandle>; // snapshot/image, cpu/mem/disk, volumes, lifecycle/network policy
+	attach(id: SandboxId): Promise<SandboxHandle | null>; // reconnect after owner restart
+	exec(handle, cmd: Command): AsyncStream<ExecEvent>; // cmd carries commandId + fencing token
+	stop(handle): Promise<void>; // release compute; preserve container filesystem; clear RAM/processes
+	start(id: SandboxId): Promise<SandboxHandle | null>; // start the same retained container, including from archive
+	snapshotFs(handle): Promise<SnapshotId>;
+	terminate(handle): Promise<void>; // delete provider compute and retained state
 }
 ```
 
@@ -185,17 +187,17 @@ Both caches are keyed by canonical repository and refresh at least five minutes 
 
 Each real credential lives in exactly one place:
 
-| Secret | Lives in | Used for |
-|---|---|---|
-| GitHub App private key | Credential proxy | Minting installation tokens |
-| Cloudflare read-only API token | Credential proxy | `cfRead` passthrough |
-| AWS read-only keys (SigV4) | Credential proxy | `awsRead` |
-| Slack signing secret | Ingress worker | Verifying inbound events |
-| Slack bot token | Conversation owner | Posting cards/messages |
-| LLM API keys | Conversation owner (behind AI Gateway) | Reasoning loop |
-| Daytona API key | Conversation owner (SandboxAdapter) | Sandbox lifecycle |
+| Secret                         | Lives in                               | Used for                    |
+| ------------------------------ | -------------------------------------- | --------------------------- |
+| GitHub App private key         | Credential proxy                       | Minting installation tokens |
+| Cloudflare read-only API token | Credential proxy                       | `cfRead` passthrough        |
+| AWS read-only keys (SigV4)     | Credential proxy                       | `awsRead`                   |
+| Slack signing secret           | Ingress worker                         | Verifying inbound events    |
+| Slack bot token                | Conversation owner                     | Posting cards/messages      |
+| LLM API keys                   | Conversation owner (behind AI Gateway) | Reasoning loop              |
+| Daytona API key                | Conversation owner (SandboxAdapter)    | Sandbox lifecycle           |
 
-The proxy holds only *integration* credentials — those an agent decision could abuse against external systems. Slack, Daytona, and LLM keys stay in the control plane because trusted code uses them on its own behalf. All are stored as Worker secrets.
+The proxy holds only _integration_ credentials — those an agent decision could abuse against external systems. Slack, Daytona, and LLM keys stay in the control plane because trusted code uses them on its own behalf. All are stored as Worker secrets.
 
 ### 5.2 Trust zones and threat model
 
@@ -204,7 +206,7 @@ Two zones:
 1. **Trusted control plane** — ingress, conversation owner, proxy, adapter. Holds real secrets. Runs only reviewed code.
 2. **Untrusted** — the sandbox, repo contents, and **all LLM inputs and outputs**.
 
-The load-bearing observation: **the brain is trusted code making untrusted decisions.** Everything the reasoning loop reads — repo contents, issue text, alert payloads, command output — is attacker-influenceable, so prompt injection can make the brain *want* to call any tool it has. Brain-side tools therefore go through the typed integration boundary, where the canonical repository, submission type, operation allowlist, and permission profile come from deterministic trusted code (D13, D14), never from the model.
+The load-bearing observation: **the brain is trusted code making untrusted decisions.** Everything the reasoning loop reads — repo contents, issue text, alert payloads, command output — is attacker-influenceable, so prompt injection can make the brain _want_ to call any tool it has. Brain-side tools therefore go through the typed integration boundary, where the canonical repository, submission type, operation allowlist, and permission profile come from deterministic trusted code (D13, D14), never from the model.
 
 **Worst-case blast radius** (reasoning loop fully hijacked by malicious content): through native tools, it can read what the submission policy allows, push commits to the deterministic working branch, open a visible PR, post messages to its own Slack thread, and burn tokens up to the budget cap. Through MCP tools, it may exercise the union of every catalogued server's advertised tools and the corresponding deployment credentials' provider-enforced authority, including merge, deploy, or infrastructure mutations when the operator grants them. It cannot obtain a credential through a tool result or exceed the authority exposed by those mounted tools and credentials. During checkpoint push, code with sufficient access in the same sandbox may observe or exercise the fresh repository token before revocation; branch protection and narrow App installation/permissions are required external controls. The design exists to keep this paragraph true for the internal pilot, not to claim hostile multi-tenant sandbox isolation.
 
@@ -305,6 +307,18 @@ Live run card is an owner-side projection of Flue runtime events (`submission_*`
 An interactive Slack invocation does not by itself authorize or require a repository mutation. Coworker instructions make the agent conversational by default: questions, idea exploration, explanations, comparisons, architecture discussions, reviews, and recommendations are answered in Slack, with read-only repository inspection when useful. The agent must not turn those answers into files, commits, checkpoints, or pull requests unless the user clearly asks for a repository change. Clear implementation requests keep the existing inspect/edit/test/checkpoint/PR workflow; ambiguous requests start with discussion or a clarifying question. Repository binding and the presence of write tools are context and capability, not user intent.
 
 This is currently a model-behavior rule, not a trusted authorization boundary: interactive Slack work still receives the pilot's `code-change` operation context. If discussion-only mode needs a hard no-write guarantee, add an owner-selected submission type and enforce it in `assertOpAllowed`; do not treat prompt text as that security control.
+
+### Planning decisions (2026-10-10)
+
+Decision recorded in `docs/adr/0023-reversible-planning-decisions.md`; design in `docs/superpowers/specs/2026-10-10-slack-planning-decisions-design.md`. This replaces the voting, quorum, solo/group, and Submit design of `/grill-me`.
+
+The model activating the `grill-me` skill, or asking a card outside a session (such as after a Reopen past the end), starts a Planning Session, kept in the D1 table `planning_sessions`; the `end_planning` tool ends it. While it is active, unmentioned thread replies are not dispatched; if ingress cannot read the session (a D1 error or a missing migration), it treats it as inactive. Mentions are, and ask Yappa to research, clarify, or reword; they never decide a card.
+
+The decision log is the D1 table `card_revisions`, primary key `(card_id, revision)`. A card's state is its latest revision. Cards are shown as D1, D2, and so on; the card id is a UUID. Tools: `ask_decision` posts a card and then saves it, so a failed post leaves no unanswerable card; `reword_decision` rewords an open card; `list_decisions` reads every card's latest state and earlier answers; `end_planning` ends the session and then posts the summary, split into messages of at most 3,500 characters, so a failed post never leaves the thread quiet.
+
+**Decide** opens a modal where a channel member picks a choice or writes a custom answer, with optional reasoning. The modal is the only way to answer. Submitting is a conditional update on the revision the modal was opened at; the first submission wins, and a stale or replayed submission is told to review the current card. **Reopen** inserts a new undecided revision and keeps the earlier answer. Its button names the revision it shows, so a stale button never reopens a later decision. Reopen applies only to decided cards, and reword only to open ones. A decision made after a session ends is still recorded and dispatched. Users from another organization are refused by comparing `payload.user.team_id` with the conversation's team; a missing team is refused.
+
+Decisions are saved before dispatch. The interaction writes to D1 first; the card redraw and the continuation dispatch then run under `waitUntil`, and a failed redraw (read or update) is logged without stopping the dispatch. A redraw that finds the card changed after its update draws again, so overlapping redraws settle on the current state. Continuations carry no `initialData`. A continuation run that fails shows on the run card; a dispatch refused before a run starts is only logged. Either way a mention resumes from the saved log; there is no Retry button. The check against earlier decisions is a skill instruction, not a guarantee.
 
 ### Integration Catalog / open MCP (2026-09-14)
 

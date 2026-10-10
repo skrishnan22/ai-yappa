@@ -90,6 +90,18 @@ _Avoid_: Model switching, per-user default
 A packaged procedure in Agent Skills format (`SKILL.md`) that the Coworker loads on demand. Deployment skills live in `src/skills/`. The model activates one when a request matches its description, or a mention invokes one with `/<name>`. Skills in the bound repository's `.agents/skills/` are also in the catalog, but a repo skill with a deployment skill's name fails the session.
 _Avoid_: Command, plugin, slash command (that is `/aiyappa`)
 
+**Planning Session**:
+A stretch of a thread, started when the model activates `grill-me` (or asks a card outside a session) and ended by `end_planning`, in which Yappa asks questions and people decide. Unmentioned replies do not reach Yappa until it ends. Session state is the D1 table `planning_sessions`.
+_Avoid_: Grill session, poll
+
+**Decision Card**:
+One question Yappa posts in a Planning Session, with context, a recommendation, and optional choices, labelled D1, D2 and so on. Its state is its latest revision: decided through the **Decide** modal, or open. **Reopen** and rewording add revisions and keep history.
+_Avoid_: Question, poll, vote
+
+**Decision Log**:
+The D1 table `card_revisions`, which is the authoritative record of every Decision Card revision and who decided it. The first submission on a revision wins. `plan.md` notes are scratch; the log wins.
+_Avoid_: Plan, minutes
+
 **Codex Credential**:
 The deployment's single ChatGPT subscription login (OAuth access and refresh token) that the ChatGPT Model Route bills against. One `CodexAuth` Durable Object owns it; only access tokens leave that object.
 _Avoid_: OpenAI API key, per-user login

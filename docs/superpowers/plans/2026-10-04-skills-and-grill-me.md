@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Status:** the voting, solo/group, Submit, participant, and question-controls phases are superseded by `docs/superpowers/specs/2026-10-10-slack-planning-decisions-design.md`.
+
 **Goal:** Give the Coworker Agent Skills invoked with `/<name>` in a Slack mention, starting with `/grill-me`. Later, grill sessions become a multi-person question/answer flow with buttons.
 
 **Architecture:** The work ships as a stack of four small PRs. Each PR merges on its own and leaves `main` working. This document has the stack overview and the detailed plan for **PR 1 only**. Each later PR is planned in detail just before it starts, so review of the previous PR can change it.
