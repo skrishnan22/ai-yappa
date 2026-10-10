@@ -21,6 +21,9 @@ oauth_config:
       - channels:history
       - groups:history
 settings:
+  interactivity:
+    is_enabled: true
+    request_url: https://example.invalid/channels/slack/interactions
   org_deploy_enabled: false
   socket_mode_enabled: false
   token_rotation_enabled: false

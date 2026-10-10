@@ -9,6 +9,7 @@ export type SlackAdmissionEvent = {
 		| 'refuse-external'
 		| 'no-repo'
 		| 'drop-untracked'
+		| 'drop-planning'
 		| 'bad-args'
 		| 'model-unavailable'
 		| 'admission-error';
