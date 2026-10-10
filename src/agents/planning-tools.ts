@@ -1,6 +1,7 @@
 import { defineTool, type ToolDefinition } from '@flue/runtime';
 import * as v from 'valibot';
-import { getSlackClient } from '../channels/slack-reply.ts';
+import { getSlackClient, type SlackBotClient } from '../channels/slack-reply.ts';
+import { errorMessage } from '../json.ts';
 import { answerText, renderCard, renderSummary } from '../planning/card-blocks.ts';
 import { choicesSchema } from '../planning/d1-decision-log.ts';
 import type { Card, CardRevision, PlanningStore } from '../planning/decision-log.ts';
@@ -9,9 +10,9 @@ import type { Card, CardRevision, PlanningStore } from '../planning/decision-log
 export const PLANNING_REPLY_TOOLS: ReadonlySet<string> = new Set(['ask_decision', 'end_planning']);
 
 const wordingEntries = {
-	question: v.pipe(v.string(), v.minLength(1)),
+	question: v.pipe(v.string(), v.trim(), v.minLength(1)),
 	context: v.optional(v.string()),
-	recommendation: v.pipe(v.string(), v.minLength(1)),
+	recommendation: v.pipe(v.string(), v.trim(), v.minLength(1)),
 	choices: v.optional(choicesSchema),
 };
 
@@ -46,14 +47,14 @@ export function planningTools(args: {
 			async run({ data }) {
 				const cardId = newId();
 
-				await store.log.ask({
+				const newCard = {
 					...data,
 					cardId,
 					conversationId,
 					channelId,
 					threadTs,
 					createdAt: now().toISOString(),
-				});
+				};
 
 				// A card asked outside a session (after end_planning, say a reopen
 				// past the end) restarts it, so replies stay quiet while it is open.
@@ -61,28 +62,46 @@ export function planningTools(args: {
 					await store.sessions.start(conversationId, now().toISOString());
 				}
 
-				const card = await findCard(cardId);
-
-				if (!card) throw new Error(`Card ${cardId} was not stored`);
-
 				if (!token) {
-					return { output: { label: card.label, cardId, posted: false, ts: null } };
+					await store.log.ask(newCard);
+
+					const card = await findCard(cardId);
+
+					return { output: { label: card?.label ?? null, cardId, posted: false, ts: null } };
 				}
 
-				const { text, blocks } = renderCard(card);
+				// Posted before it is saved: a saved card whose post failed would stay
+				// open with no Decide button, and asking again would add a second card.
+				const label = `D${(await store.log.listCards(conversationId)).length + 1}`;
+				const draft = renderCard({ label, latest: { ...newCard, revision: 1 }, history: [] });
+				const slack = getSlackClient(token);
 
-				const result = await getSlackClient(token).chat.postMessage({
+				const result = await slack.chat.postMessage({
 					channel: channelId,
 					thread_ts: threadTs,
-					text,
-					blocks,
+					...draft,
 					unfurl_links: false,
 					unfurl_media: false,
 				});
 
-				if (result.ts) await store.log.setMessageTs(cardId, result.ts);
+				const ts = result.ts ?? null;
 
-				return { output: { label: card.label, cardId, posted: true, ts: result.ts ?? null } };
+				try {
+					await store.log.ask({ ...newCard, messageTs: ts ?? undefined });
+				} catch (error) {
+					if (ts) await withdrawPost(slack, channelId, ts);
+
+					throw error;
+				}
+
+				const card = await findCard(cardId);
+
+				// A concurrent ask took the label this card was drawn with.
+				if (card && ts && card.label !== label) {
+					await slack.chat.update({ channel: channelId, ts, ...renderCard(card) });
+				}
+
+				return { output: { label: card?.label ?? label, cardId, posted: true, ts } };
 			},
 		}),
 		defineTool({
@@ -153,24 +172,42 @@ export function planningTools(args: {
 			input: v.object({}),
 			async run() {
 				const cards = await store.log.listCards(conversationId);
-				const summary = renderSummary(cards);
+				const messages = renderSummary(cards);
 
-				if (token) {
-					await getSlackClient(token).chat.postMessage({
-						channel: channelId,
-						thread_ts: threadTs,
-						text: summary,
-						unfurl_links: false,
-						unfurl_media: false,
-					});
-				}
-
+				// Ended first: a failed summary post must not leave the thread quiet.
+				// The post error still fails the tool, so the model can retry it.
 				await store.sessions.end(conversationId, now().toISOString());
 
-				return { output: { summary, posted: Boolean(token) } };
+				if (token) {
+					for (const text of messages) {
+						await getSlackClient(token).chat.postMessage({
+							channel: channelId,
+							thread_ts: threadTs,
+							text,
+							unfurl_links: false,
+							unfurl_media: false,
+						});
+					}
+				}
+
+				return { output: { summary: messages.join('\n\n'), posted: Boolean(token) } };
 			},
 		}),
 	];
+}
+
+// Best effort: the card was posted but not saved, so its Decide button leads nowhere.
+async function withdrawPost(slack: SlackBotClient, channel: string, ts: string): Promise<void> {
+	try {
+		await slack.chat.update({
+			channel,
+			ts,
+			text: 'This question could not be saved.',
+			blocks: [],
+		});
+	} catch (error) {
+		console.warn(`[planning] Withdrawing unsaved card ${ts} failed: ${errorMessage(error)}`);
+	}
 }
 
 function describeCard(card: Card) {
