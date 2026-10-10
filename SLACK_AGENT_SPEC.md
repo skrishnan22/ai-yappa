@@ -312,13 +312,13 @@ This is currently a model-behavior rule, not a trusted authorization boundary: i
 
 Decision recorded in `docs/adr/0023-reversible-planning-decisions.md`; design in `docs/superpowers/specs/2026-10-10-slack-planning-decisions-design.md`. This replaces the voting, quorum, solo/group, and Submit design of `/grill-me`.
 
-The model activating the `grill-me` skill starts a Planning Session, kept in the D1 table `planning_sessions`; the `end_planning` tool ends it. While it is active, unmentioned thread replies are not dispatched. Mentions are, and ask Yappa to research, clarify, or reword; they never decide a card.
+The model activating the `grill-me` skill, or asking a card outside a session (such as after a Reopen past the end), starts a Planning Session, kept in the D1 table `planning_sessions`; the `end_planning` tool ends it. While it is active, unmentioned thread replies are not dispatched; if ingress cannot read the session (a D1 error or a missing migration), it treats it as inactive. Mentions are, and ask Yappa to research, clarify, or reword; they never decide a card.
 
 The decision log is the D1 table `card_revisions`, primary key `(card_id, revision)`. A card's state is its latest revision. Cards are shown as D1, D2, and so on; the card id is a UUID. Tools: `ask_decision` posts a card, `reword_decision` rewords an open card, `list_decisions` reads every card's latest state and earlier answers, `end_planning` posts the summary and ends the session.
 
 **Decide** opens a modal where a channel member picks a choice or writes a custom answer, with optional reasoning. The modal is the only way to answer. Submitting is a conditional update on the revision the modal was opened at; the first submission wins, and a stale or replayed submission is told to review the current card. **Reopen** inserts a new undecided revision and keeps the earlier answer. Reopen applies only to decided cards, and reword only to open ones. A decision made after a session ends is still recorded and dispatched. Users from another organization are refused by comparing `payload.user.team_id` with the conversation's team; a missing team is refused.
 
-Decisions are saved before dispatch. The interaction writes to D1 first; the card redraw and the continuation dispatch then run under `waitUntil`, and a failed redraw is logged without stopping the dispatch. Continuations carry no `initialData`. A failed continuation shows on the run card, and a mention resumes from the saved log; there is no Retry button. The check against earlier decisions is a skill instruction, not a guarantee.
+Decisions are saved before dispatch. The interaction writes to D1 first; the card redraw and the continuation dispatch then run under `waitUntil`, and a failed redraw is logged without stopping the dispatch. Continuations carry no `initialData`. A continuation run that fails shows on the run card; a dispatch refused before a run starts is only logged. Either way a mention resumes from the saved log; there is no Retry button. The check against earlier decisions is a skill instruction, not a guarantee.
 
 ### Integration Catalog / open MCP (2026-09-14)
 

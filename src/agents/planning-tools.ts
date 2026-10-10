@@ -55,6 +55,12 @@ export function planningTools(args: {
 					createdAt: now().toISOString(),
 				});
 
+				// A card asked outside a session (after end_planning, say a reopen
+				// past the end) restarts it, so replies stay quiet while it is open.
+				if (!(await store.sessions.isActive(conversationId))) {
+					await store.sessions.start(conversationId, now().toISOString());
+				}
+
 				const card = await findCard(cardId);
 
 				if (!card) throw new Error(`Card ${cardId} was not stored`);

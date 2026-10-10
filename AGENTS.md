@@ -16,9 +16,9 @@ Implementation source of truth: `SLACK_AGENT_SPEC.md`. Milestone scope: `SLACK_A
 - `src/integrations/mcp-catalog.ts` — deploy-time Integration Catalog; Coworker resolves Worker secrets at render and mounts via `useMcpConnection`.
 - `src/integrations/codex-auth/` — `CodexAuth` Durable Object (one instance, `getByName('default')`) owning the encrypted Codex Credential and pi's locked OAuth refresh. Only access tokens leave it. Exported from `src/cloudflare.ts`.
 - `src/integrations/web-search/` — Exa/Parallel REST adapters + optimistic failover router behind native `web_search` / `web_fetch`.
-- `src/planning/` — the decision log (`card_revisions`), planning sessions (`planning_sessions`), card blocks, and the store holder. Stored in the app's single D1 database (`APP_DB`) beside memory; migrations live in `migrations/`.
+- `src/planning/` — the decision log (`card_revisions`), planning sessions (`planning_sessions`), card blocks, and the store holder. Stored in the app's single D1 database (`APP_DB`) beside memory; migrations live in `migrations/`. Tests get a fresh, migrated, real D1 (Miniflare, via wrangler's `getPlatformProxy`) from `openTestDatabase()` in `src/testing/d1.ts`.
 - `src/channels/planning-interactions.ts` — Decide, Reopen, and the Decide modal (ADR 0023). Writes D1 before it responds; redraw and dispatch run under `waitUntil`.
-- `src/agents/planning-tools.ts` — `ask_decision`, `reword_decision`, `list_decisions`, `end_planning`. Tests get a fresh, migrated, real D1 (Miniflare, via wrangler's `getPlatformProxy`) from `openTestDatabase()` in `src/testing/d1.ts`.
+- `src/agents/planning-tools.ts` — `ask_decision`, `reword_decision`, `list_decisions`, `end_planning`.
 - `src/config.ts` — channel→repo map and Codex admin list. Fail closed when empty. Any workspace member may use a bound channel; `src/channels/admit.ts` refuses users from other organizations (ADR 0022).
 - `src/app.ts` — route map. Slack channel only.
 - `src/cloudflare.ts` — Worker-level exports and non-HTTP handlers.

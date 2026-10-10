@@ -117,9 +117,30 @@ describe('planningTools', () => {
 			false,
 		);
 	});
+
+	// Slack caps a radio option value at 150 characters.
+	it('rejects choice ids too long for a Slack option value', async () => {
+		const { tools } = await setup();
+		const input = tool(tools, 'ask_decision').input;
+
+		if (!input) throw new Error('ask_decision has no input schema');
+
+		const long = { id: 'x'.repeat(65), label: 'Long' };
+
+		expect(v.is(input, { ...question, choices: [long, { id: 'b', label: 'B' }] })).toBe(false);
+	});
 });
 
 describe('ask_decision', () => {
+	it('starts a planning session if none is active, such as after a reopen past the end', async () => {
+		const { store, tools } = await setup();
+
+		await run(tools, 'ask_decision', question);
+		const active = await store.sessions.isActive(CONVERSATION);
+
+		expect(active).toBe(true);
+	});
+
 	it('stores revision 1, posts a card with a Decide button and saves its ts', async () => {
 		const { store, calls, tools } = await setup();
 
