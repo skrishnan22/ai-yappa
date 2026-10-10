@@ -11,6 +11,8 @@ import { setProvider } from '@flue/runtime';
 import { env } from 'cloudflare:workers';
 import { createOpenAICodexProvider } from './agents/openai-codex-route.ts';
 import { codexAuth } from './integrations/codex-auth/codex-auth-binding.ts';
+import { createD1PlanningStore } from './planning/d1-decision-log.ts';
+import { setPlanningStore } from './planning/planning-store.ts';
 
 export { CodexAuth } from './integrations/codex-auth/codex-auth-object.ts';
 
@@ -19,3 +21,8 @@ export { CodexAuth } from './integrations/codex-auth/codex-auth-object.ts';
 // an isolate that loads that bundle, so every Coworker has the provider.
 // `flue run` never loads this file and stays on OpenCode Go.
 setProvider(createOpenAICodexProvider(() => codexAuth(env).accessToken()));
+
+// Planning decisions live in APP_DB. Every Coworker isolate loads this module,
+// so every Coworker mounts the planning tools. `flue run` never loads this
+// file, so planning tools are absent there.
+setPlanningStore(createD1PlanningStore(env.APP_DB));

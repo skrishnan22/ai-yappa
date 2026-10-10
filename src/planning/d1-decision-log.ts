@@ -5,7 +5,7 @@ import type { CardRevision, CardWording, PlanningStore } from './decision-log.ts
 
 // Decisions store only the choice id, so ids must be unique within a card.
 // Applied on write and on read, so every stored card stays readable.
-const choicesSchema = v.pipe(
+export const choicesSchema = v.pipe(
 	v.array(v.object({ id: v.string(), label: v.string() })),
 	v.minLength(2),
 	v.maxLength(5),
