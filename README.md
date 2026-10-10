@@ -91,10 +91,10 @@ The manifest registers the `/aiyappa` slash command with a placeholder host. Onc
 Coworker runs on `openai-codex/gpt-5.6-luna` through a ChatGPT Plus/Pro subscription once a Codex admin connects one. Until then, and after a disconnect, it uses OpenCode Go. One `CodexAuth` Durable Object holds the deployment's single credential, encrypted under `CODEX_CREDENTIAL_KEY`, and refreshes it; only access tokens leave it ([ADR 0020](docs/adr/0020-chatgpt-subscription-model-route.md)).
 
 - `/aiyappa openai connect` (admins): replies, visible only to you, with a code to enter at `https://auth.openai.com/codex/device` within 15 minutes. Whoever enters the code connects the whole deployment to their account, so do not share it. Sign in with a ChatGPT account dedicated to the bot; that account must enable "Device code authorization for Codex" in ChatGPT security settings, and on Team or Enterprise a workspace admin must allow it. The reply updates when the login finishes. Connect refuses while an account is connected; disconnect first to switch.
-- `/aiyappa openai status` (admins and invokers): the connected account id, the current access token's expiry, and the route Coworker uses. It never shows the code.
+- `/aiyappa openai status` (any workspace member): the connected account id, the current access token's expiry, and the route Coworker uses. It never shows the code.
 - `/aiyappa openai disconnect` (admins): cancels a pending login, revokes the refresh token at OpenAI, and deletes the credential. The credential is deleted even if OpenAI does not confirm the revocation; the reply says so.
 
-Admins are `codexAdminIds` in `src/config.ts`, separate from the invoker allowlist. An empty list lets nobody connect or disconnect. Slack ingress picks the route when each event arrives, so a change applies from the next message. `flue run` always uses OpenCode Go because it has no Durable Objects.
+Admins are `codexAdminIds` in `src/config.ts`. An empty list lets nobody connect or disconnect. Slack ingress picks the route when each event arrives, so a change applies from the next message. `flue run` always uses OpenCode Go because it has no Durable Objects.
 
 Never seed the bot from a personal `~/.codex/auth.json`: refresh tokens are single-use, and two clients refreshing one login break each other.
 
