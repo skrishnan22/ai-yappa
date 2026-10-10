@@ -10,6 +10,7 @@ import {
 	DECIDE_CALLBACK,
 	decideModal,
 	parseDecideSubmission,
+	parseReopenValue,
 	renderCard,
 	REOPEN_ACTION,
 	type DecideSubmission,
@@ -39,6 +40,9 @@ export type PlanningInteractionDeps = {
 };
 
 type SubmissionErrors = { response_action: 'errors'; errors: Record<string, string> };
+
+// Redraws that see a newer state after their update draw again, at most this often.
+const REDRAW_ATTEMPTS = 3;
 
 const NOT_A_MEMBER = 'Yappa only works for members of this workspace.';
 
@@ -102,10 +106,14 @@ async function onDecideClick(
 
 async function onReopenClick(
 	payload: SlackBlockActionsPayload,
-	cardId: string,
+	value: string,
 	deps: PlanningInteractionDeps,
 ): Promise<void> {
-	const latest = await deps.store.log.latest(cardId);
+	const shown = parseReopenValue(value);
+
+	if (!shown) return;
+
+	const latest = await deps.store.log.latest(shown.cardId);
 
 	if (!latest) return;
 
@@ -115,7 +123,13 @@ async function onReopenClick(
 		return;
 	}
 
-	const reopened = await deps.store.log.reopen({ cardId, createdAt: deps.now().toISOString() });
+	// A stale button (the card moved on since it was drawn) reopens nothing;
+	// the redraw shows the current card instead.
+	const reopened = await deps.store.log.reopen({
+		cardId: shown.cardId,
+		revision: shown.revision,
+		createdAt: deps.now().toISOString(),
+	});
 
 	if (!reopened) {
 		await redraw(latest, deps);
@@ -127,14 +141,12 @@ async function onReopenClick(
 		(async () => {
 			const card = await redraw(reopened, deps);
 
-			if (!card) return;
-
 			await deps.continueConversation({
 				...threadOf(reopened),
 				type: 'planning.reopen',
-				eventId: `planning-reopen:${cardId}:${reopened.revision}`,
+				eventId: `planning-reopen:${shown.cardId}:${reopened.revision}`,
 				userId: payload.user.id,
-				body: reopenBody(card.label, latest, payload.user.id),
+				body: reopenBody(card?.label, latest, payload.user.id),
 			});
 		})(),
 	);
@@ -186,14 +198,12 @@ async function onDecideSubmission(
 		(async () => {
 			const card = await redraw(latest, deps);
 
-			if (!card) return;
-
 			await deps.continueConversation({
 				...threadOf(latest),
 				type: 'planning.decision',
 				eventId: `planning-decide:${submission.cardId}:${submission.revision}`,
 				userId: payload.user.id,
-				body: decisionBody(card.label, latest, submission, payload.user.id),
+				body: decisionBody(card?.label, latest, submission, payload.user.id),
 			});
 		})(),
 	);
@@ -240,35 +250,48 @@ async function findCard(
 	return cards.find((card) => card.latest.cardId === revision.cardId);
 }
 
-// Redraws the card's current state and returns it.
+// Redraws the card's current state and returns it. Never throws: the log is
+// authoritative, and a failed read or update must not stop the dispatch.
+// Concurrent redraws are unordered, so one may draw an older state over a
+// newer one; each re-reads after its update and draws again if the card moved.
 async function redraw(
 	revision: CardRevision,
 	deps: PlanningInteractionDeps,
 ): Promise<Card | undefined> {
-	const card = await findCard(revision, deps);
+	let card: Card | undefined;
 
-	if (!card) return undefined;
-
-	const { messageTs, channelId } = card.latest;
-
-	if (!messageTs) return card;
-
-	// The log is authoritative: a stale card message must not stop the dispatch.
 	try {
-		const { text, blocks } = renderCard(card);
+		for (let attempt = 0; attempt < REDRAW_ATTEMPTS; attempt++) {
+			card = await findCard(revision, deps);
 
-		await deps.slack.chat.update({ channel: channelId, ts: messageTs, text, blocks });
+			const messageTs = card?.latest.messageTs;
+
+			if (!card || !messageTs) return card;
+
+			const { text, blocks } = renderCard(card);
+
+			await deps.slack.chat.update({ channel: card.latest.channelId, ts: messageTs, text, blocks });
+
+			const current = await deps.store.log.latest(revision.cardId);
+
+			if (!current || sameState(current, card.latest)) return card;
+		}
 	} catch (error) {
-		console.warn(`[planning] Card ${card.latest.cardId} redraw failed: ${errorMessage(error)}`);
+		console.warn(`[planning] Card ${revision.cardId} redraw failed: ${errorMessage(error)}`);
 	}
 
 	return card;
 }
 
+function sameState(a: CardRevision, b: CardRevision): boolean {
+	return a.revision === b.revision && Boolean(a.decision) === Boolean(b.decision);
+}
+
 // Dispatch bodies are model prompts: user and model text is quoted as-is.
 // Built from what was submitted, not re-read, so a later reopen cannot blank the answer.
+// Without a label (the redraw read failed), the question still names the card.
 function decisionBody(
-	label: string,
+	label = 'a card',
 	revision: CardRevision,
 	submission: DecideSubmission,
 	userId: string,
@@ -287,7 +310,7 @@ function decisionBody(
 }
 
 // `earlier` is the decided revision the reopen replaced.
-function reopenBody(label: string, earlier: CardRevision, userId: string): string {
+function reopenBody(label = 'a card', earlier: CardRevision, userId: string): string {
 	const decision = earlier.decision;
 
 	return [

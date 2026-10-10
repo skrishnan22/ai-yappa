@@ -74,7 +74,7 @@ async function seed(store: PlanningStore, overrides: Partial<NewCard> = {}) {
 	await store.log.setMessageTs(card.cardId, '2.0');
 }
 
-function click(actionId: string, user: User = member, cardId = 'card-1'): SlackInteractionPayload {
+function click(actionId: string, user: User = member, value = 'card-1'): SlackInteractionPayload {
 	return {
 		type: 'block_actions',
 		team: { id: HOME_TEAM },
@@ -82,7 +82,7 @@ function click(actionId: string, user: User = member, cardId = 'card-1'): SlackI
 		api_app_id: 'A1',
 		trigger_id: 'trigger-1',
 		container: {},
-		actions: [{ type: 'button', action_id: actionId, value: cardId }],
+		actions: [{ type: 'button', action_id: actionId, value }],
 	};
 }
 
@@ -271,7 +271,7 @@ describe('handlePlanningInteraction', () => {
 			await seed(store);
 			await store.log.decide({ cardId: 'card-1', revision: 1, decision: earlierDecision });
 
-			await handlePlanningInteraction(click(REOPEN_ACTION, outsider), deps);
+			await handlePlanningInteraction(click(REOPEN_ACTION, outsider, 'card-1:1'), deps);
 
 			expect(calls.map((call) => call.method)).toEqual(['chat.postEphemeral']);
 			expect((await store.log.latest('card-1'))?.revision).toBe(1);
@@ -296,7 +296,10 @@ describe('handlePlanningInteraction', () => {
 		await seed(store);
 		await store.log.decide({ cardId: 'card-1', revision: 1, decision: earlierDecision });
 
-		await handlePlanningInteraction(click(REOPEN_ACTION, { id: 'U2', team_id: HOME_TEAM }), deps);
+		await handlePlanningInteraction(
+			click(REOPEN_ACTION, { id: 'U2', team_id: HOME_TEAM }, 'card-1:1'),
+			deps,
+		);
 
 		const latest = await store.log.latest('card-1');
 
@@ -316,11 +319,69 @@ describe('handlePlanningInteraction', () => {
 		);
 	});
 
+	it('does not reopen a later decision from a stale Reopen button', async () => {
+		const { store, calls, continuations, deps } = await setup();
+		await seed(store);
+		await store.log.decide({ cardId: 'card-1', revision: 1, decision: earlierDecision });
+		await store.log.reopen({
+			cardId: 'card-1',
+			revision: 1,
+			createdAt: '2026-10-10T11:30:00.000Z',
+		});
+		await store.log.decide({
+			cardId: 'card-1',
+			revision: 2,
+			decision: { ...earlierDecision, choiceId: 'd1' },
+		});
+
+		await handlePlanningInteraction(click(REOPEN_ACTION, member, 'card-1:1'), deps);
+
+		const latest = await store.log.latest('card-1');
+
+		expect(latest).toMatchObject({
+			revision: 2,
+			decision: { choiceId: 'd1' },
+		});
+		expect(continuations).toHaveLength(0);
+		expect(calls.map((call) => call.method)).toEqual(['chat.update']);
+	});
+
+	it('draws again when the card changes during its redraw', async () => {
+		let store: PlanningStore | undefined;
+		let reopenedMidRedraw = false;
+
+		const { calls, continuations, deps, ...rest } = await setup(async (call) => {
+			if (call.method === 'chat.update' && store && !reopenedMidRedraw) {
+				reopenedMidRedraw = true;
+				await store.log.reopen({
+					cardId: 'card-1',
+					revision: 1,
+					createdAt: '2026-10-10T12:30:00.000Z',
+				});
+			}
+
+			return { ok: true };
+		});
+
+		store = rest.store;
+		await seed(store);
+		const view = await openedView(store, { choice: 'd1' });
+
+		await handlePlanningInteraction(submit(view), deps);
+
+		const updates = calls.filter((call) => call.method === 'chat.update');
+
+		expect(updates).toHaveLength(2);
+		expect(JSON.stringify(updates[0]!.params.blocks)).toContain(REOPEN_ACTION);
+		expect(JSON.stringify(updates[1]!.params.blocks)).toContain(DECIDE_ACTION);
+		expect(continuations).toHaveLength(1);
+	});
+
 	it('does not reopen an open card', async () => {
 		const { store, calls, continuations, deps } = await setup();
 		await seed(store);
 
-		await handlePlanningInteraction(click(REOPEN_ACTION), deps);
+		await handlePlanningInteraction(click(REOPEN_ACTION, member, 'card-1:1'), deps);
 
 		expect((await store.log.latest('card-1'))?.revision).toBe(1);
 		expect(continuations).toHaveLength(0);
@@ -364,12 +425,38 @@ describe('handlePlanningInteraction', () => {
 			await seed(store);
 			await store.log.decide({ cardId: 'card-1', revision: 1, decision: earlierDecision });
 
-			await handlePlanningInteraction(click(REOPEN_ACTION), deps);
+			await handlePlanningInteraction(click(REOPEN_ACTION, member, 'card-1:1'), deps);
 
 			expect(continuations).toHaveLength(1);
 			expect(continuations[0]!.type).toBe('planning.reopen');
 			expect(warn).toHaveBeenCalledWith(expect.stringContaining('message_not_found'));
 		});
+	});
+
+	it('still continues when the card cannot be read after the decision is saved', async () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const { store, continuations, deps } = await setup();
+		await seed(store);
+		const view = await openedView(store, { choice: 'd1' });
+
+		const unreadable: PlanningStore = {
+			...store,
+			log: {
+				...store.log,
+				listCards: async () => {
+					throw new Error('D1 unavailable');
+				},
+			},
+		};
+
+		await handlePlanningInteraction(submit(view), { ...deps, store: unreadable });
+
+		const latest = await store.log.latest('card-1');
+
+		expect(latest?.decision?.choiceId).toBe('d1');
+		expect(continuations).toHaveLength(1);
+		expect(continuations[0]!.body).toContain('<@U1> decided a card "Which database?": D1');
+		expect(warn).toHaveBeenCalledWith(expect.stringContaining('D1 unavailable'));
 	});
 
 	it('continues without a redraw when the card has no message', async () => {
@@ -393,7 +480,11 @@ describe('handlePlanningInteraction', () => {
 			log: {
 				...store.log,
 				listCards: async (conversationId) => {
-					await store.log.reopen({ cardId: 'card-1', createdAt: '2026-10-10T12:30:00.000Z' });
+					await store.log.reopen({
+						cardId: 'card-1',
+						revision: 1,
+						createdAt: '2026-10-10T12:30:00.000Z',
+					});
 
 					return store.log.listCards(conversationId);
 				},
