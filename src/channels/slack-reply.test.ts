@@ -301,4 +301,37 @@ describe('slack WebClient factory', () => {
 			},
 		]);
 	});
+
+	test('paragraphizes a single-line text reply before posting', async () => {
+		__setSlackClientFactoryForTests(fakeClient);
+		const tool = replyInThread({ channelId: 'C-test', threadTs: '2.3' }, 'xoxb-injected');
+
+		const text =
+			'Deploying at 04:00 UTC and completing by 05:30, the rollout has now reached every region. Quiet hours held across all clusters and no alert fired during the window.';
+
+		await expect(
+			tool.run({
+				data: { text },
+				toolCallId: 'post-paragraphs',
+				log: { info() {}, warn() {}, error() {} },
+			}),
+		).resolves.toEqual({
+			output: {
+				posted: true,
+				text: text.replace('. Quiet', '.\n\nQuiet'),
+				blocks: null,
+				channel: null,
+				ts: null,
+			},
+		});
+		expect(posted).toEqual([
+			{
+				channel: 'C-test',
+				thread_ts: '2.3',
+				markdown_text: text.replace('. Quiet', '.\n\nQuiet'),
+				unfurl_links: false,
+				unfurl_media: false,
+			},
+		]);
+	});
 });

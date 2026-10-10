@@ -3,6 +3,7 @@ import { WebClient } from '@slack/web-api';
 import * as v from 'valibot';
 import { jsonObjectSchema } from '../json.ts';
 import { replyBlocksSchema } from './slack-blocks.ts';
+import { ensureParagraphBreaks } from './slack-text.ts';
 
 export function slackFetch(url: string | URL, init?: RequestInit): Promise<Response> {
 	return fetch(url, init?.redirect === 'error' ? { ...init, redirect: 'manual' } : init);
@@ -58,17 +59,23 @@ export function replyInThread(
 			'Allowed blocks: markdown, header, divider, text-only section and context, data_visualization, and data_table. Cells may be raw_text, raw_number, a string, or a number. Header text may be plain_text or a string. Images, accessories, and interactive elements are rejected.',
 			'Compute chart and table values from the repo or tools; never estimate them.',
 			'Include full exact operational identifiers; never abbreviate trace IDs, request IDs, commit hashes, or similar values with ... or ….',
+			'A text-only reply with no line breaks is automatically split into paragraphs at sentence boundaries before posting.',
 		].join(' '),
 		input: v.object({
 			text: v.pipe(v.string(), v.minLength(1)),
 			blocks: v.optional(replyBlocksSchema),
 		}),
 		async run({ data }) {
+			// Slack mrkdwn only breaks lines where the payload has newlines;
+			// enforce paragraph breaks so the layout never depends on the
+			// model's formatting.
+			const text = ensureParagraphBreaks(data.text);
+
 			if (!slackBotToken) {
 				return {
 					output: {
 						posted: false,
-						text: data.text,
+						text,
 						blocks: data.blocks ? v.parse(v.array(jsonObjectSchema), data.blocks) : null,
 						channel: null,
 						ts: null,
@@ -79,7 +86,7 @@ export function replyInThread(
 			const result = await getSlackClient(slackBotToken).chat.postMessage({
 				channel: ref.channelId,
 				thread_ts: ref.threadTs,
-				...(data.blocks ? { text: data.text, blocks: data.blocks } : { markdown_text: data.text }),
+				...(data.blocks ? { text, blocks: data.blocks } : { markdown_text: text }),
 				unfurl_links: false,
 				unfurl_media: false,
 			});
@@ -87,7 +94,7 @@ export function replyInThread(
 			return {
 				output: {
 					posted: true,
-					text: data.text,
+					text,
 					blocks: null,
 					channel: result.channel ?? null,
 					ts: result.ts ?? null,
