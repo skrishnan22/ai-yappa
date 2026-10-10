@@ -1,5 +1,10 @@
 import { createHmac } from 'node:crypto';
+import type { SlackViewSubmissionPayload } from '@flue/slack';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { decideModal } from '../planning/card-blocks.ts';
+import { createD1PlanningStore } from '../planning/d1-decision-log.ts';
+import type { PlanningStore } from '../planning/decision-log.ts';
+import { openTestDatabase } from '../testing/d1.ts';
 import type { SlackRuntime } from './slack.ts';
 import { createSlackChannelForEnv } from './slack.ts';
 import { __resetSlackClientForTests } from './slack-reply.ts';
@@ -58,17 +63,28 @@ const codexAuth = (): CodexAuthControl => ({
 });
 
 function signedEventRequest(payload: SlackEventPayload): Request {
-	const body = JSON.stringify(payload);
+	return signedRequest('/events', 'application/json', JSON.stringify(payload));
+}
+
+function signedInteractionRequest(payload: SlackViewSubmissionPayload): Request {
+	return signedRequest(
+		'/interactions',
+		'application/x-www-form-urlencoded',
+		`payload=${encodeURIComponent(JSON.stringify(payload))}`,
+	);
+}
+
+function signedRequest(path: string, contentType: string, body: string): Request {
 	const timestamp = Math.floor(Date.now() / 1000).toString();
 
 	const signature = createHmac('sha256', SIGNING_SECRET)
 		.update(`v0:${timestamp}:${body}`)
 		.digest('hex');
 
-	return new Request('https://example.test/events', {
+	return new Request(new URL(path, 'https://example.test'), {
 		method: 'POST',
 		headers: {
-			'content-type': 'application/json',
+			'content-type': contentType,
 			'x-slack-request-timestamp': timestamp,
 			'x-slack-signature': `v0=${signature}`,
 		},
@@ -353,6 +369,174 @@ describe('Slack ingress', () => {
 
 			expect(dispatchRequests).toHaveLength(1);
 			expect(refusals).toHaveLength(0);
+		});
+	});
+	describe('planning threads', () => {
+		function recordingRuntime() {
+			const dispatchRequests: Array<Parameters<SlackRuntime['dispatch']>[1]> = [];
+
+			const runtime: SlackRuntime = {
+				dispatch: async (_agent, request) => {
+					dispatchRequests.push(request);
+
+					return {
+						submissionId: 'submission',
+						acceptedAt: '2026-10-10T00:00:00.000Z',
+						uid: 'uid',
+					};
+				},
+				getAgentInstance: async () => ({ id: 'instance', uid: 'uid' }),
+			};
+
+			return { runtime, dispatchRequests };
+		}
+
+		// Only the session flag is read on the events path.
+		function planningWithSession(isActive: () => boolean): PlanningStore {
+			const unused = async (): Promise<never> => {
+				throw new Error('not used on the events path');
+			};
+
+			return {
+				log: {
+					ask: unused,
+					setMessageTs: unused,
+					latest: unused,
+					decide: unused,
+					reopen: unused,
+					reword: unused,
+					listCards: unused,
+				},
+				sessions: { start: unused, end: unused, isActive: async () => isActive() },
+			};
+		}
+
+		const reply = (eventId: string) =>
+			eventPayload({
+				eventId,
+				type: 'message',
+				user: FOLLOW_UP_USER,
+				text: 'what about caching?',
+				ts: '1710000000.000002',
+			});
+
+		test('an unmentioned reply during a session is neither dispatched nor answered', async () => {
+			const { runtime, dispatchRequests } = recordingRuntime();
+			const calls = stubSlackApi(async () => ({ ok: true, messages: [] }));
+			const planning = planningWithSession(() => true);
+			const channel = createSlackChannelForEnv(env, codexAuth, runtime, planning);
+
+			const response = await channel.route().fetch(signedEventRequest(reply('Ev-quiet')));
+
+			expect(response.status).toBe(200);
+			expect(dispatchRequests).toHaveLength(0);
+			expect(calls.filter((call) => call.method === 'chat.postMessage')).toHaveLength(0);
+		});
+
+		test('the same reply is dispatched once the session ends', async () => {
+			const { runtime, dispatchRequests } = recordingRuntime();
+			stubSlackApi(async () => ({ ok: true, messages: [] }));
+			let active = true;
+			const planning = planningWithSession(() => active);
+			const channel = createSlackChannelForEnv(env, codexAuth, runtime, planning);
+
+			await channel.route().fetch(signedEventRequest(reply('Ev-during')));
+			active = false;
+			await channel.route().fetch(signedEventRequest(reply('Ev-after')));
+
+			expect(dispatchRequests).toHaveLength(1);
+			expect(dispatchRequests[0]?.message).toMatchObject({
+				attributes: { eventId: 'Ev-after' },
+			});
+		});
+
+		test('a mention during a session is dispatched', async () => {
+			const { runtime, dispatchRequests } = recordingRuntime();
+			stubSlackApi(async () => ({ ok: true, messages: [] }));
+			const planning = planningWithSession(() => true);
+			const channel = createSlackChannelForEnv(env, codexAuth, runtime, planning);
+
+			const response = await channel.route().fetch(
+				signedEventRequest(
+					eventPayload({
+						eventId: 'Ev-mention-during',
+						type: 'app_mention',
+						user: FOLLOW_UP_USER,
+						text: '<@UBOT> stop and summarise',
+						ts: '1710000000.000003',
+					}),
+				),
+			);
+
+			expect(response.status).toBe(200);
+			expect(dispatchRequests).toHaveLength(1);
+		});
+
+		test('a decide submission records the decision and continues the conversation', async () => {
+			const { runtime, dispatchRequests } = recordingRuntime();
+			stubSlackApi(async () => ({ ok: true, messages: [] }));
+			const db = await openTestDatabase();
+			const planning = createD1PlanningStore(db);
+			const channel = createSlackChannelForEnv(env, codexAuth, runtime, planning);
+
+			const conversationId = channel.instanceId({
+				teamId: WORKSPACE_TEAM,
+				channelId: CHANNEL_ID,
+				threadTs: THREAD_TS,
+			});
+
+			await planning.log.ask({
+				cardId: 'card-1',
+				conversationId,
+				channelId: CHANNEL_ID,
+				threadTs: THREAD_TS,
+				question: 'Which database?',
+				recommendation: 'D1',
+				choices: [
+					{ id: 'pg', label: 'Postgres' },
+					{ id: 'd1', label: 'D1' },
+				],
+				createdAt: '2026-10-10T10:00:00.000Z',
+			});
+			await planning.log.setMessageTs('card-1', '1710000000.000010');
+			const [card] = await planning.log.listCards(conversationId);
+
+			const view = {
+				...decideModal(card!),
+				state: {
+					values: {
+						choice: { choice: { selected_option: { value: 'd1' } } },
+						custom: { custom: { value: null } },
+						reasoning: { reasoning: { value: 'No server to run' } },
+					},
+				},
+			};
+
+			const response = await channel.route().fetch(
+				signedInteractionRequest({
+					type: 'view_submission',
+					team: { id: WORKSPACE_TEAM },
+					user: { id: FOLLOW_UP_USER, name: 'maya', team_id: WORKSPACE_TEAM },
+					api_app_id: 'AAPP',
+					view,
+				}),
+			);
+
+			expect(response.status).toBe(200);
+			expect((await planning.log.latest('card-1'))?.decision).toMatchObject({
+				choiceId: 'd1',
+				decidedBy: FOLLOW_UP_USER,
+			});
+			expect(dispatchRequests).toHaveLength(1);
+			expect(dispatchRequests[0]).not.toHaveProperty('initialData');
+			expect(dispatchRequests[0]).toMatchObject({
+				id: conversationId,
+				message: {
+					kind: 'signal',
+					type: 'planning.decision',
+					attributes: { modelRoute: 'opencode-go', userId: FOLLOW_UP_USER },
+				},
+			});
 		});
 	});
 });
