@@ -16,7 +16,7 @@ import {
 	type FlueObservation,
 } from '@flue/runtime';
 import * as v from 'valibot';
-import { jsonValueSchema } from '../json.ts';
+import { errorMessage, jsonValueSchema } from '../json.ts';
 import {
 	bindRunCard,
 	publishCardEvent,
@@ -26,6 +26,7 @@ import {
 import { replyInThread } from '../channels/slack-reply.ts';
 import { gitAuthorFromEnv, loadAgentEnv } from '../env.ts';
 import { INTEGRATION_CATALOG, resolveIntegrationCatalog } from '../integrations/mcp-catalog.ts';
+import { PLANNING_SKILL, planningStore } from '../planning/planning-store.ts';
 import type { AuditRecord } from '../proxy/ops.ts';
 import { createContainerSandbox, daytona } from '../sandboxes/daytona.ts';
 import {
@@ -39,14 +40,32 @@ import { invokedSkills } from '../skills/invocation.ts';
 import { githubTools } from './github-tools.ts';
 import { coworkerModel, modelChoiceSchema } from './model-choice.ts';
 import { deliveredModelRoute } from './model-route.ts';
+import { PLANNING_REPLY_TOOLS, planningTools } from './planning-tools.ts';
 import { webSearchTools } from './web-search-tools.ts';
 
-observe((event, context) => {
+const activateSkillArgsSchema = v.object({ name: v.string() });
+
+observe(async (event, context) => {
+	// Activating the planning skill starts this conversation's Planning Session.
+	// A failed start is logged so the run card still gets this event.
+	if (
+		event.type === 'tool_start' &&
+		event.toolName === 'activate_skill' &&
+		v.is(activateSkillArgsSchema, event.args) &&
+		event.args.name === PLANNING_SKILL
+	) {
+		try {
+			await planningStore()?.sessions.start(context.id, new Date().toISOString());
+		} catch (error) {
+			console.error(`[planning] Session start failed for ${context.id}: ${errorMessage(error)}`);
+		}
+	}
+
 	const cardEvent = cardEventFromObservation(event);
 
-	if (!cardEvent) return Promise.resolve();
+	if (!cardEvent) return;
 
-	return publishCardEvent({ ...cardEvent, instanceId: context.id });
+	await publishCardEvent({ ...cardEvent, instanceId: context.id });
 });
 
 const initialDataSchema = v.object({
@@ -79,8 +98,25 @@ export function Coworker(props: { id: string }) {
 	const agentEnv = loadAgentEnv();
 
 	useTool(replyInThread(data, agentEnv.SLACK_BOT_TOKEN));
+
+	// Absent under `flue run`: only the Worker entry sets the store.
+	const planning = planningStore();
+
+	if (planning) {
+		for (const tool of planningTools({
+			conversationId: props.id,
+			channelId: data.channelId,
+			threadTs: data.threadTs,
+			token: agentEnv.SLACK_BOT_TOKEN,
+			store: planning,
+		})) {
+			useTool(tool);
+		}
+	}
+
 	// Assistant text never reaches Slack. If the model would stop without a
-	// non-error reply_in_slack_thread call, send it back to work in this response.
+	// non-error reply_in_slack_thread call (or a posted decision card or
+	// summary), send it back to work in this response.
 	useAgentFinish(({ response, append }) => {
 		if (hasSuccessfulSlackReply(response.toolCalls)) return;
 		append({
@@ -227,7 +263,11 @@ export function hasSkillActivations(
 export function hasSuccessfulSlackReply(
 	toolCalls: readonly { tool: string; isError: boolean }[],
 ): boolean {
-	return toolCalls.some((call) => call.tool === 'reply_in_slack_thread' && !call.isError);
+	return toolCalls.some(
+		(call) =>
+			!call.isError &&
+			(call.tool === 'reply_in_slack_thread' || PLANNING_REPLY_TOOLS.has(call.tool)),
+	);
 }
 
 function cardEventFromObservation(event: FlueObservation): CardEvent | undefined {
