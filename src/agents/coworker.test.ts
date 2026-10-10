@@ -15,6 +15,13 @@ describe('hasSuccessfulSlackReply', () => {
 		expect(hasSuccessfulSlackReply([{ tool: 'bash', isError: false }])).toBe(false);
 		expect(hasSuccessfulSlackReply([{ tool: 'reply_in_slack_thread', isError: true }])).toBe(false);
 	});
+
+	test('accepts a posted decision card or summary, but not a read of decisions', () => {
+		expect(hasSuccessfulSlackReply([{ tool: 'ask_decision', isError: false }])).toBe(true);
+		expect(hasSuccessfulSlackReply([{ tool: 'end_planning', isError: false }])).toBe(true);
+		expect(hasSuccessfulSlackReply([{ tool: 'ask_decision', isError: true }])).toBe(false);
+		expect(hasSuccessfulSlackReply([{ tool: 'list_decisions', isError: false }])).toBe(false);
+	});
 });
 
 describe('hasSkillActivations', () => {
