@@ -91,7 +91,7 @@ A packaged procedure in Agent Skills format (`SKILL.md`) that the Coworker loads
 _Avoid_: Command, plugin, slash command (that is `/aiyappa`)
 
 **Planning Session**:
-A stretch of a thread, started when the model activates `grill-me` and ended by `end_planning`, in which Yappa asks questions and people decide. Unmentioned replies do not reach Yappa until it ends. Session state is the D1 table `planning_sessions`.
+A stretch of a thread, started when the model activates `grill-me` (or asks a card outside a session) and ended by `end_planning`, in which Yappa asks questions and people decide. Unmentioned replies do not reach Yappa until it ends. Session state is the D1 table `planning_sessions`.
 _Avoid_: Grill session, poll
 
 **Decision Card**:
