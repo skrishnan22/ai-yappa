@@ -7,7 +7,8 @@ import { handleSlashCommand } from './slash-command.ts';
 
 const ADMIN = 'U_TEST_CODEX_ADMIN';
 
-const STRANGER = 'U_TEST_STRANGER';
+// A workspace member who is not a Codex admin.
+const MEMBER = 'U_TEST_MEMBER';
 
 const USER_CODE_URL = 'https://auth.openai.com/api/accounts/deviceauth/usercode';
 
@@ -84,21 +85,27 @@ describe('/aiyappa openai', () => {
 		}
 	});
 
-	test('refuses connect, disconnect, and status to users on neither list without asking CodexAuth', async () => {
+	test('refuses connect and disconnect to non-admins without asking CodexAuth', async () => {
 		const reach = vi.fn<() => CodexAuthControl>(
 			() => new CodexAuthService(memoryStorage(), credentialKey),
 		);
 
 		for (const action of ['connect', 'disconnect']) {
-			const reply = await handleSlashCommand(command(`openai ${action}`, STRANGER), reach);
+			const reply = await handleSlashCommand(command(`openai ${action}`, MEMBER), reach);
 
 			expect(reply.text).toContain('Only Codex admins');
 		}
 
-		const status = await handleSlashCommand(command('openai status', STRANGER), reach);
-
-		expect(status.text).toContain('not on the invoker allowlist');
 		expect(reach).not.toHaveBeenCalled();
+	});
+
+	test('shows status to any workspace member', async () => {
+		const status = await handleSlashCommand(
+			command('openai status', MEMBER),
+			() => new CodexAuthService(memoryStorage(), credentialKey),
+		);
+
+		expect(status.text).toContain('ChatGPT is not connected');
 	});
 
 	test('connect replies ephemerally with the device code, and status never shows it', async () => {
@@ -199,11 +206,12 @@ describe('/aiyappa models', () => {
 		expect(reply.text).toContain('(unavailable)');
 	});
 
-	test('refuses users on neither list', async () => {
-		const reply = await handleSlashCommand(command('models', STRANGER), () => {
-			throw new Error('CodexAuth should not be asked');
-		});
+	test('lists models for any workspace member', async () => {
+		const reply = await handleSlashCommand(
+			command('models', MEMBER),
+			() => new CodexAuthService(memoryStorage(), credentialKey),
+		);
 
-		expect(reply.text).toBe('You are not on the invoker allowlist for this deployment.');
+		expect(reply.text).toContain('`sol`');
 	});
 });

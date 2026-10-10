@@ -3,7 +3,7 @@ import * as v from 'valibot';
 import { modelSpecifier } from '../agents/model-choice.ts';
 import { openAICodexModelSpecifier } from '../agents/openai-codex-route.ts';
 import { openCodeGoModelSpecifier } from '../agents/opencode-go-catalog.ts';
-import { isAllowedInvoker, isCodexAdmin, modelAliases } from '../config.ts';
+import { isCodexAdmin, modelAliases } from '../config.ts';
 import type {
 	CodexAuthControl,
 	CodexAuthStatus,
@@ -31,9 +31,11 @@ export type SlashCommandReply = { response_type: 'ephemeral'; text: string };
  * ephemeral, and only the connect reply carries the device code: whoever
  * enters it binds the deployment to their ChatGPT account.
  *
- * Connect and disconnect need a Codex admin. Status is also open to the
- * invoker allowlist; it shows the account id, the token expiry, and which
- * route Coworker uses, nothing an invoker could act on.
+ * Connect and disconnect need a Codex admin. Status and models are open to
+ * anyone who can run the command: Slack does not share slash commands with
+ * other organizations in Slack Connect channels, so that is the workspace
+ * (ADR 0022). Status shows the account id, the token expiry, and which route
+ * Coworker uses, nothing a member could act on.
  */
 export async function handleSlashCommand(
 	payload: SlackSlashCommandPayload,
@@ -43,10 +45,6 @@ export async function handleSlashCommand(
 	const [provider, action, ...extra] = payload.text.trim().split(/\s+/);
 
 	if (provider === 'models' && !action) {
-		if (!isCodexAdmin(payload.user_id) && !isAllowedInvoker(payload.user_id)) {
-			return reply('You are not on the invoker allowlist for this deployment.');
-		}
-
 		// An unreachable CodexAuth routes like a disconnected one.
 		const status = await codexAuth()
 			.status()
@@ -63,10 +61,6 @@ export async function handleSlashCommand(
 
 	switch (command) {
 		case 'status': {
-			if (!isCodexAdmin(payload.user_id) && !isAllowedInvoker(payload.user_id)) {
-				return reply('You are not on the invoker allowlist for this deployment.');
-			}
-
 			return replyOrError('status', async () => {
 				const status = await codexAuth().status();
 

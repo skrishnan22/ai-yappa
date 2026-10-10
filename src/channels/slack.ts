@@ -3,11 +3,17 @@ import { dispatch, getAgentInstance } from '@flue/runtime';
 import { createSlackChannel, type SlackThreadRef } from '@flue/slack';
 import { Coworker } from '../agents/coworker.ts';
 import { type ModelRoute, modelRouteFor } from '../agents/model-route.ts';
-import { isAllowedInvoker, repoForChannel } from '../config.ts';
+import { repoForChannel } from '../config.ts';
 import type { CodexAuthControl } from '../integrations/codex-auth/codex-auth.ts';
 import { errorMessage } from '../json.ts';
 import { emitSemanticEvent } from '../observability.ts';
-import { decideAdmit, decideInvocation, isTimeoutRetry, mentionsAuthorizedBot } from './admit.ts';
+import {
+	decideAdmit,
+	decideInvocation,
+	isExternalSender,
+	isTimeoutRetry,
+	mentionsAuthorizedBot,
+} from './admit.ts';
 import type { SlackSignal } from './admit.ts';
 import { handleSlashCommand } from './slash-command.ts';
 import { getSlackClient } from './slack-reply.ts';
@@ -21,6 +27,12 @@ export type SlackRuntime = {
 };
 
 const defaultSlackRuntime: SlackRuntime = { dispatch, getAgentInstance };
+
+// Shared-channel events name the sender's organization in `user_team`;
+// `@slack/types` declares only `team` on plain messages.
+function senderTeamOf(event: { team?: string; user_team?: string }): string | undefined {
+	return event.user_team ?? event.team;
+}
 
 async function conversationExistsInThread(runtime: SlackRuntime, id: string): Promise<boolean> {
 	const existing = await runtime.getAgentInstance(Coworker, id);
@@ -72,6 +84,11 @@ export function createSlackChannelForEnv(
 							threadTs: event.thread_ts ?? event.ts,
 						},
 						userId: event.user,
+						external: isExternalSender({
+							senderTeam: senderTeamOf(event),
+							workspaceTeam: payload.team_id,
+							sharedExternally: payload.is_ext_shared_channel === true,
+						}),
 						eventId: payload.event_id,
 						text: event.text,
 						signalType: 'slack.app_mention',
@@ -102,6 +119,11 @@ export function createSlackChannelForEnv(
 							threadTs: event.thread_ts,
 						},
 						userId: event.user,
+						external: isExternalSender({
+							senderTeam: senderTeamOf(event),
+							workspaceTeam: payload.team_id,
+							sharedExternally: payload.is_ext_shared_channel === true,
+						}),
 						eventId: payload.event_id,
 						text: event.text ?? '',
 						signalType: 'slack.message',
@@ -127,6 +149,7 @@ async function admitThread({
 	runtime,
 	thread,
 	userId,
+	external,
 	eventId,
 	text,
 	signalType,
@@ -138,13 +161,13 @@ async function admitThread({
 	runtime: SlackRuntime;
 	thread: SlackThreadRef;
 	userId: string | undefined;
+	external: boolean;
 	eventId: string;
 	text: string;
 	signalType: SlackSignal;
 	timeoutRetry: boolean;
 }): Promise<void> {
 	const id = channel.instanceId(thread);
-	const allowed = isAllowedInvoker(userId);
 	const repo = repoForChannel(thread.channelId);
 
 	// Mentions check too: only the mention that creates a conversation reads
@@ -152,7 +175,7 @@ async function admitThread({
 	const conversationExists = await conversationExistsInThread(runtime, id);
 
 	async function refuse(
-		kind: 'refuse-invoker' | 'no-repo' | 'bad-args' | 'model-unavailable',
+		kind: 'refuse-external' | 'no-repo' | 'bad-args' | 'model-unavailable',
 		reply: string,
 	): Promise<void> {
 		emitSemanticEvent({
@@ -174,14 +197,14 @@ async function admitThread({
 
 	const decision = decideAdmit({
 		signalType,
-		allowed,
+		external,
 		repo,
 		conversationExists,
 	});
 
 	switch (decision.kind) {
-		case 'refuse-invoker':
-			await refuse(decision.kind, 'You are not on the invoker allowlist for this deployment.');
+		case 'refuse-external':
+			await refuse(decision.kind, 'Yappa only works for members of this workspace.');
 
 			return;
 		case 'no-repo':

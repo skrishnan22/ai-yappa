@@ -2,11 +2,10 @@ export type ChannelConfig = {
 	defaultRepo: string;
 };
 
-export const allowedInvokerIds = new Set<string>(['U0BGR738WMC', 'U07DF242XU6']);
-
 // Slack users who may run `/aiyappa openai connect` and `disconnect`, which
-// bind the whole deployment to one ChatGPT subscription (ADR 0020). Separate
-// from the invoker allowlist; empty means nobody.
+// bind the whole deployment to one ChatGPT subscription (ADR 0020). Any
+// workspace member may use Yappa in a bound channel (ADR 0022); empty means
+// nobody may connect.
 export const codexAdminIds = new Set<string>(['U0BGR738WMC', 'U07DF242XU6']);
 
 // Models a user may pick with `$model:<alias>` when starting a thread
@@ -26,12 +25,6 @@ export const channelRepos = {
 	C0C172RQLSD: { defaultRepo: 'https://github.com/skrishnan22/codevil.git' },
 	C0C4QH6RVNJ: { defaultRepo: 'https://github.com/skrishnan22/ai-yappa.git' },
 };
-
-export function isAllowedInvoker(userId: string | undefined): boolean {
-	if (!userId) return false;
-
-	return allowedInvokerIds.has(userId);
-}
 
 export function isCodexAdmin(userId: string | undefined): boolean {
 	if (!userId) return false;

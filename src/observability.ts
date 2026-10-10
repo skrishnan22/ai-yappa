@@ -6,7 +6,7 @@ export type SlackAdmissionEvent = {
 	signal_type: 'slack.app_mention' | 'slack.message';
 	decision:
 		| 'dispatch'
-		| 'refuse-invoker'
+		| 'refuse-external'
 		| 'no-repo'
 		| 'drop-untracked'
 		| 'bad-args'
