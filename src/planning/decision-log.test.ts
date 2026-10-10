@@ -124,7 +124,11 @@ describe('decision log', () => {
 		await log.ask(newCard());
 		await log.decide({ cardId: 'card-1', revision: 1, decision });
 
-		const reopened = await log.reopen({ cardId: 'card-1', createdAt: '2026-01-02T00:00:00.000Z' });
+		const reopened = await log.reopen({
+			cardId: 'card-1',
+			revision: 1,
+			createdAt: '2026-01-02T00:00:00.000Z',
+		});
 
 		expect(reopened).toMatchObject({ revision: 2, question: 'Which store?', choices });
 		expect(reopened?.decision).toBeUndefined();
@@ -140,11 +144,44 @@ describe('decision log', () => {
 
 		await log.ask(newCard());
 
-		const reopened = await log.reopen({ cardId: 'card-1', createdAt: '2026-01-02T00:00:00.000Z' });
+		const reopened = await log.reopen({
+			cardId: 'card-1',
+			revision: 1,
+			createdAt: '2026-01-02T00:00:00.000Z',
+		});
+
 		const latest = await log.latest('card-1');
 
 		expect(reopened).toBe(undefined);
 		expect(latest?.revision).toBe(1);
+	});
+
+	it('does not reopen from a stale revision', async () => {
+		const { log } = await openStore();
+
+		await log.ask(newCard());
+		await log.decide({ cardId: 'card-1', revision: 1, decision });
+		await log.reopen({ cardId: 'card-1', revision: 1, createdAt: '2026-01-02T00:00:00.000Z' });
+		await log.decide({ cardId: 'card-1', revision: 2, decision: { ...decision, choiceId: 'b' } });
+
+		const stale = await log.reopen({
+			cardId: 'card-1',
+			revision: 1,
+			createdAt: '2026-01-03T00:00:00.000Z',
+		});
+
+		const latest = await log.latest('card-1');
+
+		expect(stale).toBe(undefined);
+		expect(latest).toMatchObject({ revision: 2, decision: { choiceId: 'b' } });
+	});
+
+	it('stores the message timestamp of a card posted before it was saved', async () => {
+		const { log } = await openStore();
+
+		const asked = await log.ask(newCard({ messageTs: '7.7' }));
+
+		expect(asked.messageTs).toBe('7.7');
 	});
 
 	it('creates one revision for concurrent reopens', async () => {
@@ -154,8 +191,8 @@ describe('decision log', () => {
 		await log.decide({ cardId: 'card-1', revision: 1, decision });
 
 		const results = await Promise.all([
-			log.reopen({ cardId: 'card-1', createdAt: '2026-01-02T00:00:00.000Z' }),
-			log.reopen({ cardId: 'card-1', createdAt: '2026-01-02T00:00:00.000Z' }),
+			log.reopen({ cardId: 'card-1', revision: 1, createdAt: '2026-01-02T00:00:00.000Z' }),
+			log.reopen({ cardId: 'card-1', revision: 1, createdAt: '2026-01-02T00:00:00.000Z' }),
 		]);
 
 		const latest = await log.latest('card-1');
@@ -203,7 +240,11 @@ describe('decision log', () => {
 			decision: { ...decision, choiceId: undefined, customAnswer: 'Neither' },
 		});
 
-		const reopened = await log.reopen({ cardId: 'card-1', createdAt: '2026-01-02T00:00:00.000Z' });
+		const reopened = await log.reopen({
+			cardId: 'card-1',
+			revision: 2,
+			createdAt: '2026-01-02T00:00:00.000Z',
+		});
 
 		expect(reopened?.messageTs).toBe('9.9');
 	});

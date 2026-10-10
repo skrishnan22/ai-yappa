@@ -5,6 +5,7 @@ import {
 	answerText,
 	decideModal,
 	parseDecideSubmission,
+	parseReopenValue,
 	renderCard,
 	renderSummary,
 } from './card-blocks.ts';
@@ -80,9 +81,7 @@ describe('renderCard', () => {
 		expect(body).toContain('We already run it');
 		expect(body).toContain('Decided by <@U1>');
 		expect(body).toContain('<!date^');
-		expect(buttons(blocks).map((b) => ('action_id' in b ? b.action_id : ''))).toEqual([
-			'planning_reopen',
-		]);
+		expect(buttons(blocks)).toMatchObject([{ action_id: 'planning_reopen', value: 'card-1:1' }]);
 	});
 
 	it('shows a custom answer on a decided card', () => {
@@ -184,11 +183,28 @@ describe('renderCard limits and fallback text', () => {
 		expect(Math.max(...contexts)).toBeLessThanOrEqual(2000);
 	});
 
+	it('states the answer or the open state in the fallback text', () => {
+		expect(renderCard(card(revision({ decision }))).text).toBe(
+			'D2: Which database? — Decided: Postgres (by Maya)',
+		);
+
+		expect(renderCard(card(revision())).text).toBe(
+			'D2: Which database? — Open: press Decide to answer',
+		);
+	});
+
 	it('escapes the fallback text so a question cannot ping', () => {
 		const { text } = renderCard(card(revision({ question: 'hi <!channel> <@U9>' })));
 
 		expect(text).toContain('&lt;!channel&gt;');
 		expect(text).not.toContain('<!channel>');
+	});
+});
+
+describe('parseReopenValue', () => {
+	it('reads the card and the revision the button showed', () => {
+		expect(parseReopenValue('card-1:3')).toEqual({ cardId: 'card-1', revision: 3 });
+		expect(parseReopenValue('card-1')).toBeUndefined();
 	});
 });
 
@@ -277,6 +293,26 @@ describe('decideModal', () => {
 
 		expect(options[0]?.text.text.length).toBeLessThanOrEqual(75);
 		expect(options[0]?.text.text.endsWith('…')).toBe(true);
+	});
+
+	it('letters options as on the card, so labels with a long shared prefix stay distinct', () => {
+		const prefix = 'x'.repeat(100);
+
+		const view = decideModal(
+			card(
+				revision({
+					choices: [
+						{ id: 'a', label: `${prefix} one` },
+						{ id: 'b', label: `${prefix} two` },
+					],
+				}),
+			),
+		);
+
+		const [first, second] = v.parse(optionsSchema, input(view, 'choice').element.options);
+
+		expect(first?.text.text.startsWith('A) ')).toBe(true);
+		expect(second?.text.text.startsWith('B) ')).toBe(true);
 	});
 });
 
@@ -379,7 +415,7 @@ describe('renderSummary', () => {
 		);
 
 		const open = card(revision({ cardId: 'card-3', question: 'Which queue?' }), [], 'D3');
-		const text = renderSummary([decided, reopened, open]);
+		const text = renderSummary([decided, reopened, open]).join('\n\n');
 
 		expect(text).toContain('D1');
 		expect(text).toContain('Which database?');
@@ -393,6 +429,26 @@ describe('renderSummary', () => {
 	});
 
 	it('says so when there are no cards', () => {
-		expect(renderSummary([])).toBe('No decisions were recorded.');
+		expect(renderSummary([])).toEqual(['No decisions were recorded.']);
+	});
+
+	it('splits a long summary into bounded messages without losing a card', () => {
+		const cards = Array.from({ length: 40 }, (_, index) =>
+			card(
+				revision({ cardId: `card-${index}`, question: `Q${index} ${'x'.repeat(200)}` }),
+				[],
+				`D${index + 1}`,
+			),
+		);
+
+		const messages = renderSummary(cards);
+
+		expect(messages.length).toBeGreaterThan(1);
+		expect(Math.max(...messages.map((message) => message.length))).toBeLessThanOrEqual(3500);
+		expect(messages[0]?.startsWith('*Unresolved*')).toBe(true);
+
+		for (const index of cards.keys()) {
+			expect(messages.join('\n\n')).toContain(`*D${index + 1}* Q${index} `);
+		}
 	});
 });

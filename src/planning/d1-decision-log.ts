@@ -39,8 +39,8 @@ const revisionRowSchema = v.object({
 
 const SQL = {
 	insertRevision: `INSERT INTO card_revisions
-		(card_id, revision, conversation_id, channel_id, thread_ts, question, context, recommendation, choices, created_at)
-		VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+		(card_id, revision, conversation_id, channel_id, thread_ts, message_ts, question, context, recommendation, choices, created_at)
+		VALUES (?1, 1, ?2, ?3, ?4, ?10, ?5, ?6, ?7, ?8, ?9)`,
 	latest: 'SELECT * FROM card_revisions WHERE card_id = ?1 ORDER BY revision DESC LIMIT 1',
 	setMessageTs: 'UPDATE card_revisions SET message_ts = ?2 WHERE card_id = ?1',
 	decide: `UPDATE card_revisions
@@ -51,14 +51,16 @@ const SQL = {
 		(card_id, revision, conversation_id, channel_id, thread_ts, message_ts, question, context, recommendation, choices, created_at)
 		SELECT card_id, revision + 1, conversation_id, channel_id, thread_ts, message_ts, question, context, recommendation, choices, ?2
 		FROM card_revisions
-		WHERE card_id = ?1 AND decided_at IS NOT NULL
-			AND revision = (SELECT MAX(revision) FROM card_revisions WHERE card_id = ?1)`,
+		WHERE card_id = ?1 AND revision = ?3 AND decided_at IS NOT NULL
+			AND revision = (SELECT MAX(revision) FROM card_revisions WHERE card_id = ?1)
+		RETURNING *`,
 	reword: `INSERT INTO card_revisions
 		(card_id, revision, conversation_id, channel_id, thread_ts, message_ts, question, context, recommendation, choices, created_at)
 		SELECT card_id, revision + 1, conversation_id, channel_id, thread_ts, message_ts, ?3, ?4, ?5, ?6, ?2
 		FROM card_revisions
 		WHERE card_id = ?1 AND decided_at IS NULL
-			AND revision = (SELECT MAX(revision) FROM card_revisions WHERE card_id = ?1)`,
+			AND revision = (SELECT MAX(revision) FROM card_revisions WHERE card_id = ?1)
+		RETURNING *`,
 	conversationRevisions:
 		'SELECT * FROM card_revisions WHERE conversation_id = ?1 ORDER BY created_at, card_id, revision',
 	startSession: `INSERT INTO planning_sessions (conversation_id, started_at) VALUES (?1, ?2)
@@ -110,20 +112,20 @@ export function createD1PlanningStore(db: D1Database): PlanningStore {
 		return row ? readRevision(row) : undefined;
 	}
 
-	// A concurrent writer that took the next revision number collides on the
-	// primary key; that is a lost race, not an error.
-	async function insertNext(statement: D1Statement, cardId: string) {
+	// Returns the row this statement inserted: re-reading the latest could
+	// return a later writer's revision. A concurrent writer that took the next
+	// revision number collides on the primary key; that is a lost race, not an error.
+	async function insertNext(statement: D1Statement) {
 		try {
-			const { meta } = await statement.run();
+			const { results } = await statement.all();
+			const [row] = results;
 
-			if (meta.changes === 0) return undefined;
+			return row ? readRevision(row) : undefined;
 		} catch (error) {
 			if (error instanceof Error && /UNIQUE|PRIMARY KEY/.test(error.message)) return undefined;
 
 			throw error;
 		}
-
-		return latest(cardId);
 	}
 
 	return {
@@ -141,6 +143,7 @@ export function createD1PlanningStore(db: D1Database): PlanningStore {
 						card.recommendation,
 						choicesColumn(card),
 						card.createdAt,
+						card.messageTs ?? null,
 					)
 					.run();
 
@@ -171,8 +174,8 @@ export function createD1PlanningStore(db: D1Database): PlanningStore {
 
 				return meta.changes === 1;
 			},
-			reopen: ({ cardId, createdAt }) =>
-				insertNext(db.prepare(SQL.reopen).bind(cardId, createdAt), cardId),
+			reopen: ({ cardId, revision, createdAt }) =>
+				insertNext(db.prepare(SQL.reopen).bind(cardId, createdAt, revision)),
 			reword: ({ cardId, createdAt, ...wording }) =>
 				insertNext(
 					db
@@ -185,7 +188,6 @@ export function createD1PlanningStore(db: D1Database): PlanningStore {
 							wording.recommendation,
 							choicesColumn(wording),
 						),
-					cardId,
 				),
 			async listCards(conversationId) {
 				const { results } = await db.prepare(SQL.conversationRevisions).bind(conversationId).all();

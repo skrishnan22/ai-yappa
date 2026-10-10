@@ -36,6 +36,7 @@ export type NewCard = CardWording & {
 	conversationId: string;
 	channelId: string;
 	threadTs: string;
+	messageTs?: string; // when the card was posted before it was saved
 	createdAt: string;
 };
 
@@ -45,9 +46,14 @@ export type DecisionLog = {
 	latest(cardId: string): Promise<CardRevision | undefined>;
 	// First wins: true only if `revision` is the card's latest and is undecided.
 	decide(args: { cardId: string; revision: number; decision: Decision }): Promise<boolean>;
-	// Inserts latest+1 with the same wording and no decision, only when latest is decided.
-	// Undefined when it is not decided, or a concurrent reopen won.
-	reopen(args: { cardId: string; createdAt: string }): Promise<CardRevision | undefined>;
+	// Inserts revision+1 with the same wording and no decision, only when `revision`
+	// is the card's latest and is decided. Undefined otherwise, or when a
+	// concurrent writer took revision+1.
+	reopen(args: {
+		cardId: string;
+		revision: number;
+		createdAt: string;
+	}): Promise<CardRevision | undefined>;
 	// Inserts latest+1 with new wording, only when latest is undecided.
 	reword(
 		args: { cardId: string; createdAt: string } & CardWording,

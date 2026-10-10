@@ -10,6 +10,21 @@ export const DECIDE_CALLBACK = 'planning_decide_modal';
 
 const OPTION_TEXT_MAX = 75;
 
+// One summary message; Slack truncates message text past 40,000 characters.
+const SUMMARY_MESSAGE_MAX = 3500;
+
+// The Reopen button names the revision it shows, so a stale button cannot
+// reopen a later decision.
+export function reopenValue(revision: CardRevision): string {
+	return `${revision.cardId}:${revision.revision}`;
+}
+
+export function parseReopenValue(value: string): { cardId: string; revision: number } | undefined {
+	const match = /^(.+):(\d+)$/.exec(value);
+
+	return match?.[1] && match[2] ? { cardId: match[1], revision: Number(match[2]) } : undefined;
+}
+
 // Choice label, or the custom answer, of a decided revision.
 export function answerText(revision: CardRevision): string | undefined {
 	const decision = revision.decision;
@@ -25,7 +40,7 @@ export type CardRender = { text: string; blocks: KnownBlock[] };
 
 export function renderCard(card: Card): CardRender {
 	const { label, latest } = card;
-	const text = escapeMrkdwn(`${label}: ${latest.question}`);
+	const text = fallbackText(card);
 
 	const blocks: KnownBlock[] = [sectionBlock(`*${label}* ${escapeMrkdwn(latest.question)}`)];
 
@@ -65,7 +80,7 @@ export function renderCard(card: Card): CardRender {
 				{
 					type: 'button',
 					action_id: REOPEN_ACTION,
-					value: latest.cardId,
+					value: reopenValue(latest),
 					text: { type: 'plain_text', text: 'Reopen' },
 				},
 			],
@@ -106,9 +121,13 @@ export function decideModal(card: Card): ModalView {
 			element: {
 				type: 'radio_buttons',
 				action_id: 'choice',
-				options: choices.map((choice) => ({
+				// Lettered as on the card, so labels cut to the same prefix stay distinct.
+				options: choices.map((choice, index) => ({
 					value: choice.id,
-					text: { type: 'plain_text', text: truncate(choice.label, OPTION_TEXT_MAX) },
+					text: {
+						type: 'plain_text',
+						text: clip(`${choiceLetter(index)}) ${choice.label}`, OPTION_TEXT_MAX),
+					},
 				})),
 			},
 		});
@@ -139,7 +158,7 @@ export function decideModal(card: Card): ModalView {
 		type: 'modal',
 		callback_id: DECIDE_CALLBACK,
 		private_metadata: JSON.stringify({ cardId: latest.cardId, revision: latest.revision }),
-		title: { type: 'plain_text', text: truncate(`Decide ${card.label}`, 24) },
+		title: { type: 'plain_text', text: clip(`Decide ${card.label}`, 24) },
 		submit: { type: 'plain_text', text: 'Decide' },
 		close: { type: 'plain_text', text: 'Cancel' },
 		blocks,
@@ -216,22 +235,40 @@ function parseMetadata(raw: string): v.InferOutput<typeof metadataSchema> | unde
 	}
 }
 
-export function renderSummary(cards: Card[]): string {
-	if (cards.length === 0) return 'No decisions were recorded.';
+// One or more messages, in order; every card keeps its entry.
+export function renderSummary(cards: Card[]): string[] {
+	if (cards.length === 0) return ['No decisions were recorded.'];
 
-	const decided = cards.filter((card) => card.latest.decision);
-	const unresolved = cards.filter((card) => !card.latest.decision);
-	const sections: string[] = [];
+	const decided = cards.flatMap((card) => (card.latest.decision ? [summaryEntry(card)] : []));
+	const unresolved = cards.flatMap((card) => (card.latest.decision ? [] : [summaryEntry(card)]));
 
-	if (decided.length > 0) {
-		sections.push(['*Decisions*', ...decided.map(summaryEntry)].join('\n\n'));
+	return packMessages([
+		...withHeading('*Decisions*', decided),
+		...withHeading('*Unresolved*', unresolved),
+	]);
+}
+
+function withHeading(heading: string, entries: string[]): string[] {
+	const [first, ...rest] = entries;
+
+	return first ? [`${heading}\n\n${first}`, ...rest] : [];
+}
+
+// Joins parts with blank lines into as few messages as fit; no part is split.
+function packMessages(parts: string[]): string[] {
+	const messages: string[] = [];
+
+	for (const part of parts.map((entry) => clip(entry, SUMMARY_MESSAGE_MAX))) {
+		const last = messages.at(-1);
+
+		if (last && last.length + 2 + part.length <= SUMMARY_MESSAGE_MAX) {
+			messages[messages.length - 1] = `${last}\n\n${part}`;
+		} else {
+			messages.push(part);
+		}
 	}
 
-	if (unresolved.length > 0) {
-		sections.push(['*Unresolved*', ...unresolved.map(summaryEntry)].join('\n\n'));
-	}
-
-	return sections.join('\n\n');
+	return messages;
 }
 
 function summaryEntry(card: Card): string {
@@ -267,6 +304,18 @@ function previousAnswer(card: Card): { answer: string; decidedBy: string } | und
 	return undefined;
 }
 
+// Notifications and screen readers read this instead of the blocks.
+function fallbackText({ label, latest }: Card): string {
+	const answer = answerText(latest);
+
+	const state =
+		latest.decision && answer
+			? `Decided: ${answer} (by ${latest.decision.decidedByName})`
+			: 'Open: press Decide to answer';
+
+	return clip(escapeMrkdwn(`${label}: ${latest.question} — ${state}`), 2900);
+}
+
 function choiceLetter(index: number): string {
 	return String.fromCharCode(65 + index);
 }
@@ -278,10 +327,6 @@ function slackDate(iso: string): string {
 
 function escapeMrkdwn(value: string): string {
 	return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-}
-
-function truncate(value: string, max: number): string {
-	return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
 }
 
 // Slack rejects section text over 3000 chars and context text over 2000, after the decision is saved.
