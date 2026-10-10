@@ -15,6 +15,7 @@ describe('decideAdmit', () => {
 				external: true,
 				repo: 'https://github.com/org/pilot.git',
 				conversationExists: false,
+				planningActive: false,
 			}),
 		).toEqual({ kind: 'refuse-external' });
 	});
@@ -26,6 +27,7 @@ describe('decideAdmit', () => {
 				external: false,
 				repo: undefined,
 				conversationExists: false,
+				planningActive: false,
 			}),
 		).toEqual({ kind: 'no-repo' });
 	});
@@ -37,6 +39,7 @@ describe('decideAdmit', () => {
 				external: false,
 				repo: 'https://github.com/org/pilot.git',
 				conversationExists: false,
+				planningActive: false,
 			}),
 		).toEqual({ kind: 'dispatch', repo: 'https://github.com/org/pilot.git' });
 	});
@@ -48,6 +51,7 @@ describe('decideAdmit', () => {
 				external: false,
 				repo: 'https://github.com/org/pilot.git',
 				conversationExists: false,
+				planningActive: false,
 			}),
 		).toEqual({ kind: 'drop-untracked' });
 	});
@@ -59,6 +63,7 @@ describe('decideAdmit', () => {
 				external: true,
 				repo: 'https://github.com/org/pilot.git',
 				conversationExists: false,
+				planningActive: false,
 			}),
 		).toEqual({ kind: 'drop-untracked' });
 	});
@@ -70,6 +75,7 @@ describe('decideAdmit', () => {
 				external: false,
 				repo: undefined,
 				conversationExists: false,
+				planningActive: false,
 			}),
 		).toEqual({ kind: 'drop-untracked' });
 	});
@@ -81,6 +87,7 @@ describe('decideAdmit', () => {
 				external: false,
 				repo: 'https://github.com/org/pilot.git',
 				conversationExists: true,
+				planningActive: false,
 			}),
 		).toEqual({ kind: 'dispatch', repo: 'https://github.com/org/pilot.git' });
 	});
@@ -91,8 +98,47 @@ describe('decideAdmit', () => {
 				external: true,
 				repo: 'https://github.com/org/pilot.git',
 				conversationExists: true,
+				planningActive: false,
 			}),
 		).toEqual({ kind: 'refuse-external' });
+	});
+
+	describe('during a planning session', () => {
+		test('an unmentioned reply is dropped', () => {
+			expect(
+				decideAdmit({
+					signalType: 'slack.message',
+					external: false,
+					repo: 'https://github.com/org/pilot.git',
+					conversationExists: true,
+					planningActive: true,
+				}),
+			).toEqual({ kind: 'drop-planning' });
+		});
+
+		test('a mention is dispatched', () => {
+			expect(
+				decideAdmit({
+					signalType: 'slack.app_mention',
+					external: false,
+					repo: 'https://github.com/org/pilot.git',
+					conversationExists: true,
+					planningActive: true,
+				}),
+			).toEqual({ kind: 'dispatch', repo: 'https://github.com/org/pilot.git' });
+		});
+
+		test('an external reply is still refused', () => {
+			expect(
+				decideAdmit({
+					signalType: 'slack.message',
+					external: true,
+					repo: 'https://github.com/org/pilot.git',
+					conversationExists: true,
+					planningActive: true,
+				}),
+			).toEqual({ kind: 'refuse-external' });
+		});
 	});
 });
 
