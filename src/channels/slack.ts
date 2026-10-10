@@ -288,10 +288,16 @@ async function admitThread({
 	}
 
 	// Read only for a reply that could otherwise continue the conversation.
+	// An unreadable flag (D1 error, missing migration) counts as inactive:
+	// one reply leaking into a session beats silencing every thread.
 	let planningActive = false;
 
 	if (signalType === 'slack.message' && conversationExists && planning) {
-		planningActive = await planning.sessions.isActive(id);
+		try {
+			planningActive = await planning.sessions.isActive(id);
+		} catch (error) {
+			console.error(`[planning] Session read failed for ${id}: ${errorMessage(error)}`);
+		}
 	}
 
 	const decision = decideAdmit({

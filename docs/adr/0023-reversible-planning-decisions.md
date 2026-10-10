@@ -14,7 +14,7 @@ The earlier `/grill-me` design had participants, votes, a quorum, solo and group
 2. **The modal is the only way to answer.** **Decide** opens a Slack modal with the choices or a custom answer, and optional reasoning. Yappa never parses a thread reply as an answer.
 3. **Planning sessions are quiet.** While a session is active, unmentioned replies in the thread are not dispatched. Mentions and card interactions still reach Yappa. `end_planning` restores normal replies.
 4. **Reopen and reword insert revisions.** Reopen adds revision n+1 with the same question and no decision, so the earlier answer stays as history. Reword also adds a revision, so a modal opened on the old wording is refused. Reword applies only to open cards and Reopen only to decided ones.
-5. **Session state lives in its own table.** `planning_sessions` is a D1 table, started when the model activates `grill-me` and ended by `end_planning`. Ingress reads it before it dispatches, and Coworker state is out of its reach.
+5. **Session state lives in its own table.** `planning_sessions` is a D1 table, started when the model activates `grill-me` or asks a card outside a session, and ended by `end_planning`. Ingress reads it before it dispatches, and Coworker state is out of its reach.
 6. **No Retry button.** Decisions are saved before Yappa is dispatched. A failed run shows on the run card, and a mention resumes from the saved log.
 
 A decision made after a session ends is still recorded and dispatched, because a card always targets itself. Interactions from users outside the conversation's workspace are refused by comparing `payload.user.team_id` with the conversation's team; a missing team fails closed.

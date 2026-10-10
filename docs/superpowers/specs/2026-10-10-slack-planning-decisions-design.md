@@ -1,7 +1,7 @@
 # Slack planning with reversible decisions
 
 Date: 2026-10-10
-Status: UX and data model agreed in chat; spec ready for review. Not implemented.
+Status: Implemented on `t3code/slack-planning-decisions` (plan `docs/superpowers/plans/2026-10-10-slack-planning-decisions.md`, ADR 0023). Live Slack acceptance pending.
 
 This replaces the question/voting workflow in
 `2026-10-04-skills-and-grill-me-design.md` and the remaining question-controls,
