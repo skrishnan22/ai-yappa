@@ -40,7 +40,8 @@ const revisionRowSchema = v.object({
 const SQL = {
 	insertRevision: `INSERT INTO card_revisions
 		(card_id, revision, conversation_id, channel_id, thread_ts, message_ts, question, context, recommendation, choices, created_at)
-		VALUES (?1, 1, ?2, ?3, ?4, ?10, ?5, ?6, ?7, ?8, ?9)`,
+		VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+		RETURNING *`,
 	latest: 'SELECT * FROM card_revisions WHERE card_id = ?1 ORDER BY revision DESC LIMIT 1',
 	setMessageTs: 'UPDATE card_revisions SET message_ts = ?2 WHERE card_id = ?1',
 	decide: `UPDATE card_revisions
@@ -131,27 +132,27 @@ export function createD1PlanningStore(db: D1Database): PlanningStore {
 	return {
 		log: {
 			async ask(card) {
-				await db
+				const { results } = await db
 					.prepare(SQL.insertRevision)
 					.bind(
 						card.cardId,
 						card.conversationId,
 						card.channelId,
 						card.threadTs,
+						card.messageTs ?? null,
 						card.question,
 						card.context ?? null,
 						card.recommendation,
 						choicesColumn(card),
 						card.createdAt,
-						card.messageTs ?? null,
 					)
-					.run();
+					.all();
 
-				const revision = await latest(card.cardId);
+				const [row] = results;
 
-				if (!revision) throw new Error(`Card ${card.cardId} was not stored`);
+				if (!row) throw new Error(`Card ${card.cardId} was not stored`);
 
-				return revision;
+				return readRevision(row);
 			},
 			async setMessageTs(cardId, messageTs) {
 				await db.prepare(SQL.setMessageTs).bind(cardId, messageTs).run();
