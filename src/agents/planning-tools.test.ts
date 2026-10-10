@@ -3,7 +3,11 @@ import * as v from 'valibot';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { jsonValueSchema, type JsonObject, type JsonValue } from '../json.ts';
 import { __resetSlackClientForTests } from '../channels/slack-reply.ts';
-import { stringParam, stubSlackApi } from '../channels/testing/slack-api-stub.ts';
+import {
+	type SlackApiResponder,
+	stringParam,
+	stubSlackApi,
+} from '../channels/testing/slack-api-stub.ts';
 import { createD1PlanningStore } from '../planning/d1-decision-log.ts';
 import type { Decision, PlanningStore } from '../planning/decision-log.ts';
 import { openTestDatabase } from '../testing/d1.ts';
@@ -34,15 +38,25 @@ const decision: Decision = {
 	decidedAt: '2026-10-10T12:00:00.000Z',
 };
 
-async function setup(options: { token?: string } = { token: 'xoxb-test' }) {
+// Slack answers ok:false with an error code; the WebClient throws on it.
+const failPosts: SlackApiResponder = async (call) => ({
+	ok: call.method !== 'chat.postMessage',
+	error: 'channel_not_found',
+});
+
+async function setup(
+	options: { token?: string; respond?: SlackApiResponder } = { token: 'xoxb-test' },
+) {
 	const db = await openTestDatabase();
 	const store = createD1PlanningStore(db);
 	let nextTs = 0;
 
-	const calls = stubSlackApi(async (call): Promise<Record<string, JsonValue>> =>
-		call.method === 'chat.postMessage'
-			? { ok: true, channel: 'C1', ts: `9.${++nextTs}` }
-			: { ok: true },
+	const calls = stubSlackApi(
+		options.respond ??
+			(async (call): Promise<Record<string, JsonValue>> =>
+				call.method === 'chat.postMessage'
+					? { ok: true, channel: 'C1', ts: `9.${++nextTs}` }
+					: { ok: true }),
 	);
 
 	let nextId = 0;
@@ -129,6 +143,17 @@ describe('planningTools', () => {
 
 		expect(v.is(input, { ...question, choices: [long, { id: 'b', label: 'B' }] })).toBe(false);
 	});
+
+	it('rejects blank choice labels', async () => {
+		const { tools } = await setup();
+		const input = tool(tools, 'ask_decision').input;
+
+		if (!input) throw new Error('ask_decision has no input schema');
+
+		const blank = { id: 'a', label: '  ' };
+
+		expect(v.is(input, { ...question, choices: [blank, { id: 'b', label: 'B' }] })).toBe(false);
+	});
 });
 
 describe('ask_decision', () => {
@@ -177,6 +202,30 @@ describe('ask_decision', () => {
 
 		expect(latest).toMatchObject({ revision: 1, messageTs: undefined });
 		expect(calls).toEqual([]);
+	});
+
+	it('saves no card when the post fails', async () => {
+		const { store, tools } = await setup({ token: 'xoxb-test', respond: failPosts });
+
+		await expect(run(tools, 'ask_decision', question)).rejects.toThrow(/channel_not_found/);
+
+		const cards = await store.log.listCards(CONVERSATION);
+
+		expect(cards).toEqual([]);
+	});
+
+	it('withdraws the posted card when it cannot be saved', async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const { store, calls, tools } = await setup();
+
+		vi.spyOn(store.log, 'ask').mockRejectedValue(new Error('D1 unavailable'));
+
+		await expect(run(tools, 'ask_decision', question)).rejects.toThrow(/D1 unavailable/);
+
+		expect(calls.map((call) => call.method)).toEqual(['chat.postMessage', 'chat.update']);
+		expect(calls[1]).toMatchObject({
+			params: { ts: '9.1', text: 'This question could not be saved.' },
+		});
 	});
 
 	it('describes the Decide-button-only answering rule', async () => {
@@ -256,7 +305,11 @@ describe('list_decisions', () => {
 		});
 
 		await decide(store, 'card-1');
-		await store.log.reopen({ cardId: 'card-1', createdAt: '2026-10-10T13:00:00.000Z' });
+		await store.log.reopen({
+			cardId: 'card-1',
+			revision: 1,
+			createdAt: '2026-10-10T13:00:00.000Z',
+		});
 		await decide(store, 'card-2', { choiceId: undefined, customAnswer: 'Redis' });
 
 		const output = await run(tools, 'list_decisions', {});
@@ -326,6 +379,18 @@ describe('end_planning', () => {
 		});
 
 		expect(stringParam(summary ?? { params: {} }, 'text')).toContain('*D1* Which database?');
+	});
+
+	it('ends the session even when the summary cannot be posted', async () => {
+		const { store, tools } = await setup({ token: 'xoxb-test', respond: failPosts });
+
+		await store.sessions.start(CONVERSATION, '2026-10-10T10:00:00.000Z');
+
+		await expect(run(tools, 'end_planning', {})).rejects.toThrow(/channel_not_found/);
+
+		const active = await store.sessions.isActive(CONVERSATION);
+
+		expect(active).toBe(false);
 	});
 
 	it('ends the session without posting when there is no token', async () => {
