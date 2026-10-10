@@ -12,8 +12,10 @@ import {
 	parseDecideSubmission,
 	renderCard,
 	REOPEN_ACTION,
+	type DecideSubmission,
 } from '../planning/card-blocks.ts';
 import type { Card, CardRevision, PlanningStore } from '../planning/decision-log.ts';
+import { errorMessage } from '../json.ts';
 import type { SlackBotClient } from './slack-reply.ts';
 
 export type PlanningContinuation = {
@@ -132,7 +134,7 @@ async function onReopenClick(
 				type: 'planning.reopen',
 				eventId: `planning-reopen:${cardId}:${reopened.revision}`,
 				userId: payload.user.id,
-				body: reopenBody(card, payload.user.id),
+				body: reopenBody(card.label, latest, payload.user.id),
 			});
 		})(),
 	);
@@ -191,7 +193,7 @@ async function onDecideSubmission(
 				type: 'planning.decision',
 				eventId: `planning-decide:${submission.cardId}:${submission.revision}`,
 				userId: payload.user.id,
-				body: decisionBody(card, payload.user.id),
+				body: decisionBody(card.label, latest, submission, payload.user.id),
 			});
 		})(),
 	);
@@ -249,36 +251,48 @@ async function redraw(
 
 	const { messageTs, channelId } = card.latest;
 
-	if (messageTs) {
+	if (!messageTs) return card;
+
+	// The log is authoritative: a stale card message must not stop the dispatch.
+	try {
 		const { text, blocks } = renderCard(card);
 
 		await deps.slack.chat.update({ channel: channelId, ts: messageTs, text, blocks });
+	} catch (error) {
+		console.warn(`[planning] Card ${card.latest.cardId} redraw failed: ${errorMessage(error)}`);
 	}
 
 	return card;
 }
 
 // Dispatch bodies are model prompts: user and model text is quoted as-is.
-function decisionBody(card: Card, userId: string): string {
-	const { latest } = card;
-	const reasoning = latest.decision?.reasoning;
+// Built from what was submitted, not re-read, so a later reopen cannot blank the answer.
+function decisionBody(
+	label: string,
+	revision: CardRevision,
+	submission: DecideSubmission,
+	userId: string,
+): string {
+	const answer =
+		submission.customAnswer ??
+		revision.choices?.find((choice) => choice.id === submission.choiceId)?.label ??
+		'';
 
 	return [
-		`<@${userId}> decided ${card.label} "${latest.question}": ${answerText(latest) ?? ''}`,
-		reasoning ? `. Reasoning: "${reasoning}"` : '',
+		`<@${userId}> decided ${label} "${revision.question}": ${answer}`,
+		submission.reasoning ? `. Reasoning: "${submission.reasoning}"` : '',
 		'. This is their decision; do not replace it.',
 		' Check list_decisions for contradictions with earlier decisions and call any out before asking the next question.',
 	].join('');
 }
 
-function reopenBody(card: Card, userId: string): string {
-	const earlier = card.history.at(-1);
-	const decision = earlier?.decision;
-	const earlierAnswer = earlier && decision ? `"${answerText(earlier) ?? ''}"` : 'none';
+// `earlier` is the decided revision the reopen replaced.
+function reopenBody(label: string, earlier: CardRevision, userId: string): string {
+	const decision = earlier.decision;
 
 	return [
-		`<@${userId}> reopened ${card.label} "${card.latest.question}".`,
-		` Earlier answer: ${earlierAnswer}`,
+		`<@${userId}> reopened ${label} "${earlier.question}".`,
+		` Earlier answer: "${answerText(earlier) ?? ''}"`,
 		decision ? `, decided by <@${decision.decidedBy}>` : '',
 		decision?.reasoning ? ` (reasoning: "${decision.reasoning}")` : '',
 		'. Ask what needs reconsidering; do not pick a new answer yourself.',

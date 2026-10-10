@@ -10,7 +10,7 @@ import {
 	type PlanningInteractionDeps,
 } from './planning-interactions.ts';
 import { __resetSlackClientForTests, getSlackClient } from './slack-reply.ts';
-import { stringParam, stubSlackApi } from './testing/slack-api-stub.ts';
+import { type SlackApiResponder, stringParam, stubSlackApi } from './testing/slack-api-stub.ts';
 
 const HOME_TEAM = 'T_HOME';
 
@@ -49,10 +49,10 @@ type User = { id: string; name?: string; team_id?: string };
 
 const member: User = { id: 'U1', name: 'maya', team_id: HOME_TEAM };
 
-async function setup() {
+async function setup(respond?: SlackApiResponder) {
 	const db = await openTestDatabase();
 	const store = createD1PlanningStore(db);
-	const calls = stubSlackApi();
+	const calls = stubSlackApi(respond);
 	const continuations: PlanningContinuation[] = [];
 
 	const deps: PlanningInteractionDeps = {
@@ -116,6 +116,7 @@ function submit(
 describe('handlePlanningInteraction', () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
 		__resetSlackClientForTests();
 	});
 
@@ -190,7 +191,7 @@ describe('handlePlanningInteraction', () => {
 	});
 
 	it('refuses the second submission of the same view', async () => {
-		const { store, continuations, deps } = await setup();
+		const { store, calls, continuations, deps } = await setup();
 		await seed(store);
 		const view = await openedView(store, { choice: 'pg' });
 
@@ -201,6 +202,7 @@ describe('handlePlanningInteraction', () => {
 		expect(second?.errors.reasoning).toContain(STALE);
 		expect((await store.log.latest('card-1'))?.decision?.decidedBy).toBe('U1');
 		expect(continuations).toHaveLength(1);
+		expect(calls.filter((call) => call.method === 'chat.update')).toHaveLength(2);
 	});
 
 	it('refuses a submission opened before the card was reworded', async () => {
@@ -332,5 +334,76 @@ describe('handlePlanningInteraction', () => {
 
 		expect(result).toBeUndefined();
 		expect(calls).toHaveLength(0);
+	});
+
+	describe('when the card message cannot be redrawn', () => {
+		// Slack answers ok:false with an error code; the WebClient throws on it.
+		const failUpdate: SlackApiResponder = async (call) => ({
+			ok: call.method !== 'chat.update',
+			error: 'message_not_found',
+		});
+
+		it('still continues after a decision', async () => {
+			const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const { store, calls, continuations, deps } = await setup(failUpdate);
+			await seed(store);
+			const view = await openedView(store, { choice: 'd1' });
+
+			const result = await handlePlanningInteraction(submit(view), deps);
+
+			expect(result).toBeUndefined();
+			expect(calls.map((call) => call.method)).toContain('chat.update');
+			expect(continuations).toHaveLength(1);
+			expect(continuations[0]!.type).toBe('planning.decision');
+			expect(warn).toHaveBeenCalledWith(expect.stringContaining('message_not_found'));
+		});
+
+		it('still continues after a reopen', async () => {
+			const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const { store, continuations, deps } = await setup(failUpdate);
+			await seed(store);
+			await store.log.decide({ cardId: 'card-1', revision: 1, decision: earlierDecision });
+
+			await handlePlanningInteraction(click(REOPEN_ACTION), deps);
+
+			expect(continuations).toHaveLength(1);
+			expect(continuations[0]!.type).toBe('planning.reopen');
+			expect(warn).toHaveBeenCalledWith(expect.stringContaining('message_not_found'));
+		});
+	});
+
+	it('continues without a redraw when the card has no message', async () => {
+		const { store, calls, continuations, deps } = await setup();
+		await store.log.ask(newCard());
+		const view = await openedView(store, { choice: 'd1' });
+
+		await handlePlanningInteraction(submit(view), deps);
+
+		expect(calls.filter((call) => call.method === 'chat.update')).toHaveLength(0);
+		expect(continuations).toHaveLength(1);
+	});
+
+	it('quotes the submitted answer even if the card is reopened before the dispatch', async () => {
+		const { store, continuations, deps } = await setup();
+		await seed(store);
+		const view = await openedView(store, { choice: 'd1', reasoning: 'No server to run' });
+
+		const reopenFirst: PlanningStore = {
+			...store,
+			log: {
+				...store.log,
+				listCards: async (conversationId) => {
+					await store.log.reopen({ cardId: 'card-1', createdAt: '2026-10-10T12:30:00.000Z' });
+
+					return store.log.listCards(conversationId);
+				},
+			},
+		};
+
+		await handlePlanningInteraction(submit(view), { ...deps, store: reopenFirst });
+
+		expect(continuations[0]!.body).toContain(
+			'<@U1> decided D1 "Which database?": D1. Reasoning: "No server to run".',
+		);
 	});
 });
