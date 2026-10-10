@@ -106,15 +106,23 @@ async function continuePlanning({
 	continuation: PlanningContinuation;
 }): Promise<void> {
 	const { conversationId, eventId, userId, type, body } = continuation;
-	const thread = channel.parseInstanceId(conversationId);
-	const modelRoute = await modelRouteForDispatch(codexAuth);
-	const attributes = await dispatchAttributes(env, thread, eventId, userId, modelRoute);
 
-	await runtime.dispatch(Coworker, {
-		id: conversationId,
-		idempotencyKey: eventId,
-		message: { kind: 'signal', type, body, attributes },
-	});
+	// Usually runs under waitUntil, where a rejection is otherwise invisible.
+	try {
+		const thread = channel.parseInstanceId(conversationId);
+		const modelRoute = await modelRouteForDispatch(codexAuth);
+		const attributes = await dispatchAttributes(env, thread, eventId, userId, modelRoute);
+
+		await runtime.dispatch(Coworker, {
+			id: conversationId,
+			idempotencyKey: eventId,
+			message: { kind: 'signal', type, body, attributes },
+		});
+	} catch (error) {
+		console.error(`[planning] Continuation ${eventId} failed: ${errorMessage(error)}`);
+
+		throw error;
+	}
 }
 
 /** Without `planning` there is no interactions route and no planning silence. */
