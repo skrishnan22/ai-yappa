@@ -145,6 +145,53 @@ describe('renderCard', () => {
 	});
 });
 
+describe('renderCard limits and fallback text', () => {
+	const big = 'x'.repeat(5000);
+
+	it('keeps every section under 3000 and every context element under 2000', () => {
+		const { blocks } = renderCard(
+			card(
+				revision({
+					question: big,
+					context: big,
+					recommendation: big,
+					choices: [
+						{ id: 'a', label: big },
+						{ id: 'b', label: big },
+					],
+					decision: { ...decision, choiceId: undefined, customAnswer: big, reasoning: big },
+				}),
+			),
+		);
+
+		const open = renderCard(
+			card(revision({ question: big, context: big }), [
+				revision({ decision: { ...decision, choiceId: undefined, customAnswer: big } }),
+			]),
+		);
+
+		const sections = [...blocks, ...open.blocks].flatMap((block) =>
+			block.type === 'section' && block.text ? [block.text.text.length] : [],
+		);
+
+		const contexts = [...blocks, ...open.blocks].flatMap((block) =>
+			block.type === 'context'
+				? block.elements.map((element) => ('text' in element ? element.text.length : 0))
+				: [],
+		);
+
+		expect(Math.max(...sections)).toBeLessThanOrEqual(3000);
+		expect(Math.max(...contexts)).toBeLessThanOrEqual(2000);
+	});
+
+	it('escapes the fallback text so a question cannot ping', () => {
+		const { text } = renderCard(card(revision({ question: 'hi <!channel> <@U9>' })));
+
+		expect(text).toContain('&lt;!channel&gt;');
+		expect(text).not.toContain('<!channel>');
+	});
+});
+
 describe('answerText', () => {
 	it('returns the choice label, the custom answer, or nothing', () => {
 		expect(answerText(revision({ decision }))).toBe('Postgres');
@@ -162,6 +209,7 @@ const inputBlockSchema = v.object({
 	element: v.object({
 		type: v.string(),
 		multiline: v.optional(v.boolean()),
+		max_length: v.optional(v.number()),
 		options: v.optional(v.array(v.unknown())),
 	}),
 });
@@ -197,6 +245,12 @@ describe('decideModal', () => {
 			optional: true,
 			element: { type: 'plain_text_input', multiline: true },
 		});
+	});
+
+	it('limits the custom answer and reasoning lengths', () => {
+		const view = decideModal(card(revision()));
+		expect(input(view, 'custom').element.max_length).toBe(500);
+		expect(input(view, 'reasoning').element.max_length).toBe(1500);
 	});
 
 	it('requires the custom answer when there are no choices', () => {

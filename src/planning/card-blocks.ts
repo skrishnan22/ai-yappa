@@ -25,34 +25,20 @@ export type CardRender = { text: string; blocks: KnownBlock[] };
 
 export function renderCard(card: Card): CardRender {
 	const { label, latest } = card;
-	const text = `${label}: ${latest.question}`;
+	const text = escapeMrkdwn(`${label}: ${latest.question}`);
 
-	const blocks: KnownBlock[] = [
-		{
-			type: 'section',
-			text: { type: 'mrkdwn', text: `*${label}* ${escapeMrkdwn(latest.question)}` },
-		},
-	];
+	const blocks: KnownBlock[] = [sectionBlock(`*${label}* ${escapeMrkdwn(latest.question)}`)];
 
 	const previous = previousAnswer(card);
 
 	if (previous) {
-		blocks.push({
-			type: 'context',
-			elements: [
-				{
-					type: 'mrkdwn',
-					text: `Previously: ${escapeMrkdwn(previous.answer)} — <@${previous.decidedBy}>`,
-				},
-			],
-		});
+		blocks.push(
+			contextBlock(`Previously: ${escapeMrkdwn(previous.answer)} — <@${previous.decidedBy}>`),
+		);
 	}
 
 	if (latest.context) {
-		blocks.push({
-			type: 'context',
-			elements: [{ type: 'mrkdwn', text: escapeMrkdwn(latest.context) }],
-		});
+		blocks.push(contextBlock(escapeMrkdwn(latest.context)));
 	}
 
 	if (latest.choices && latest.choices.length > 0) {
@@ -60,13 +46,10 @@ export function renderCard(card: Card): CardRender {
 			(choice, index) => `${choiceLetter(index)}) ${escapeMrkdwn(choice.label)}`,
 		);
 
-		blocks.push({ type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') } });
+		blocks.push(sectionBlock(lines.join('\n')));
 	}
 
-	blocks.push({
-		type: 'section',
-		text: { type: 'mrkdwn', text: `*Recommended:* ${escapeMrkdwn(latest.recommendation)}` },
-	});
+	blocks.push(sectionBlock(`*Recommended:* ${escapeMrkdwn(latest.recommendation)}`));
 
 	const decision = latest.decision;
 
@@ -75,7 +58,7 @@ export function renderCard(card: Card): CardRender {
 
 		if (decision.reasoning) lines.push(escapeMrkdwn(decision.reasoning));
 		lines.push(`Decided by <@${decision.decidedBy}> ${slackDate(decision.decidedAt)}`);
-		blocks.push({ type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') } });
+		blocks.push(sectionBlock(lines.join('\n')));
 		blocks.push({
 			type: 'actions',
 			elements: [
@@ -110,11 +93,8 @@ export function decideModal(card: Card): ModalView {
 	const choices = latest.choices ?? [];
 
 	const blocks: KnownBlock[] = [
-		{ type: 'section', text: { type: 'mrkdwn', text: `*${escapeMrkdwn(latest.question)}*` } },
-		{
-			type: 'context',
-			elements: [{ type: 'mrkdwn', text: `*Recommended:* ${escapeMrkdwn(latest.recommendation)}` }],
-		},
+		sectionBlock(`*${escapeMrkdwn(latest.question)}*`),
+		contextBlock(`*Recommended:* ${escapeMrkdwn(latest.recommendation)}`),
 	];
 
 	if (choices.length > 0) {
@@ -139,7 +119,7 @@ export function decideModal(card: Card): ModalView {
 		block_id: 'custom',
 		optional: choices.length > 0,
 		label: { type: 'plain_text', text: choices.length > 0 ? 'Or write your own answer' : 'Answer' },
-		element: { type: 'plain_text_input', action_id: 'custom' },
+		element: { type: 'plain_text_input', action_id: 'custom', max_length: 500 },
 	});
 
 	blocks.push({
@@ -147,7 +127,12 @@ export function decideModal(card: Card): ModalView {
 		block_id: 'reasoning',
 		optional: true,
 		label: { type: 'plain_text', text: 'Reasoning' },
-		element: { type: 'plain_text_input', action_id: 'reasoning', multiline: true },
+		element: {
+			type: 'plain_text_input',
+			action_id: 'reasoning',
+			multiline: true,
+			max_length: 1500,
+		},
 	});
 
 	return {
@@ -296,5 +281,18 @@ function escapeMrkdwn(value: string): string {
 }
 
 function truncate(value: string, max: number): string {
+	return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
+}
+
+// Slack rejects section text over 3000 chars and context text over 2000, after the decision is saved.
+function sectionBlock(text: string): KnownBlock {
+	return { type: 'section', text: { type: 'mrkdwn', text: clip(text, 2900) } };
+}
+
+function contextBlock(text: string): KnownBlock {
+	return { type: 'context', elements: [{ type: 'mrkdwn', text: clip(text, 1900) }] };
+}
+
+function clip(value: string, max: number): string {
 	return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
 }
