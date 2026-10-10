@@ -84,7 +84,15 @@ Do not pick Slack’s Bolt, AI assistant, or workflow templates. Those enable So
 
 Event Subscriptions come after `pnpm run dev` plus a tunnel, because Slack must verify `https://<host>/channels/slack/events`. Then subscribe the bot to `app_mention`, `message.channels`, and `message.groups`. Reinstall if Slack asks.
 
+Interactivity must stay enabled: set its Request URL (**Interactivity & Shortcuts**) to `https://<host>/channels/slack/interactions`. Decide and Reopen on planning cards do nothing without it.
+
 The manifest registers the `/aiyappa` slash command with a placeholder host. Once you have a host, set its Request URL (**Slash Commands**) to `https://<host>/channels/slack/commands`, or edit the manifest's `url` before pasting.
+
+## Planning with `/grill-me`
+
+Mention the bot with `/grill-me` (or ask to be grilled on a plan) to start a planning session. Yappa asks one decision card at a time, labelled D1, D2 and so on, with a recommendation. Press **Decide** to pick a choice or write your own answer; replies in the thread are discussion and do not answer a card. Any channel member can decide. Mention the bot to ask it to research or reword an open card. **Reopen** a decided card to change it. Unmentioned replies are ignored until the bot ends the session with a summary ([ADR 0023](docs/adr/0023-reversible-planning-decisions.md)).
+
+Run `pnpm exec wrangler d1 migrations apply APP_DB --remote` before deploying; migration 0004 creates the tables.
 
 ## ChatGPT subscription
 
@@ -145,7 +153,7 @@ A threaded reply that reflects work in the already-cloned repo (not clone/`ls` a
 
 ## Application database
 
-Memory and questions share one D1 database, bound as `APP_DB` (named `slack-agent-memory` in Cloudflare), with migrations in `migrations/`. Worker deploys do not apply D1 migrations; apply pending ones before deploying code that needs them:
+Memory and planning decisions share one D1 database, bound as `APP_DB` (named `slack-agent-memory` in Cloudflare), with migrations in `migrations/`. Worker deploys do not apply D1 migrations; apply pending ones before deploying code that needs them:
 
 ```bash
 pnpm exec wrangler d1 migrations apply APP_DB --remote
