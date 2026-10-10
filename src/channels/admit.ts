@@ -12,6 +12,7 @@ export type AdmitDecision =
 	| { kind: 'refuse-external' }
 	| { kind: 'no-repo' }
 	| { kind: 'drop-untracked' }
+	| { kind: 'drop-planning' }
 	| { kind: 'dispatch'; repo: string };
 
 /**
@@ -35,12 +36,16 @@ export function decideAdmit(args: {
 	external: boolean;
 	repo: string | undefined;
 	conversationExists: boolean;
+	// A planning session is open in the thread: only mentions and cards reach Yappa.
+	planningActive: boolean;
 }): AdmitDecision {
 	if (args.signalType === 'slack.message' && !args.conversationExists) {
 		return { kind: 'drop-untracked' };
 	}
 
 	if (args.external) return { kind: 'refuse-external' };
+
+	if (args.signalType === 'slack.message' && args.planningActive) return { kind: 'drop-planning' };
 
 	if (args.repo === undefined) return { kind: 'no-repo' };
 
