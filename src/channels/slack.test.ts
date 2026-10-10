@@ -22,6 +22,7 @@ type SlackEventPayload = {
 		ts: string;
 		thread_ts?: string;
 		user_team?: string;
+		team?: string;
 	};
 };
 
@@ -82,6 +83,7 @@ function eventPayload({
 	text,
 	ts,
 	userTeam,
+	team,
 	sharedExternally,
 }: {
 	eventId: string;
@@ -90,6 +92,7 @@ function eventPayload({
 	text: string;
 	ts: string;
 	userTeam?: string;
+	team?: string;
 	sharedExternally?: boolean;
 }): SlackEventPayload {
 	const event: SlackEventPayload['event'] = {
@@ -103,6 +106,8 @@ function eventPayload({
 	if (type === 'message') event.thread_ts = THREAD_TS;
 
 	if (userTeam) event.user_team = userTeam;
+
+	if (team) event.team = team;
 
 	return {
 		type: 'event_callback',
@@ -298,6 +303,39 @@ describe('Slack ingress', () => {
 
 			expect(dispatchRequests).toHaveLength(0);
 			expect(refusals).toHaveLength(1);
+		});
+
+		test('does not trust `team` in place of `user_team` in a shared channel', async () => {
+			const { dispatchRequests, refusals } = await deliver(
+				eventPayload({
+					eventId: 'Ev-team-only',
+					type: 'app_mention',
+					user: 'U_UNKNOWN',
+					text: '<@UBOT> start',
+					ts: THREAD_TS,
+					team: WORKSPACE_TEAM,
+					sharedExternally: true,
+				}),
+			);
+
+			expect(dispatchRequests).toHaveLength(0);
+			expect(refusals).toHaveLength(1);
+		});
+
+		test('admits a member whose plain message names only `team` outside Slack Connect', async () => {
+			const { dispatchRequests, refusals } = await deliver(
+				eventPayload({
+					eventId: 'Ev-team-member',
+					type: 'message',
+					user: FOLLOW_UP_USER,
+					text: 'continue',
+					ts: '1710000000.000002',
+					team: WORKSPACE_TEAM,
+				}),
+			);
+
+			expect(dispatchRequests).toHaveLength(1);
+			expect(refusals).toHaveLength(0);
 		});
 
 		test('admits a workspace member in a shared channel', async () => {

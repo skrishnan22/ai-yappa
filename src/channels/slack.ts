@@ -1,6 +1,10 @@
 // flue-blueprint: channel/slack@1
 import { dispatch, getAgentInstance } from '@flue/runtime';
-import { createSlackChannel, type SlackThreadRef } from '@flue/slack';
+import {
+	createSlackChannel,
+	type SlackEventCallbackPayload,
+	type SlackThreadRef,
+} from '@flue/slack';
 import { Coworker } from '../agents/coworker.ts';
 import { type ModelRoute, modelRouteFor } from '../agents/model-route.ts';
 import { repoForChannel } from '../config.ts';
@@ -28,10 +32,20 @@ export type SlackRuntime = {
 
 const defaultSlackRuntime: SlackRuntime = { dispatch, getAgentInstance };
 
-// Shared-channel events name the sender's organization in `user_team`;
-// `@slack/types` declares only `team` on plain messages.
-function senderTeamOf(event: { team?: string; user_team?: string }): string | undefined {
-	return event.user_team ?? event.team;
+// The sender's organization. In a Slack Connect channel only `user_team`
+// counts, so a missing field fails closed; elsewhere every sender is a member
+// and plain messages may carry only `team` (`@slack/types` omits `user_team`).
+function isExternalEvent(
+	payload: SlackEventCallbackPayload,
+	event: { team?: string; user_team?: string },
+): boolean {
+	const sharedExternally = payload.is_ext_shared_channel === true;
+
+	return isExternalSender({
+		senderTeam: sharedExternally ? event.user_team : (event.user_team ?? event.team),
+		workspaceTeam: payload.team_id,
+		sharedExternally,
+	});
 }
 
 async function conversationExistsInThread(runtime: SlackRuntime, id: string): Promise<boolean> {
@@ -84,11 +98,7 @@ export function createSlackChannelForEnv(
 							threadTs: event.thread_ts ?? event.ts,
 						},
 						userId: event.user,
-						external: isExternalSender({
-							senderTeam: senderTeamOf(event),
-							workspaceTeam: payload.team_id,
-							sharedExternally: payload.is_ext_shared_channel === true,
-						}),
+						external: isExternalEvent(payload, event),
 						eventId: payload.event_id,
 						text: event.text,
 						signalType: 'slack.app_mention',
@@ -119,11 +129,7 @@ export function createSlackChannelForEnv(
 							threadTs: event.thread_ts,
 						},
 						userId: event.user,
-						external: isExternalSender({
-							senderTeam: senderTeamOf(event),
-							workspaceTeam: payload.team_id,
-							sharedExternally: payload.is_ext_shared_channel === true,
-						}),
+						external: isExternalEvent(payload, event),
 						eventId: payload.event_id,
 						text: event.text ?? '',
 						signalType: 'slack.message',
