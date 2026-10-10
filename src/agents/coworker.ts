@@ -43,30 +43,26 @@ import { deliveredModelRoute } from './model-route.ts';
 import { PLANNING_REPLY_TOOLS, planningTools } from './planning-tools.ts';
 import { webSearchTools } from './web-search-tools.ts';
 
-const activateSkillArgsSchema = v.object({ name: v.string() });
-
 observe(async (event, context) => {
-	// Activating the planning skill starts this conversation's Planning Session.
-	// A failed start is logged so the run card still gets this event.
-	if (
-		event.type === 'tool_start' &&
-		event.toolName === 'activate_skill' &&
-		v.is(activateSkillArgsSchema, event.args) &&
-		event.args.name === PLANNING_SKILL
-	) {
-		try {
-			await planningStore()?.sessions.start(context.id, new Date().toISOString());
-		} catch (error) {
-			console.error(`[planning] Session start failed for ${context.id}: ${errorMessage(error)}`);
-		}
-	}
-
+	// Queue the run-card event first: Flue does not await observers, so a
+	// D1 round trip before it would let a later tool_start overtake it.
 	const cardEvent = cardEventFromObservation(event);
 
-	if (!cardEvent) return;
-
-	await publishCardEvent({ ...cardEvent, instanceId: context.id });
+	await Promise.all([
+		cardEvent ? publishCardEvent({ ...cardEvent, instanceId: context.id }) : undefined,
+		isPlanningActivation(event) ? startPlanningSession(context.id) : undefined,
+	]);
 });
+
+// Activating the planning skill starts this conversation's Planning Session.
+// A failed start is logged; it must not reject the run-card work beside it.
+async function startPlanningSession(conversationId: string): Promise<void> {
+	try {
+		await planningStore()?.sessions.start(conversationId, new Date().toISOString());
+	} catch (error) {
+		console.error(`[planning] Session start failed for ${conversationId}: ${errorMessage(error)}`);
+	}
+}
 
 const initialDataSchema = v.object({
 	channelId: v.string(),
@@ -257,6 +253,17 @@ export function hasSkillActivations(
 ): boolean {
 	return (
 		toolCalls.filter((call) => call.tool === 'activate_skill' && !call.isError).length >= required
+	);
+}
+
+const activateSkillArgsSchema = v.object({ name: v.string() });
+
+export function isPlanningActivation(event: FlueObservation): boolean {
+	return (
+		event.type === 'tool_start' &&
+		event.toolName === 'activate_skill' &&
+		v.is(activateSkillArgsSchema, event.args) &&
+		event.args.name === PLANNING_SKILL
 	);
 }
 
