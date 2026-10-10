@@ -420,6 +420,28 @@ describe('Slack ingress', () => {
 				ts: '1710000000.000002',
 			});
 
+		// A missing migration or a D1 error must not silence every thread.
+		test('an unreadable session flag lets the reply through', async () => {
+			const { runtime, dispatchRequests } = recordingRuntime();
+
+			stubSlackApi(async () => ({ ok: true, messages: [] }));
+
+			const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const planning = planningWithSession(() => {
+				throw new Error('no such table: planning_sessions');
+			});
+
+			const channel = createSlackChannelForEnv(env, codexAuth, runtime, planning);
+
+			const response = await channel.route().fetch(signedEventRequest(reply('Ev-unreadable')));
+
+			expect(response.status).toBe(200);
+			expect(dispatchRequests).toHaveLength(1);
+			expect(logged).toHaveBeenCalledOnce();
+			logged.mockRestore();
+		});
+
 		test('an unmentioned reply during a session is neither dispatched nor answered', async () => {
 			const { runtime, dispatchRequests } = recordingRuntime();
 			const calls = stubSlackApi(async () => ({ ok: true, messages: [] }));
