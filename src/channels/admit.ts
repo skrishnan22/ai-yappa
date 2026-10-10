@@ -9,14 +9,30 @@ type SlackAuthorization = {
 };
 
 export type AdmitDecision =
-	| { kind: 'refuse-invoker' }
+	| { kind: 'refuse-external' }
 	| { kind: 'no-repo' }
 	| { kind: 'drop-untracked' }
 	| { kind: 'dispatch'; repo: string };
 
+/**
+ * Whether a Slack user belongs to another organization. In a Slack Connect
+ * channel an event without a sender team fails closed; elsewhere every
+ * sender is a workspace member. `workspaceTeam` is the envelope's `team_id`,
+ * the installing workspace.
+ */
+export function isExternalSender(args: {
+	senderTeam: string | undefined;
+	workspaceTeam: string;
+	sharedExternally: boolean;
+}): boolean {
+	if (!args.senderTeam) return args.sharedExternally;
+
+	return args.senderTeam !== args.workspaceTeam;
+}
+
 export function decideAdmit(args: {
 	signalType: SlackSignal;
-	allowed: boolean;
+	external: boolean;
 	repo: string | undefined;
 	conversationExists: boolean;
 }): AdmitDecision {
@@ -24,7 +40,7 @@ export function decideAdmit(args: {
 		return { kind: 'drop-untracked' };
 	}
 
-	if (!args.allowed) return { kind: 'refuse-invoker' };
+	if (args.external) return { kind: 'refuse-external' };
 
 	if (args.repo === undefined) return { kind: 'no-repo' };
 

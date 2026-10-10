@@ -24,3 +24,4 @@
 | 0019 Model-authored Block Kit replies | Holds. Markdown by default; native model-authored blocks validated at the posting boundary. App-callback controls require implemented handlers |
 | 0020 ChatGPT subscription Model Route | Holds, except decision 6 (superseded by ADR 0021). `openai-codex` via a single `CodexAuth` Durable Object; OpenCode Go when no usable credential. Amends spec §4.1 for the admin-only `/aiyappa openai` slash command |
 | 0021 Per-conversation Model Choice | Holds. `$model:` / `$effort:` in the first mention pick from `modelAliases`; a ChatGPT pick is refused while ChatGPT is not usable and falls back mid-thread |
+| 0022 Channel members may use Yappa | Holds. Replaces the invoker allowlist: any workspace member in a bound channel; external Slack Connect users refused; Codex admins unchanged |

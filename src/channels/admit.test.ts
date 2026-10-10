@@ -1,23 +1,29 @@
 import { describe, expect, test } from 'vitest';
-import { decideAdmit, decideInvocation, isTimeoutRetry, mentionsAuthorizedBot } from './admit.ts';
+import {
+	decideAdmit,
+	decideInvocation,
+	isExternalSender,
+	isTimeoutRetry,
+	mentionsAuthorizedBot,
+} from './admit.ts';
 
 describe('decideAdmit', () => {
-	test('refuses a user who is not allowlisted', () => {
+	test('refuses an external user', () => {
 		expect(
 			decideAdmit({
 				signalType: 'slack.app_mention',
-				allowed: false,
+				external: true,
 				repo: 'https://github.com/org/pilot.git',
 				conversationExists: false,
 			}),
-		).toEqual({ kind: 'refuse-invoker' });
+		).toEqual({ kind: 'refuse-external' });
 	});
 
-	test('refuses a mapped invoker in a channel with no repo', () => {
+	test('refuses a workspace member in a channel with no repo', () => {
 		expect(
 			decideAdmit({
 				signalType: 'slack.app_mention',
-				allowed: true,
+				external: false,
 				repo: undefined,
 				conversationExists: false,
 			}),
@@ -28,7 +34,7 @@ describe('decideAdmit', () => {
 		expect(
 			decideAdmit({
 				signalType: 'slack.app_mention',
-				allowed: true,
+				external: false,
 				repo: 'https://github.com/org/pilot.git',
 				conversationExists: false,
 			}),
@@ -39,18 +45,18 @@ describe('decideAdmit', () => {
 		expect(
 			decideAdmit({
 				signalType: 'slack.message',
-				allowed: true,
+				external: false,
 				repo: 'https://github.com/org/pilot.git',
 				conversationExists: false,
 			}),
 		).toEqual({ kind: 'drop-untracked' });
 	});
 
-	test('an untracked reply from a disallowed user is silently dropped', () => {
+	test('an untracked reply from an external user is silently dropped', () => {
 		expect(
 			decideAdmit({
 				signalType: 'slack.message',
-				allowed: false,
+				external: true,
 				repo: 'https://github.com/org/pilot.git',
 				conversationExists: false,
 			}),
@@ -61,7 +67,7 @@ describe('decideAdmit', () => {
 		expect(
 			decideAdmit({
 				signalType: 'slack.message',
-				allowed: true,
+				external: false,
 				repo: undefined,
 				conversationExists: false,
 			}),
@@ -72,11 +78,47 @@ describe('decideAdmit', () => {
 		expect(
 			decideAdmit({
 				signalType: 'slack.message',
-				allowed: true,
+				external: false,
 				repo: 'https://github.com/org/pilot.git',
 				conversationExists: true,
 			}),
 		).toEqual({ kind: 'dispatch', repo: 'https://github.com/org/pilot.git' });
+	});
+	test('an external reply to an existing conversation is refused', () => {
+		expect(
+			decideAdmit({
+				signalType: 'slack.message',
+				external: true,
+				repo: 'https://github.com/org/pilot.git',
+				conversationExists: true,
+			}),
+		).toEqual({ kind: 'refuse-external' });
+	});
+});
+
+describe('isExternalSender', () => {
+	test('a sender from another team is external', () => {
+		expect(
+			isExternalSender({ senderTeam: 'T_OTHER', workspaceTeam: 'T_HOME', sharedExternally: true }),
+		).toBe(true);
+		expect(
+			isExternalSender({ senderTeam: 'T_OTHER', workspaceTeam: 'T_HOME', sharedExternally: false }),
+		).toBe(true);
+	});
+
+	test('a sender from the workspace is not external', () => {
+		expect(
+			isExternalSender({ senderTeam: 'T_HOME', workspaceTeam: 'T_HOME', sharedExternally: true }),
+		).toBe(false);
+	});
+
+	test('a missing sender team fails closed only in an externally shared channel', () => {
+		expect(
+			isExternalSender({ senderTeam: undefined, workspaceTeam: 'T_HOME', sharedExternally: true }),
+		).toBe(true);
+		expect(
+			isExternalSender({ senderTeam: undefined, workspaceTeam: 'T_HOME', sharedExternally: false }),
+		).toBe(false);
 	});
 });
 

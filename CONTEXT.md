@@ -15,7 +15,7 @@ The Slack organization served by one Slack Agent Deployment.
 _Avoid_: Tenant
 
 **Configured Channel**:
-A Slack channel listed in the deployment's channel→repo map. It supplies the default repository for new agent work. Only allowlisted invokers may start a conversation.
+A Slack channel listed in the deployment's channel→repo map. It supplies the default repository for new agent work. Binding is the opt-in: any human member of the Slack Workspace may start or continue a conversation there; users from another organization may not.
 _Avoid_: Allowed user group, authorized users
 
 **Channel Adapter**:

@@ -78,7 +78,7 @@ Submissions have a type (D12):
 - Verifies Slack signatures; drops replays (timestamp window + event id dedup).
 - `app_mention` in a channel → create conversation + thread; message in an existing tracked thread → route to that conversation. No slash command for conversations (slash commands don't live in threads, which breaks thread-as-identity). Deployment administration that is not thread-scoped may use one: `/aiyappa openai` connects the ChatGPT subscription (ADR 0020).
 - **Repo resolution**: channel → default repo mapping, configured when the agent is added to a channel; an explicit `repo:` argument in the invocation overrides it. Invocation without a resolvable repo gets an immediate in-thread setup prompt.
-- **Invoker allowlist**: only allowlisted Slack users can start submissions; others get a polite refusal. Configured per workspace.
+- **Channel members**: any human member of the workspace may start or continue a conversation in a bound channel. Users from another organization in a Slack Connect channel get a polite refusal (ADR 0022).
 - Responsibilities end at routing; no business logic.
 
 ### 4.2 Conversation owner (Flue agent)
@@ -274,7 +274,7 @@ All triggers are thin adapters emitting the same `TriggerEvent {source, repo?, h
 The original M1 layout used the Flue Modal blueprint. On 2026-08-30 D2 first changed to Daytona Linux VMs, then to Daytona containers after the selected Daytona region reported no `linux-vm` runners and the UI reported that the VM snapshot was unavailable in every selectable region. The second change also corrected the architecture: Flue owns logical continuity, Git owns recovery truth, and the useful provider optimization is retained filesystem state. RAM/process continuity is optional and therefore cannot justify a VM or Modal's Alpha snapshot/restore path in v1.
 
 - Follow Flue's project layout. Do not introduce `packages/{ingress,owner,proxy,sandbox-runner}`.
-- Ingress is `@flue/slack` in `src/channels/slack.ts`, mounted at `/channels/slack`. Signature verification, replay window, and URL handshake stay in the channel package. Policy (invoker allowlist, channel→repo map) is application code in the handler, before `dispatch`.
+- Ingress is `@flue/slack` in `src/channels/slack.ts`, mounted at `/channels/slack`. Signature verification, replay window, and URL handshake stay in the channel package. Policy (external-user refusal, channel→repo map) is application code in the handler, before `dispatch`.
 - The conversation owner is `src/agents/coworker.ts`. It is dispatch-only: no public `createAgentRouter` mount. Conversation id is `channel.instanceId({ teamId, channelId, threadTs })`.
 - Event log for M1 is Flue conversation persistence plus `initialData`. Lease/fencing metadata goes in `usePersistentState` when that protocol lands. A custom cross-conversation audit store waits for M2/M4.
 - Implement Daytona behind Flue's `SandboxFactory` in `src/sandboxes/daytona.ts`. Spec §4.3 lifecycle operations remain application-owned around that factory. Spec §4.4 `commandId` markers are still ours; provider command/session ids strengthen reconciliation but do not replace the client-generated id.
