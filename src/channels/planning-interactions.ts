@@ -21,8 +21,6 @@ import type { SlackBotClient } from './slack-reply.ts';
 
 export type PlanningContinuation = {
 	conversationId: string;
-	channelId: string;
-	threadTs: string;
 	type: 'planning.decision' | 'planning.reopen';
 	eventId: string; // idempotency key
 	userId: string;
@@ -86,13 +84,13 @@ async function onDecideClick(
 	if (!latest) return;
 
 	if (!isMember(payload.user, latest, deps)) {
-		await refuse(payload.user, latest, deps);
+		await deps.defer(refuse(payload.user, latest, deps));
 
 		return;
 	}
 
 	if (latest.decision) {
-		await redraw(latest, deps);
+		await deps.defer(redraw(latest, deps));
 
 		return;
 	}
@@ -118,7 +116,7 @@ async function onReopenClick(
 	if (!latest) return;
 
 	if (!isMember(payload.user, latest, deps)) {
-		await refuse(payload.user, latest, deps);
+		await deps.defer(refuse(payload.user, latest, deps));
 
 		return;
 	}
@@ -132,24 +130,23 @@ async function onReopenClick(
 	});
 
 	if (!reopened) {
-		await redraw(latest, deps);
+		await deps.defer(redraw(latest, deps));
 
 		return;
 	}
 
-	await deps.defer(
-		(async () => {
-			const card = await redraw(reopened, deps);
-
-			await deps.continueConversation({
-				...threadOf(reopened),
+	await Promise.all([
+		deps.defer(redraw(reopened, deps)),
+		deps.defer(
+			deps.continueConversation({
+				conversationId: reopened.conversationId,
 				type: 'planning.reopen',
 				eventId: `planning-reopen:${shown.cardId}:${reopened.revision}`,
 				userId: payload.user.id,
-				body: reopenBody(card?.label, latest, payload.user.id),
-			});
-		})(),
-	);
+				body: reopenBody(latest, payload.user.id),
+			}),
+		),
+	]);
 }
 
 async function onDecideSubmission(
@@ -189,24 +186,23 @@ async function onDecideSubmission(
 	});
 
 	if (!decided) {
-		await deps.defer(redraw(latest, deps).then(() => undefined));
+		await deps.defer(redraw(latest, deps));
 
 		return reasoningError(CARD_CHANGED);
 	}
 
-	await deps.defer(
-		(async () => {
-			const card = await redraw(latest, deps);
-
-			await deps.continueConversation({
-				...threadOf(latest),
+	await Promise.all([
+		deps.defer(redraw(latest, deps)),
+		deps.defer(
+			deps.continueConversation({
+				conversationId: latest.conversationId,
 				type: 'planning.decision',
 				eventId: `planning-decide:${submission.cardId}:${submission.revision}`,
 				userId: payload.user.id,
-				body: decisionBody(card?.label, latest, submission, payload.user.id),
-			});
-		})(),
-	);
+				body: decisionBody(latest, submission, payload.user.id),
+			}),
+		),
+	]);
 
 	return undefined;
 }
@@ -232,14 +228,6 @@ function reasoningError(message: string): SubmissionErrors {
 	return { response_action: 'errors', errors: { reasoning: message } };
 }
 
-function threadOf(card: CardRevision) {
-	return {
-		conversationId: card.conversationId,
-		channelId: card.channelId,
-		threadTs: card.threadTs,
-	};
-}
-
 // Read through listCards so the redraw has the card's label and history.
 async function findCard(
 	revision: CardRevision,
@@ -250,23 +238,18 @@ async function findCard(
 	return cards.find((card) => card.latest.cardId === revision.cardId);
 }
 
-// Redraws the card's current state and returns it. Never throws: the log is
+// Redraws the card's current state. Never throws: the log is
 // authoritative, and a failed read or update must not stop the dispatch.
 // Concurrent redraws are unordered, so one may draw an older state over a
 // newer one; each re-reads after its update and draws again if the card moved.
-async function redraw(
-	revision: CardRevision,
-	deps: PlanningInteractionDeps,
-): Promise<Card | undefined> {
-	let card: Card | undefined;
-
+async function redraw(revision: CardRevision, deps: PlanningInteractionDeps): Promise<void> {
 	try {
 		for (let attempt = 0; attempt < REDRAW_ATTEMPTS; attempt++) {
-			card = await findCard(revision, deps);
+			const card = await findCard(revision, deps);
 
 			const messageTs = card?.latest.messageTs;
 
-			if (!card || !messageTs) return card;
+			if (!card || !messageTs) return;
 
 			const { text, blocks } = renderCard(card);
 
@@ -274,13 +257,11 @@ async function redraw(
 
 			const current = await deps.store.log.latest(revision.cardId);
 
-			if (!current || sameState(current, card.latest)) return card;
+			if (!current || sameState(current, card.latest)) return;
 		}
 	} catch (error) {
 		console.warn(`[planning] Card ${revision.cardId} redraw failed: ${errorMessage(error)}`);
 	}
-
-	return card;
 }
 
 function sameState(a: CardRevision, b: CardRevision): boolean {
@@ -289,9 +270,7 @@ function sameState(a: CardRevision, b: CardRevision): boolean {
 
 // Dispatch bodies are model prompts: user and model text is quoted as-is.
 // Built from what was submitted, not re-read, so a later reopen cannot blank the answer.
-// Without a label (the redraw read failed), the question still names the card.
 function decisionBody(
-	label = 'a card',
 	revision: CardRevision,
 	submission: DecideSubmission,
 	userId: string,
@@ -302,7 +281,7 @@ function decisionBody(
 		'';
 
 	return [
-		`<@${userId}> decided ${label} "${revision.question}": ${answer}`,
+		`<@${userId}> decided ${revision.cardId} "${revision.question}": ${answer}`,
 		submission.reasoning ? `. Reasoning: "${submission.reasoning}"` : '',
 		'. This is their decision; do not replace it.',
 		' Check list_decisions for contradictions with earlier decisions and call any out before asking the next question.',
@@ -310,11 +289,11 @@ function decisionBody(
 }
 
 // `earlier` is the decided revision the reopen replaced.
-function reopenBody(label = 'a card', earlier: CardRevision, userId: string): string {
+function reopenBody(earlier: CardRevision, userId: string): string {
 	const decision = earlier.decision;
 
 	return [
-		`<@${userId}> reopened ${label} "${earlier.question}".`,
+		`<@${userId}> reopened ${earlier.cardId} "${earlier.question}".`,
 		` Earlier answer: "${answerText(earlier) ?? ''}"`,
 		decision ? `, decided by <@${decision.decidedBy}>` : '',
 		decision?.reasoning ? ` (reasoning: "${decision.reasoning}")` : '',
