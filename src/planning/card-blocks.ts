@@ -92,7 +92,7 @@ export function renderCard(card: Card): CardRender {
 				{
 					type: 'button',
 					action_id: DECIDE_ACTION,
-					value: latest.cardId,
+					value: JSON.stringify({ cardId: latest.cardId, label }),
 					style: 'primary',
 					text: { type: 'plain_text', text: 'Decide…' },
 				},
@@ -103,8 +103,7 @@ export function renderCard(card: Card): CardRender {
 	return { text, blocks };
 }
 
-export function decideModal(card: Card): ModalView {
-	const { latest } = card;
+export function decideModal({ latest, label }: Pick<Card, 'latest' | 'label'>): ModalView {
 	const choices = latest.choices ?? [];
 
 	const blocks: KnownBlock[] = [
@@ -158,7 +157,7 @@ export function decideModal(card: Card): ModalView {
 		type: 'modal',
 		callback_id: DECIDE_CALLBACK,
 		private_metadata: JSON.stringify({ cardId: latest.cardId, revision: latest.revision }),
-		title: { type: 'plain_text', text: clip(`Decide ${card.label}`, 24) },
+		title: { type: 'plain_text', text: clip(`Decide ${label}`, 24) },
 		submit: { type: 'plain_text', text: 'Decide' },
 		close: { type: 'plain_text', text: 'Cancel' },
 		blocks,

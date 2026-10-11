@@ -4,6 +4,7 @@ import type {
 	SlackUser,
 	SlackViewSubmissionPayload,
 } from '@flue/slack';
+import * as v from 'valibot';
 import {
 	answerText,
 	DECIDE_ACTION,
@@ -47,6 +48,12 @@ const NOT_A_MEMBER = 'Yappa only works for members of this workspace.';
 const CARD_CHANGED =
 	'This card changed since you opened it: it was decided, reopened, or reworded. Close this and review the current card.';
 
+const decideValueSchema = v.pipe(
+	v.string(),
+	v.parseJson(),
+	v.object({ cardId: v.string(), label: v.string() }),
+);
+
 export async function handlePlanningInteraction(
 	payload: SlackInteractionPayload,
 	deps: PlanningInteractionDeps,
@@ -76,9 +83,14 @@ export async function handlePlanningInteraction(
 
 async function onDecideClick(
 	payload: SlackBlockActionsPayload,
-	cardId: string,
+	value: string,
 	deps: PlanningInteractionDeps,
 ): Promise<void> {
+	const shown = v.safeParse(decideValueSchema, value);
+
+	if (!shown.success) return;
+	const { cardId, label } = shown.output;
+
 	const latest = await deps.store.log.latest(cardId);
 
 	if (!latest) return;
@@ -95,11 +107,12 @@ async function onDecideClick(
 		return;
 	}
 
-	const card = await findCard(latest, deps);
+	if (!payload.trigger_id) return;
 
-	if (!card || !payload.trigger_id) return;
-
-	await deps.slack.views.open({ trigger_id: payload.trigger_id, view: decideModal(card) });
+	await deps.slack.views.open({
+		trigger_id: payload.trigger_id,
+		view: decideModal({ latest, label }),
+	});
 }
 
 async function onReopenClick(
