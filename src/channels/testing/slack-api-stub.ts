@@ -12,7 +12,7 @@ export type SlackApiResponder = (call: SlackApiCall) => Promise<Record<string, J
 
 // Decode the structured parameters used by these tests; text stays verbatim.
 function decodeParam(key: string, value: string): JsonValue {
-	if (key === 'blocks') return JSON.parse(value);
+	if (key === 'blocks' || key === 'view') return JSON.parse(value);
 
 	if (key === 'unfurl_links' || key === 'unfurl_media') return value === 'true';
 

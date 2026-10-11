@@ -12,6 +12,10 @@ export type SlackBotClient = {
 	chat: {
 		postMessage: WebClient['chat']['postMessage'];
 		update: WebClient['chat']['update'];
+		postEphemeral: WebClient['chat']['postEphemeral'];
+	};
+	views: {
+		open: WebClient['views']['open'];
 	};
 	conversations: {
 		replies: WebClient['conversations']['replies'];
