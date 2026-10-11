@@ -5,6 +5,7 @@ import { errorMessage } from '../json.ts';
 import { answerText, renderCard, renderSummary } from '../planning/card-blocks.ts';
 import { choicesSchema } from '../planning/d1-decision-log.ts';
 import type { Card, CardRevision, PlanningStore } from '../planning/decision-log.ts';
+import { redrawCard } from '../planning/redraw-card.ts';
 
 // Tools whose successful call reaches the thread, so they count as the reply.
 export const PLANNING_REPLY_TOOLS: ReadonlySet<string> = new Set(['ask_decision', 'end_planning']);
@@ -40,11 +41,21 @@ export function planningTools(args: {
 			name: 'ask_decision',
 			description: [
 				'Post one decision card. People answer only with its Decide button; never treat thread replies as answers. Ask one question at a time.',
+				'An unanswered card, including a reopened card, must be decided before you ask another; use reword_decision to clarify it.',
 				'Give a recommendation, and 2–5 choices with unique ids when the answer is one of a few options; omit choices for an open answer.',
 				'Returns the card label (D1, D2, ...) used by reword_decision.',
 			].join(' '),
 			input: v.object(wordingEntries),
 			async run({ data }) {
+				const cards = await store.log.listCards(conversationId);
+				const open = cards.find((card) => !card.latest.decision);
+
+				if (open) {
+					throw new Error(
+						`${open.label} is still open. Decide it or use reword_decision before asking another question.`,
+					);
+				}
+
 				const cardId = newId();
 
 				const newCard = {
@@ -72,7 +83,7 @@ export function planningTools(args: {
 
 				// Posted before it is saved: a saved card whose post failed would stay
 				// open with no Decide button, and asking again would add a second card.
-				const label = `D${(await store.log.listCards(conversationId)).length + 1}`;
+				const label = `D${cards.length + 1}`;
 				const draft = renderCard({ label, latest: { ...newCard, revision: 1 }, history: [] });
 				const slack = getSlackClient(token);
 
@@ -98,7 +109,7 @@ export function planningTools(args: {
 
 				// A concurrent ask took the label this card was drawn with.
 				if (card && ts && card.label !== label) {
-					await slack.chat.update({ channel: channelId, ts, ...renderCard(card) });
+					await redrawCard(card.latest, { log: store.log, slack });
 				}
 
 				return { output: { label: card?.label ?? label, cardId, posted: true, ts } };
@@ -138,17 +149,8 @@ export function planningTools(args: {
 				// A decision or reopen landed first.
 				if (!reworded) return { output: { ok: false, reason: decided } };
 
-				const card = await findCard(reworded.cardId);
-
-				if (card && token && reworded.messageTs) {
-					const { text, blocks } = renderCard(card);
-
-					await getSlackClient(token).chat.update({
-						channel: channelId,
-						ts: reworded.messageTs,
-						text,
-						blocks,
-					});
+				if (token) {
+					await redrawCard(reworded, { log: store.log, slack: getSlackClient(token) });
 				}
 
 				return { output: { ok: true, label, revision: reworded.revision } };

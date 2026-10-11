@@ -36,7 +36,9 @@ depend on an open card or participant count. An @mention invites Yappa to
 research, clarify, revise a question, or help with the plan, without recording a
 decision.
 
-Yappa normally asks one question at a time. Each decision card has a stable ID,
+Yappa may ask a new question only when every existing card is decided, including
+cards that people reopened. Reopening an existing card remains allowed while
+another is open. Each decision card has a stable ID,
 question, necessary context, recommendation, and optional choices. **Decide…**
 opens a Slack modal where a person selects an option or writes a custom answer,
 with optional reasoning. Questions without choices use the same custom-answer
@@ -82,7 +84,9 @@ and no separate decisions table.
 
 Operations:
 
-- **Ask** inserts revision 1.
+- **Ask** inserts revision 1 only if no card in the conversation is unanswered.
+  The check and insert are one SQL statement, so concurrent asks cannot both
+  create unanswered cards. A card posted before a refused insert is withdrawn.
 - **Decide** sets the decision on the revision the modal was opened at, only if
   that row is undecided. Zero changed rows means the card was already decided,
   reopened, or reworded since the modal opened, or the Slack event is a replay;

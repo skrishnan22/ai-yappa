@@ -1,7 +1,8 @@
 import type { FlueObservation } from '@flue/runtime';
 import { describe, expect, test } from 'vitest';
 import type { JsonValue } from '../json.ts';
-import { hasSkillActivations, hasSuccessfulSlackReply, isPlanningActivation } from './coworker.ts';
+import { isPlanningActivation } from '../planning/planning-startup.ts';
+import { hasSkillActivations, hasSuccessfulSlackReply } from './coworker.ts';
 
 describe('hasSuccessfulSlackReply', () => {
 	test('accepts a successful reply anywhere in the aggregate tool calls', () => {

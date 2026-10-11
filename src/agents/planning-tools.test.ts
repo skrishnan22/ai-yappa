@@ -157,6 +157,30 @@ describe('planningTools', () => {
 });
 
 describe('ask_decision', () => {
+	it.each(['open', 'reopened'])('posts no new question while a card is %s', async (state) => {
+		const { store, calls, tools } = await setup();
+		await run(tools, 'ask_decision', question);
+
+		if (state === 'reopened') {
+			await decide(store, 'card-1');
+			await store.log.reopen({
+				cardId: 'card-1',
+				revision: 1,
+				createdAt: '2026-10-10T13:00:00.000Z',
+			});
+		}
+
+		await expect(
+			run(tools, 'ask_decision', {
+				question: 'Which cache?',
+				recommendation: 'Redis',
+			}),
+		).rejects.toThrow(/D1 is still open/);
+		const cards = await store.log.listCards(CONVERSATION);
+		expect(cards).toHaveLength(1);
+		expect(calls.filter((call) => call.method === 'chat.postMessage')).toHaveLength(1);
+	});
+
 	it('starts a planning session if none is active, such as after a reopen past the end', async () => {
 		const { store, tools } = await setup();
 
@@ -237,6 +261,39 @@ describe('ask_decision', () => {
 });
 
 describe('reword_decision', () => {
+	it('keeps an answer visible when it arrives during the reword update', async () => {
+		let store: PlanningStore | undefined;
+		let decidedDuringUpdate = false;
+
+		const { calls, tools, ...rest } = await setup({
+			token: 'xoxb-test',
+			respond: async (call): Promise<Record<string, JsonValue>> => {
+				if (call.method === 'chat.postMessage') return { ok: true, channel: 'C1', ts: '9.1' };
+
+				if (call.method === 'chat.update' && store && !decidedDuringUpdate) {
+					decidedDuringUpdate = true;
+					await store.log.decide({ cardId: 'card-1', revision: 2, decision });
+				}
+
+				return { ok: true };
+			},
+		});
+
+		store = rest.store;
+		await run(tools, 'ask_decision', question);
+		await run(tools, 'reword_decision', {
+			card: 'D1',
+			question: 'Which primary database?',
+			recommendation: 'Postgres',
+			choices: question.choices,
+		});
+
+		const latest = await store.log.latest('card-1');
+		expect(latest?.decision?.choiceId).toBe('pg');
+		expect(JSON.stringify(calls.at(-1)?.params.blocks)).toContain('planning_reopen');
+		expect(stringParam(calls.at(-1) ?? { params: {} }, 'text')).toContain('Postgres');
+	});
+
 	it('adds revision 2 and updates the card message', async () => {
 		const { store, calls, tools } = await setup();
 
@@ -299,12 +356,12 @@ describe('list_decisions', () => {
 		const { store, tools } = await setup();
 
 		await run(tools, 'ask_decision', question);
+		await decide(store, 'card-1');
 		await run(tools, 'ask_decision', {
 			question: 'Which cache?',
 			recommendation: 'Redis',
 		});
 
-		await decide(store, 'card-1');
 		await store.log.reopen({
 			cardId: 'card-1',
 			revision: 1,

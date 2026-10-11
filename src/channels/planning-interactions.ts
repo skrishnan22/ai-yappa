@@ -11,11 +11,11 @@ import {
 	decideModal,
 	parseDecideSubmission,
 	parseReopenValue,
-	renderCard,
 	REOPEN_ACTION,
 	type DecideSubmission,
 } from '../planning/card-blocks.ts';
 import type { Card, CardRevision, PlanningStore } from '../planning/decision-log.ts';
+import { redrawCard } from '../planning/redraw-card.ts';
 import { errorMessage } from '../json.ts';
 import type { SlackBotClient } from './slack-reply.ts';
 
@@ -40,9 +40,6 @@ export type PlanningInteractionDeps = {
 };
 
 type SubmissionErrors = { response_action: 'errors'; errors: Record<string, string> };
-
-// Redraws that see a newer state after their update draw again, at most this often.
-const REDRAW_ATTEMPTS = 3;
 
 const NOT_A_MEMBER = 'Yappa only works for members of this workspace.';
 
@@ -250,41 +247,20 @@ async function findCard(
 	return cards.find((card) => card.latest.cardId === revision.cardId);
 }
 
-// Redraws the card's current state and returns it. Never throws: the log is
-// authoritative, and a failed read or update must not stop the dispatch.
-// Concurrent redraws are unordered, so one may draw an older state over a
-// newer one; each re-reads after its update and draws again if the card moved.
+// A failed redraw must not stop continuation after a decision was saved.
 async function redraw(
 	revision: CardRevision,
 	deps: PlanningInteractionDeps,
 ): Promise<Card | undefined> {
-	let card: Card | undefined;
-
 	try {
-		for (let attempt = 0; attempt < REDRAW_ATTEMPTS; attempt++) {
-			card = await findCard(revision, deps);
+		const card = await redrawCard(revision, { log: deps.store.log, slack: deps.slack });
 
-			const messageTs = card?.latest.messageTs;
-
-			if (!card || !messageTs) return card;
-
-			const { text, blocks } = renderCard(card);
-
-			await deps.slack.chat.update({ channel: card.latest.channelId, ts: messageTs, text, blocks });
-
-			const current = await deps.store.log.latest(revision.cardId);
-
-			if (!current || sameState(current, card.latest)) return card;
-		}
+		return card;
 	} catch (error) {
 		console.warn(`[planning] Card ${revision.cardId} redraw failed: ${errorMessage(error)}`);
 	}
 
-	return card;
-}
-
-function sameState(a: CardRevision, b: CardRevision): boolean {
-	return a.revision === b.revision && Boolean(a.decision) === Boolean(b.decision);
+	return undefined;
 }
 
 // Dispatch bodies are model prompts: user and model text is quoted as-is.

@@ -47,10 +47,16 @@ const revisionRowSchema = v.object({
 const SQL = {
 	insertRevision: `INSERT INTO card_revisions
 		(card_id, revision, conversation_id, channel_id, thread_ts, message_ts, question, context, recommendation, choices, created_at)
-		VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+		SELECT ?1, 1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
+		WHERE NOT EXISTS (
+			SELECT 1 FROM card_revisions AS pending
+			WHERE pending.conversation_id = ?2 AND pending.decided_at IS NULL
+				AND pending.revision = (
+					SELECT MAX(revision) FROM card_revisions WHERE card_id = pending.card_id
+				)
+		)
 		RETURNING *`,
 	latest: 'SELECT * FROM card_revisions WHERE card_id = ?1 ORDER BY revision DESC LIMIT 1',
-	setMessageTs: 'UPDATE card_revisions SET message_ts = ?2 WHERE card_id = ?1',
 	decide: `UPDATE card_revisions
 		SET choice_id = ?3, custom_answer = ?4, reasoning = ?5, decided_by = ?6, decided_by_name = ?7, decided_at = ?8
 		WHERE card_id = ?1 AND revision = ?2 AND decided_at IS NULL
@@ -157,12 +163,13 @@ export function createD1PlanningStore(db: D1Database): PlanningStore {
 
 				const [row] = results;
 
-				if (!row) throw new Error(`Card ${card.cardId} was not stored`);
+				if (!row) {
+					throw new Error(
+						'A decision card is still open. Decide or reword it before asking another question.',
+					);
+				}
 
 				return readRevision(row);
-			},
-			async setMessageTs(cardId, messageTs) {
-				await db.prepare(SQL.setMessageTs).bind(cardId, messageTs).run();
 			},
 			latest,
 			async decide({ cardId, revision, decision }) {

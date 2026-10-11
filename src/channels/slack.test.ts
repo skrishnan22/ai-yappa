@@ -400,7 +400,6 @@ describe('Slack ingress', () => {
 			return {
 				log: {
 					ask: unused,
-					setMessageTs: unused,
 					latest: unused,
 					decide: unused,
 					reopen: unused,
@@ -509,6 +508,7 @@ describe('Slack ingress', () => {
 
 			await planning.log.ask({
 				cardId: 'card-1',
+				messageTs: '1710000000.000010',
 				conversationId,
 				channelId: CHANNEL_ID,
 				threadTs: THREAD_TS,
@@ -520,7 +520,6 @@ describe('Slack ingress', () => {
 				],
 				createdAt: '2026-10-10T10:00:00.000Z',
 			});
-			await planning.log.setMessageTs('card-1', '1710000000.000010');
 			const [card] = await planning.log.listCards(conversationId);
 
 			const view = {

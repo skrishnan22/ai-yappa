@@ -2,6 +2,7 @@
 
 import { Daytona } from '@daytona/sdk';
 import {
+	instrument,
 	observe,
 	useAgentFinish,
 	useAgentStart,
@@ -16,7 +17,7 @@ import {
 	type FlueObservation,
 } from '@flue/runtime';
 import * as v from 'valibot';
-import { errorMessage, jsonValueSchema } from '../json.ts';
+import { jsonValueSchema } from '../json.ts';
 import {
 	bindRunCard,
 	publishCardEvent,
@@ -26,7 +27,8 @@ import {
 import { replyInThread } from '../channels/slack-reply.ts';
 import { gitAuthorFromEnv, loadAgentEnv } from '../env.ts';
 import { INTEGRATION_CATALOG, resolveIntegrationCatalog } from '../integrations/mcp-catalog.ts';
-import { PLANNING_SKILL, planningStore } from '../planning/planning-store.ts';
+import { planningStore } from '../planning/planning-store.ts';
+import { createPlanningStartup } from '../planning/planning-startup.ts';
 import type { AuditRecord } from '../proxy/ops.ts';
 import { createContainerSandbox, daytona } from '../sandboxes/daytona.ts';
 import {
@@ -43,26 +45,13 @@ import { deliveredModelRoute } from './model-route.ts';
 import { PLANNING_REPLY_TOOLS, planningTools } from './planning-tools.ts';
 import { webSearchTools } from './web-search-tools.ts';
 
-observe(async (event, context) => {
-	// Queue the run-card event first: Flue does not await observers, so a
-	// D1 round trip before it would let a later tool_start overtake it.
+observe((event, context) => {
 	const cardEvent = cardEventFromObservation(event);
 
-	await Promise.all([
-		cardEvent ? publishCardEvent({ ...cardEvent, instanceId: context.id }) : undefined,
-		isPlanningActivation(event) ? startPlanningSession(context.id) : undefined,
-	]);
+	return cardEvent ? publishCardEvent({ ...cardEvent, instanceId: context.id }) : Promise.resolve();
 });
 
-// Activating the planning skill starts this conversation's Planning Session.
-// A failed start is logged; it must not reject the run-card work beside it.
-async function startPlanningSession(conversationId: string): Promise<void> {
-	try {
-		await planningStore()?.sessions.start(conversationId, new Date().toISOString());
-	} catch (error) {
-		console.error(`[planning] Session start failed for ${conversationId}: ${errorMessage(error)}`);
-	}
-}
+instrument(createPlanningStartup());
 
 const initialDataSchema = v.object({
 	channelId: v.string(),
@@ -253,17 +242,6 @@ export function hasSkillActivations(
 ): boolean {
 	return (
 		toolCalls.filter((call) => call.tool === 'activate_skill' && !call.isError).length >= required
-	);
-}
-
-const activateSkillArgsSchema = v.object({ name: v.string() });
-
-export function isPlanningActivation(event: FlueObservation): boolean {
-	return (
-		event.type === 'tool_start' &&
-		event.toolName === 'activate_skill' &&
-		v.is(activateSkillArgsSchema, event.args) &&
-		event.args.name === PLANNING_SKILL
 	);
 }
 

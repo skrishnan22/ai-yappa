@@ -70,8 +70,7 @@ async function setup(respond?: SlackApiResponder) {
 }
 
 async function seed(store: PlanningStore, overrides: Partial<NewCard> = {}) {
-	const card = await store.log.ask(newCard(overrides));
-	await store.log.setMessageTs(card.cardId, '2.0');
+	await store.log.ask(newCard({ messageTs: '2.0', ...overrides }));
 }
 
 function click(actionId: string, user: User = member, value = 'card-1'): SlackInteractionPayload {
