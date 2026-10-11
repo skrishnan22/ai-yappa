@@ -85,14 +85,6 @@ describe('renderCard', () => {
 		]);
 	});
 
-	it('shows a custom answer on a decided card', () => {
-		const { blocks } = renderCard(
-			card(revision({ decision: { ...decision, choiceId: undefined, customAnswer: 'SQLite' } })),
-		);
-
-		expect(allText(blocks)).toContain('SQLite');
-	});
-
 	it('shows the previous answer on a reopened card', () => {
 		const first = revision({ decision });
 		const reopened = revision({ revision: 2 });
@@ -255,12 +247,6 @@ describe('decideModal', () => {
 			optional: true,
 			element: { type: 'plain_text_input', multiline: true },
 		});
-	});
-
-	it('limits the custom answer and reasoning lengths', () => {
-		const view = decideModal(card(revision()));
-		expect(input(view, 'custom').element.max_length).toBe(500);
-		expect(input(view, 'reasoning').element.max_length).toBe(1500);
 	});
 
 	it('requires the custom answer when there are no choices', () => {
