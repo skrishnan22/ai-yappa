@@ -73,7 +73,11 @@ async function seed(store: PlanningStore, overrides: Partial<NewCard> = {}) {
 	await store.log.ask(newCard({ messageTs: '2.0', ...overrides }));
 }
 
-function click(actionId: string, user: User = member, value = 'card-1'): SlackInteractionPayload {
+function click(
+	actionId: string,
+	user: User = member,
+	value = JSON.stringify({ cardId: 'card-1', label: 'D1' }),
+): SlackInteractionPayload {
 	return {
 		type: 'block_actions',
 		team: { id: HOME_TEAM },
@@ -119,19 +123,45 @@ describe('handlePlanningInteraction', () => {
 		__resetSlackClientForTests();
 	});
 
-	it('opens the decide modal at the card’s current revision', async () => {
+	it('opens the current revision with the button label without loading conversation history', async () => {
 		const { store, calls, deps } = await setup();
 		await seed(store);
+		await store.log.reword({
+			cardId: 'card-1',
+			question: 'Which managed database?',
+			recommendation: 'D1',
+			createdAt: '2026-10-10T11:00:00.000Z',
+		});
+
+		const listCards = vi
+			.spyOn(store.log, 'listCards')
+			.mockRejectedValue(new Error('History is unavailable'));
 
 		await handlePlanningInteraction(click(DECIDE_ACTION), deps);
 
 		const open = calls.find((call) => call.method === 'views.open');
 
+		expect(open).toBeDefined();
 		expect(stringParam(open!, 'trigger_id')).toBe('trigger-1');
 		expect(open!.params.view).toMatchObject({
-			private_metadata: JSON.stringify({ cardId: 'card-1', revision: 1 }),
+			private_metadata: JSON.stringify({ cardId: 'card-1', revision: 2 }),
+			title: { text: 'Decide D1' },
 		});
+		expect(JSON.stringify(open!.params.view)).toContain('Which managed database?');
+		expect(listCards).not.toHaveBeenCalled();
 	});
+
+	it.each(['not-json', '{}', JSON.stringify({ cardId: 'card-1', label: 2 })])(
+		'ignores an invalid Decide button value: %s',
+		async (value) => {
+			const { store, calls, deps } = await setup();
+			await seed(store);
+
+			await handlePlanningInteraction(click(DECIDE_ACTION, member, value), deps);
+
+			expect(calls).toHaveLength(0);
+		},
+	);
 
 	it('redraws a decided card instead of opening the modal', async () => {
 		const { store, calls, deps } = await setup();
@@ -173,7 +203,13 @@ describe('handlePlanningInteraction', () => {
 			let acknowledged = false;
 
 			const response = handlePlanningInteraction(
-				click(actionId, member, actionId === REOPEN_ACTION ? 'card-1:0' : 'card-1'),
+				click(
+					actionId,
+					member,
+					actionId === REOPEN_ACTION
+						? 'card-1:0'
+						: JSON.stringify({ cardId: 'card-1', label: 'D1' }),
+				),
 				deps,
 			).then(() => {
 				acknowledged = true;

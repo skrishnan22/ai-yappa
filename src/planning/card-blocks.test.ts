@@ -66,7 +66,7 @@ describe('renderCard', () => {
 			{
 				type: 'button',
 				action_id: 'planning_decide',
-				value: 'card-1',
+				value: JSON.stringify({ cardId: 'card-1', label: 'D2' }),
 				text: { text: 'Decide…' },
 			},
 		]);
