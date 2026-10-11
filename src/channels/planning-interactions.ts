@@ -5,7 +5,6 @@ import type {
 	SlackViewSubmissionPayload,
 } from '@flue/slack';
 import {
-	answerText,
 	DECIDE_ACTION,
 	DECIDE_CALLBACK,
 	decideModal,
@@ -22,7 +21,7 @@ import type { SlackBotClient } from './slack-reply.ts';
 
 export type PlanningContinuation = {
 	conversationId: string;
-	type: 'planning.decision' | 'planning.reopen';
+	type: 'planning.decision';
 	eventId: string; // idempotency key
 	userId: string;
 	body: string;
@@ -139,18 +138,7 @@ async function onReopenClick(
 		return;
 	}
 
-	await Promise.all([
-		deps.defer(redraw(reopened, deps)),
-		deps.defer(
-			deps.continueConversation({
-				conversationId: reopened.conversationId,
-				type: 'planning.reopen',
-				eventId: `planning-reopen:${shown.cardId}:${reopened.revision}`,
-				userId: payload.user.id,
-				body: reopenBody(latest, payload.user.id),
-			}),
-		),
-	]);
+	await deps.defer(redraw(reopened, deps));
 }
 
 async function onDecideSubmission(
@@ -276,20 +264,10 @@ function decisionBody(
 	return [
 		`<@${userId}> decided ${revision.cardId} "${revision.question}": ${answer}`,
 		submission.reasoning ? `. Reasoning: "${submission.reasoning}"` : '',
+		revision.revision > 1 ? '. This answer supersedes any earlier answer for this question' : '',
 		'. This is their decision; do not replace it.',
-		' Check list_decisions for contradictions with earlier decisions and call any out before asking the next question.',
-	].join('');
-}
-
-// `earlier` is the decided revision the reopen replaced.
-function reopenBody(earlier: CardRevision, userId: string): string {
-	const decision = earlier.decision;
-
-	return [
-		`<@${userId}> reopened ${earlier.cardId} "${earlier.question}".`,
-		` Earlier answer: "${answerText(earlier) ?? ''}"`,
-		decision ? `, decided by <@${decision.decidedBy}>` : '',
-		decision?.reasoning ? ` (reasoning: "${decision.reasoning}")` : '',
-		'. Ask what needs reconsidering; do not pick a new answer yourself.',
+		' Call list_decisions and compare this answer with the latest answers for the other cards.',
+		' If there is a contradiction, explain which card conflicts and how, and ask whether to reopen it before moving on.',
+		' If there are no contradictions, continue with the follow-up or next question.',
 	].join('');
 }

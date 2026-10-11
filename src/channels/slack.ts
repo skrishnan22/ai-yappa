@@ -103,7 +103,7 @@ function planningSlackClient(token: string): SlackBotClient {
 	});
 }
 
-// A card decision or reopen continues an existing Coworker. No initialData: a
+// A card decision continues an existing Coworker. No initialData: a
 // continuation must never create a conversation.
 async function continuePlanning({
 	channel,
