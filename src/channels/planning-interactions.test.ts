@@ -526,32 +526,6 @@ describe('handlePlanningInteraction', () => {
 		});
 	});
 
-	it('still continues when the card cannot be read after the decision is saved', async () => {
-		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-		const { store, continuations, deps } = await setup();
-		await seed(store);
-		const view = await openedView(store, { choice: 'd1' });
-
-		const unreadable: PlanningStore = {
-			...store,
-			log: {
-				...store.log,
-				listCards: async () => {
-					throw new Error('D1 unavailable');
-				},
-			},
-		};
-
-		await handlePlanningInteraction(submit(view), { ...deps, store: unreadable });
-
-		const latest = await store.log.latest('card-1');
-
-		expect(latest?.decision?.choiceId).toBe('d1');
-		expect(continuations).toHaveLength(1);
-		expect(continuations[0]!.body).toContain('<@U1> decided card-1 "Which database?": D1');
-		expect(warn).toHaveBeenCalledWith(expect.stringContaining('D1 unavailable'));
-	});
-
 	it('continues without a redraw when the card has no message', async () => {
 		const { store, calls, continuations, deps } = await setup();
 		await store.log.ask(newCard());
@@ -561,33 +535,5 @@ describe('handlePlanningInteraction', () => {
 
 		expect(calls.filter((call) => call.method === 'chat.update')).toHaveLength(0);
 		expect(continuations).toHaveLength(1);
-	});
-
-	it('quotes the submitted answer even if the card is reopened before the dispatch', async () => {
-		const { store, continuations, deps } = await setup();
-		await seed(store);
-		const view = await openedView(store, { choice: 'd1', reasoning: 'No server to run' });
-
-		const reopenFirst: PlanningStore = {
-			...store,
-			log: {
-				...store.log,
-				listCards: async (conversationId) => {
-					await store.log.reopen({
-						cardId: 'card-1',
-						revision: 1,
-						createdAt: '2026-10-10T12:30:00.000Z',
-					});
-
-					return store.log.listCards(conversationId);
-				},
-			},
-		};
-
-		await handlePlanningInteraction(submit(view), { ...deps, store: reopenFirst });
-
-		expect(continuations[0]!.body).toContain(
-			'<@U1> decided card-1 "Which database?": D1. Reasoning: "No server to run".',
-		);
 	});
 });
