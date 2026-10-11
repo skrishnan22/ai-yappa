@@ -232,45 +232,34 @@ describe('handlePlanningInteraction', () => {
 		},
 	);
 
-	it.each(['decision', 'reopen'])(
-		'continues a saved %s while redraw is pending',
-		async (operation) => {
-			const started = Promise.withResolvers<void>();
-			const release = Promise.withResolvers<void>();
+	it('continues a saved decision while redraw is pending', async () => {
+		const started = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
 
-			const { store, continuations, deps } = await setup(async (call) => {
-				if (call.method === 'chat.update') {
-					started.resolve();
-					await release.promise;
-				}
-
-				return { ok: true };
-			});
-
-			await seed(store);
-
-			let payload: SlackInteractionPayload;
-
-			if (operation === 'decision') {
-				const view = await openedView(store, { choice: 'pg' });
-
-				payload = submit(view);
-			} else {
-				await store.log.decide({ cardId: 'card-1', revision: 1, decision: earlierDecision });
-				payload = click(REOPEN_ACTION, member, reopenValue(1));
+		const { store, continuations, deps } = await setup(async (call) => {
+			if (call.method === 'chat.update') {
+				started.resolve();
+				await release.promise;
 			}
 
-			const response = handlePlanningInteraction(payload, deps);
+			return { ok: true };
+		});
 
-			try {
-				await started.promise;
-				await vi.waitFor(() => expect(continuations).toHaveLength(1), { timeout: 200 });
-			} finally {
-				release.resolve();
-				await response;
-			}
-		},
-	);
+		await seed(store);
+
+		const view = await openedView(store, { choice: 'pg' });
+		const payload = submit(view);
+
+		const response = handlePlanningInteraction(payload, deps);
+
+		try {
+			await started.promise;
+			await vi.waitFor(() => expect(continuations).toHaveLength(1), { timeout: 200 });
+		} finally {
+			release.resolve();
+			await response;
+		}
+	});
 
 	it('records a chosen option, redraws, and continues once', async () => {
 		const { store, calls, continuations, deps } = await setup();
@@ -415,7 +404,7 @@ describe('handlePlanningInteraction', () => {
 		});
 	});
 
-	it('reopens a decided card, redraws it, and continues', async () => {
+	it('reopens quietly, then dispatches the replacement decision for a contradiction check', async () => {
 		const { store, calls, continuations, deps } = await setup();
 		await seed(store);
 		await store.log.decide({ cardId: 'card-1', revision: 1, decision: earlierDecision });
@@ -432,14 +421,24 @@ describe('handlePlanningInteraction', () => {
 		const update = calls.find((call) => call.method === 'chat.update');
 
 		expect(JSON.stringify(update!.params.blocks)).toContain('Previously: Postgres');
+		expect(continuations).toHaveLength(0);
+
+		const view = await openedView(store, { choice: 'd1', reasoning: 'Avoid running a server' });
+		await handlePlanningInteraction(submit(view), deps);
+
+		expect((await store.log.latest('card-1'))?.decision?.choiceId).toBe('d1');
+		const [card] = await store.log.listCards('conv-1');
+		expect(card?.history[0]?.decision?.choiceId).toBe('pg');
 		expect(continuations).toHaveLength(1);
 		expect(continuations[0]).toMatchObject({
-			type: 'planning.reopen',
-			eventId: 'planning-reopen:card-1:2',
-			userId: 'U2',
+			type: 'planning.decision',
+			eventId: 'planning-decide:card-1:2',
 		});
+		expect(continuations[0]!.body).toContain('"Which database?": D1');
+		expect(continuations[0]!.body).toContain('supersedes any earlier answer for this question');
+		expect(continuations[0]!.body).toContain('latest answers for the other cards');
 		expect(continuations[0]!.body).toContain(
-			'<@U2> reopened card-1 "Which database?". Earlier answer: "Postgres", decided by <@U1> (reasoning: "We run it already").',
+			'If there are no contradictions, continue with the follow-up',
 		);
 	});
 
@@ -512,7 +511,7 @@ describe('handlePlanningInteraction', () => {
 			expect(warn).toHaveBeenCalledWith(expect.stringContaining('message_not_found'));
 		});
 
-		it('still continues after a reopen', async () => {
+		it('keeps a reopen saved and quiet when redraw fails', async () => {
 			const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 			const { store, continuations, deps } = await setup(failUpdate);
 			await seed(store);
@@ -520,8 +519,9 @@ describe('handlePlanningInteraction', () => {
 
 			await handlePlanningInteraction(click(REOPEN_ACTION, member, reopenValue(1)), deps);
 
-			expect(continuations).toHaveLength(1);
-			expect(continuations[0]!.type).toBe('planning.reopen');
+			expect((await store.log.latest('card-1'))?.revision).toBe(2);
+			expect((await store.log.latest('card-1'))?.decision).toBeUndefined();
+			expect(continuations).toHaveLength(0);
 			expect(warn).toHaveBeenCalledWith(expect.stringContaining('message_not_found'));
 		});
 	});

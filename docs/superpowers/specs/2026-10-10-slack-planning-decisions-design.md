@@ -97,7 +97,12 @@ Operations:
 - **Rewording** by Yappa also inserts a new revision, so a modal opened on the old
   wording is refused.
 
-Reopening also dispatches Yappa to explain what needs reconsideration.
+Reopening only saves the new open revision and redraws the card; it does not
+dispatch Yappa. People can discuss it quietly or mention Yappa for help. When
+they decide again, Yappa receives the replacement answer, treats it as superseding
+the previous answer for that question, and checks it against the latest answers
+for other cards. It explains any contradiction and asks whether to reopen the
+conflicting card before moving on; otherwise it continues with the follow-up.
 
 Readers:
 
