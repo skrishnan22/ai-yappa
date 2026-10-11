@@ -1,7 +1,7 @@
 # Slack planning with reversible decisions
 
 Date: 2026-10-10
-Status: UX and data model agreed in chat; spec ready for review. Not implemented.
+Status: Implemented on `t3code/slack-planning-decisions` (plan `docs/superpowers/plans/2026-10-10-slack-planning-decisions.md`, ADR 0023). Live Slack acceptance pending.
 
 This replaces the question/voting workflow in
 `2026-10-04-skills-and-grill-me-design.md` and the remaining question-controls,
@@ -36,7 +36,9 @@ depend on an open card or participant count. An @mention invites Yappa to
 research, clarify, revise a question, or help with the plan, without recording a
 decision.
 
-Yappa normally asks one question at a time. Each decision card has a stable ID,
+Yappa may ask a new question only when every existing card is decided, including
+cards that people reopened. Reopening an existing card remains allowed while
+another is open. Each decision card has a stable ID,
 question, necessary context, recommendation, and optional choices. **Decide…**
 opens a Slack modal where a person selects an option or writes a custom answer,
 with optional reasoning. Questions without choices use the same custom-answer
@@ -82,7 +84,9 @@ and no separate decisions table.
 
 Operations:
 
-- **Ask** inserts revision 1.
+- **Ask** inserts revision 1 only if no card in the conversation is unanswered.
+  The check and insert are one SQL statement, so concurrent asks cannot both
+  create unanswered cards. A card posted before a refused insert is withdrawn.
 - **Decide** sets the decision on the revision the modal was opened at, only if
   that row is undecided. Zero changed rows means the card was already decided,
   reopened, or reworded since the modal opened, or the Slack event is a replay;
@@ -93,7 +97,12 @@ Operations:
 - **Rewording** by Yappa also inserts a new revision, so a modal opened on the old
   wording is refused.
 
-Reopening also dispatches Yappa to explain what needs reconsideration.
+Reopening only saves the new open revision and redraws the card; it does not
+dispatch Yappa. People can discuss it quietly or mention Yappa for help. When
+they decide again, Yappa receives the replacement answer, treats it as superseding
+the previous answer for that question, and checks it against the latest answers
+for other cards. It explains any contradiction and asks whether to reopen the
+conflicting card before moving on; otherwise it continues with the follow-up.
 
 Readers:
 

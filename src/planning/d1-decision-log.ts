@@ -4,9 +4,16 @@ import type { D1Database, D1Statement } from '../memory/d1.ts';
 import type { CardRevision, CardWording, PlanningStore } from './decision-log.ts';
 
 // Decisions store only the choice id, so ids must be unique within a card.
+// Ids become Slack option values, which Slack caps at 150 characters.
 // Applied on write and on read, so every stored card stays readable.
-const choicesSchema = v.pipe(
-	v.array(v.object({ id: v.string(), label: v.string() })),
+export const choicesSchema = v.pipe(
+	v.array(
+		v.object({
+			id: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
+			// A blank label renders as an empty Decide option.
+			label: v.pipe(v.string(), v.trim(), v.minLength(1)),
+		}),
+	),
 	v.minLength(2),
 	v.maxLength(5),
 	v.check(
@@ -40,10 +47,16 @@ const revisionRowSchema = v.object({
 const SQL = {
 	insertRevision: `INSERT INTO card_revisions
 		(card_id, revision, conversation_id, channel_id, thread_ts, message_ts, question, context, recommendation, choices, created_at)
-		VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+		SELECT ?1, 1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
+		WHERE NOT EXISTS (
+			SELECT 1 FROM card_revisions AS pending
+			WHERE pending.conversation_id = ?2 AND pending.decided_at IS NULL
+				AND pending.revision = (
+					SELECT MAX(revision) FROM card_revisions WHERE card_id = pending.card_id
+				)
+		)
 		RETURNING *`,
 	latest: 'SELECT * FROM card_revisions WHERE card_id = ?1 ORDER BY revision DESC LIMIT 1',
-	setMessageTs: 'UPDATE card_revisions SET message_ts = ?2 WHERE card_id = ?1',
 	decide: `UPDATE card_revisions
 		SET choice_id = ?3, custom_answer = ?4, reasoning = ?5, decided_by = ?6, decided_by_name = ?7, decided_at = ?8
 		WHERE card_id = ?1 AND revision = ?2 AND decided_at IS NULL
@@ -150,12 +163,13 @@ export function createD1PlanningStore(db: D1Database): PlanningStore {
 
 				const [row] = results;
 
-				if (!row) throw new Error(`Card ${card.cardId} was not stored`);
+				if (!row) {
+					throw new Error(
+						'A decision card is still open. Decide or reword it before asking another question.',
+					);
+				}
 
 				return readRevision(row);
-			},
-			async setMessageTs(cardId, messageTs) {
-				await db.prepare(SQL.setMessageTs).bind(cardId, messageTs).run();
 			},
 			latest,
 			async decide({ cardId, revision, decision }) {

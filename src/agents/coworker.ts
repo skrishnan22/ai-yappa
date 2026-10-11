@@ -2,6 +2,7 @@
 
 import { Daytona } from '@daytona/sdk';
 import {
+	instrument,
 	observe,
 	useAgentFinish,
 	useAgentStart,
@@ -26,6 +27,8 @@ import {
 import { replyInThread } from '../channels/slack-reply.ts';
 import { gitAuthorFromEnv, loadAgentEnv } from '../env.ts';
 import { INTEGRATION_CATALOG, resolveIntegrationCatalog } from '../integrations/mcp-catalog.ts';
+import { planningStore } from '../planning/planning-store.ts';
+import { createPlanningStartup } from '../planning/planning-startup.ts';
 import type { AuditRecord } from '../proxy/ops.ts';
 import { createContainerSandbox, daytona } from '../sandboxes/daytona.ts';
 import {
@@ -39,15 +42,16 @@ import { invokedSkills } from '../skills/invocation.ts';
 import { githubTools } from './github-tools.ts';
 import { coworkerModel, modelChoiceSchema } from './model-choice.ts';
 import { deliveredModelRoute } from './model-route.ts';
+import { PLANNING_REPLY_TOOLS, planningTools } from './planning-tools.ts';
 import { webSearchTools } from './web-search-tools.ts';
 
 observe((event, context) => {
 	const cardEvent = cardEventFromObservation(event);
 
-	if (!cardEvent) return Promise.resolve();
-
-	return publishCardEvent({ ...cardEvent, instanceId: context.id });
+	return cardEvent ? publishCardEvent({ ...cardEvent, instanceId: context.id }) : Promise.resolve();
 });
+
+instrument(createPlanningStartup());
 
 const initialDataSchema = v.object({
 	channelId: v.string(),
@@ -79,8 +83,25 @@ export function Coworker(props: { id: string }) {
 	const agentEnv = loadAgentEnv();
 
 	useTool(replyInThread(data, agentEnv.SLACK_BOT_TOKEN));
+
+	// Absent under `flue run`: only the Worker entry sets the store.
+	const planning = planningStore();
+
+	if (planning) {
+		for (const tool of planningTools({
+			conversationId: props.id,
+			channelId: data.channelId,
+			threadTs: data.threadTs,
+			token: agentEnv.SLACK_BOT_TOKEN,
+			store: planning,
+		})) {
+			useTool(tool);
+		}
+	}
+
 	// Assistant text never reaches Slack. If the model would stop without a
-	// non-error reply_in_slack_thread call, send it back to work in this response.
+	// non-error reply_in_slack_thread call (or a posted decision card or
+	// summary), send it back to work in this response.
 	useAgentFinish(({ response, append }) => {
 		if (hasSuccessfulSlackReply(response.toolCalls)) return;
 		append({
@@ -227,7 +248,11 @@ export function hasSkillActivations(
 export function hasSuccessfulSlackReply(
 	toolCalls: readonly { tool: string; isError: boolean }[],
 ): boolean {
-	return toolCalls.some((call) => call.tool === 'reply_in_slack_thread' && !call.isError);
+	return toolCalls.some(
+		(call) =>
+			!call.isError &&
+			(call.tool === 'reply_in_slack_thread' || PLANNING_REPLY_TOOLS.has(call.tool)),
+	);
 }
 
 function cardEventFromObservation(event: FlueObservation): CardEvent | undefined {

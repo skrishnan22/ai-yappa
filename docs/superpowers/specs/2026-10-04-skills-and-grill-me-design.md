@@ -1,6 +1,6 @@
 # Skills and `/grill-me`
 
-Status: design approved in chat, pending spec review
+Status: design approved in chat, pending spec review. The voting, solo/group, Submit, participant, and question-controls phases are superseded by `2026-10-10-slack-planning-decisions-design.md`.
 Date: 2026-10-04
 
 ## Goal

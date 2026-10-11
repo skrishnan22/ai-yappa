@@ -13,16 +13,26 @@ const OPTION_TEXT_MAX = 75;
 // One summary message; Slack truncates message text past 40,000 characters.
 const SUMMARY_MESSAGE_MAX = 3500;
 
-// The Reopen button names the revision it shows, so a stale button cannot
-// reopen a later decision.
-export function reopenValue(revision: CardRevision): string {
-	return `${revision.cardId}:${revision.revision}`;
-}
+// Buttons carry what they showed: Reopen names its revision, so a stale button
+// cannot reopen a later decision; Decide carries the label for the modal title.
+const shownRevisionSchema = v.pipe(
+	v.string(),
+	v.parseJson(),
+	v.object({ cardId: v.string(), revision: v.number() }),
+);
+
+const decideValueSchema = v.pipe(
+	v.string(),
+	v.parseJson(),
+	v.object({ cardId: v.string(), label: v.string() }),
+);
 
 export function parseReopenValue(value: string): { cardId: string; revision: number } | undefined {
-	const match = /^(.+):(\d+)$/.exec(value);
+	return parsed(shownRevisionSchema, value);
+}
 
-	return match?.[1] && match[2] ? { cardId: match[1], revision: Number(match[2]) } : undefined;
+export function parseDecideValue(value: string): { cardId: string; label: string } | undefined {
+	return parsed(decideValueSchema, value);
 }
 
 // Choice label, or the custom answer, of a decided revision.
@@ -74,37 +84,28 @@ export function renderCard(card: Card): CardRender {
 		if (decision.reasoning) lines.push(escapeMrkdwn(decision.reasoning));
 		lines.push(`Decided by <@${decision.decidedBy}> ${slackDate(decision.decidedAt)}`);
 		blocks.push(sectionBlock(lines.join('\n')));
-		blocks.push({
-			type: 'actions',
-			elements: [
-				{
-					type: 'button',
-					action_id: REOPEN_ACTION,
-					value: reopenValue(latest),
-					text: { type: 'plain_text', text: 'Reopen' },
-				},
-			],
-		});
+		blocks.push(
+			buttonBlock({
+				action_id: REOPEN_ACTION,
+				value: JSON.stringify({ cardId: latest.cardId, revision: latest.revision }),
+				text: 'Reopen',
+			}),
+		);
 	} else {
-		blocks.push({
-			type: 'actions',
-			elements: [
-				{
-					type: 'button',
-					action_id: DECIDE_ACTION,
-					value: latest.cardId,
-					style: 'primary',
-					text: { type: 'plain_text', text: 'Decide…' },
-				},
-			],
-		});
+		blocks.push(
+			buttonBlock({
+				action_id: DECIDE_ACTION,
+				value: JSON.stringify({ cardId: latest.cardId, label }),
+				text: 'Decide…',
+				style: 'primary',
+			}),
+		);
 	}
 
 	return { text, blocks };
 }
 
-export function decideModal(card: Card): ModalView {
-	const { latest } = card;
+export function decideModal({ latest, label }: Pick<Card, 'latest' | 'label'>): ModalView {
 	const choices = latest.choices ?? [];
 
 	const blocks: KnownBlock[] = [
@@ -158,7 +159,7 @@ export function decideModal(card: Card): ModalView {
 		type: 'modal',
 		callback_id: DECIDE_CALLBACK,
 		private_metadata: JSON.stringify({ cardId: latest.cardId, revision: latest.revision }),
-		title: { type: 'plain_text', text: clip(`Decide ${card.label}`, 24) },
+		title: { type: 'plain_text', text: clip(`Decide ${label}`, 24) },
 		submit: { type: 'plain_text', text: 'Decide' },
 		close: { type: 'plain_text', text: 'Cancel' },
 		blocks,
@@ -186,8 +187,6 @@ const viewSchema = v.object({
 	}),
 });
 
-const metadataSchema = v.object({ cardId: v.string(), revision: v.number() });
-
 // `view` is the raw Slack payload; viewSchema parses it at this boundary.
 export function parseDecideSubmission(
 	// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- raw Slack view payload
@@ -196,7 +195,7 @@ export function parseDecideSubmission(
 	const parsedView = v.safeParse(viewSchema, view);
 
 	const metadata = parsedView.success
-		? parseMetadata(parsedView.output.private_metadata)
+		? parsed(shownRevisionSchema, parsedView.output.private_metadata)
 		: undefined;
 
 	if (!parsedView.success || !metadata) {
@@ -225,14 +224,14 @@ export function parseDecideSubmission(
 	};
 }
 
-function parseMetadata(raw: string): v.InferOutput<typeof metadataSchema> | undefined {
-	try {
-		const parsed = v.safeParse(metadataSchema, JSON.parse(raw));
+// Button values and modal metadata are JSON strings Slack hands back as-is.
+function parsed<S extends v.GenericSchema<string, unknown>>(
+	schema: S,
+	value: string,
+): v.InferOutput<S> | undefined {
+	const result = v.safeParse(schema, value);
 
-		return parsed.success ? parsed.output : undefined;
-	} catch {
-		return undefined;
-	}
+	return result.success ? result.output : undefined;
 }
 
 // One or more messages, in order; every card keeps its entry.
@@ -332,6 +331,18 @@ function escapeMrkdwn(value: string): string {
 // Slack rejects section text over 3000 chars and context text over 2000, after the decision is saved.
 function sectionBlock(text: string): KnownBlock {
 	return { type: 'section', text: { type: 'mrkdwn', text: clip(text, 2900) } };
+}
+
+function buttonBlock(button: {
+	action_id: string;
+	value: string;
+	text: string;
+	style?: 'primary';
+}): KnownBlock {
+	return {
+		type: 'actions',
+		elements: [{ type: 'button', ...button, text: { type: 'plain_text', text: button.text } }],
+	};
 }
 
 function contextBlock(text: string): KnownBlock {

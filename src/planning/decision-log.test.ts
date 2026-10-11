@@ -38,6 +38,23 @@ async function openStore() {
 }
 
 describe('decision log', () => {
+	it('accepts only one unanswered question from concurrent asks', async () => {
+		const { log } = await openStore();
+
+		const results = await Promise.allSettled([
+			log.ask(newCard({ cardId: 'first' })),
+			log.ask(newCard({ cardId: 'second' })),
+		]);
+
+		expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+		const cards = await log.listCards('conv-1');
+		expect(cards).toHaveLength(1);
+		await log.decide({ cardId: cards[0]!.latest.cardId, revision: 1, decision });
+		await log.ask(newCard({ cardId: 'next' }));
+		const afterDecision = await log.listCards('conv-1');
+		expect(afterDecision).toHaveLength(2);
+	});
+
 	it('round-trips a card with context and choices', async () => {
 		const { log } = await openStore();
 
@@ -217,17 +234,16 @@ describe('decision log', () => {
 		expect(reworded).toBe(undefined);
 	});
 
-	it('sets the message timestamp on every revision and carries it forward', async () => {
+	it('carries the original message timestamp through reword and reopen', async () => {
 		const { log } = await openStore();
 
-		await log.ask(newCard());
+		await log.ask(newCard({ messageTs: '9.9' }));
 		await log.reword({
 			cardId: 'card-1',
 			createdAt: '2026-01-01T00:30:00.000Z',
 			question: 'Which database?',
 			recommendation: 'Use D1.',
 		});
-		await log.setMessageTs('card-1', '9.9');
 
 		const [card] = await log.listCards('conv-1');
 
@@ -253,6 +269,7 @@ describe('decision log', () => {
 		const { log } = await openStore();
 
 		await log.ask(newCard({ cardId: 'second', createdAt: '2026-01-01T00:00:02.000Z' }));
+		await log.decide({ cardId: 'second', revision: 1, decision });
 		await log.ask(newCard({ cardId: 'first', createdAt: '2026-01-01T00:00:01.000Z' }));
 		await log.ask(newCard({ cardId: 'other', conversationId: 'conv-2' }));
 

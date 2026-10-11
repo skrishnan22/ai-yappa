@@ -41,8 +41,7 @@ export type NewCard = CardWording & {
 };
 
 export type DecisionLog = {
-	ask(card: NewCard): Promise<CardRevision>; // inserts revision 1
-	setMessageTs(cardId: string, messageTs: string): Promise<void>; // every revision of the card
+	ask(card: NewCard): Promise<CardRevision>; // inserts revision 1 only if no card is unanswered
 	latest(cardId: string): Promise<CardRevision | undefined>;
 	// First wins: true only if `revision` is the card's latest and is undecided.
 	decide(args: { cardId: string; revision: number; decision: Decision }): Promise<boolean>;
