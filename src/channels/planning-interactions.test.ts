@@ -145,6 +145,93 @@ describe('handlePlanningInteraction', () => {
 		expect(JSON.stringify(calls[0]!.params.blocks)).toContain(REOPEN_ACTION);
 	});
 
+	it.each([DECIDE_ACTION, REOPEN_ACTION])(
+		'acknowledges a stale %s click before redraw finishes',
+		async (actionId) => {
+			const started = Promise.withResolvers<void>();
+			const release = Promise.withResolvers<void>();
+			const work: Promise<void>[] = [];
+
+			const { store, deps } = await setup(async (call) => {
+				if (call.method === 'chat.update') {
+					started.resolve();
+					await release.promise;
+				}
+
+				return { ok: true };
+			});
+
+			await seed(store);
+			await store.log.decide({ cardId: 'card-1', revision: 1, decision: earlierDecision });
+
+			deps.defer = (pending) => {
+				work.push(pending);
+
+				return Promise.resolve();
+			};
+
+			let acknowledged = false;
+
+			const response = handlePlanningInteraction(
+				click(actionId, member, actionId === REOPEN_ACTION ? 'card-1:0' : 'card-1'),
+				deps,
+			).then(() => {
+				acknowledged = true;
+
+				return undefined;
+			});
+
+			try {
+				await started.promise;
+				await vi.waitFor(() => expect(acknowledged).toBe(true), { timeout: 200 });
+			} finally {
+				release.resolve();
+				await response;
+				await Promise.all(work);
+			}
+		},
+	);
+
+	it.each(['decision', 'reopen'])(
+		'continues a saved %s while redraw is pending',
+		async (operation) => {
+			const started = Promise.withResolvers<void>();
+			const release = Promise.withResolvers<void>();
+
+			const { store, continuations, deps } = await setup(async (call) => {
+				if (call.method === 'chat.update') {
+					started.resolve();
+					await release.promise;
+				}
+
+				return { ok: true };
+			});
+
+			await seed(store);
+
+			let payload: SlackInteractionPayload;
+
+			if (operation === 'decision') {
+				const view = await openedView(store, { choice: 'pg' });
+
+				payload = submit(view);
+			} else {
+				await store.log.decide({ cardId: 'card-1', revision: 1, decision: earlierDecision });
+				payload = click(REOPEN_ACTION, member, 'card-1:1');
+			}
+
+			const response = handlePlanningInteraction(payload, deps);
+
+			try {
+				await started.promise;
+				await vi.waitFor(() => expect(continuations).toHaveLength(1), { timeout: 200 });
+			} finally {
+				release.resolve();
+				await response;
+			}
+		},
+	);
+
 	it('records a chosen option, redraws, and continues once', async () => {
 		const { store, calls, continuations, deps } = await setup();
 		await seed(store);
@@ -167,13 +254,11 @@ describe('handlePlanningInteraction', () => {
 		expect(continuations).toHaveLength(1);
 		expect(continuations[0]).toMatchObject({
 			conversationId: 'conv-1',
-			channelId: 'C1',
-			threadTs: '1.0',
 			type: 'planning.decision',
 			eventId: 'planning-decide:card-1:1',
 			userId: 'U1',
 		});
-		expect(continuations[0]!.body).toContain('<@U1> decided D1 "Which database?": D1');
+		expect(continuations[0]!.body).toContain('<@U1> decided card-1 "Which database?": D1');
 		expect(continuations[0]!.body).toContain('Reasoning: "No server to run"');
 	});
 
@@ -314,7 +399,7 @@ describe('handlePlanningInteraction', () => {
 			userId: 'U2',
 		});
 		expect(continuations[0]!.body).toContain(
-			'<@U2> reopened D1 "Which database?". Earlier answer: "Postgres", decided by <@U1> (reasoning: "We run it already").',
+			'<@U2> reopened card-1 "Which database?". Earlier answer: "Postgres", decided by <@U1> (reasoning: "We run it already").',
 		);
 	});
 
@@ -454,7 +539,7 @@ describe('handlePlanningInteraction', () => {
 
 		expect(latest?.decision?.choiceId).toBe('d1');
 		expect(continuations).toHaveLength(1);
-		expect(continuations[0]!.body).toContain('<@U1> decided a card "Which database?": D1');
+		expect(continuations[0]!.body).toContain('<@U1> decided card-1 "Which database?": D1');
 		expect(warn).toHaveBeenCalledWith(expect.stringContaining('D1 unavailable'));
 	});
 
@@ -493,7 +578,7 @@ describe('handlePlanningInteraction', () => {
 		await handlePlanningInteraction(submit(view), { ...deps, store: reopenFirst });
 
 		expect(continuations[0]!.body).toContain(
-			'<@U1> decided D1 "Which database?": D1. Reasoning: "No server to run".',
+			'<@U1> decided card-1 "Which database?": D1. Reasoning: "No server to run".',
 		);
 	});
 });

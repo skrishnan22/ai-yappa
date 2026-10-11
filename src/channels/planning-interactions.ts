@@ -5,25 +5,23 @@ import type {
 	SlackViewSubmissionPayload,
 } from '@flue/slack';
 import {
-	answerText,
 	DECIDE_ACTION,
 	DECIDE_CALLBACK,
 	decideModal,
 	parseDecideSubmission,
+	parseDecideValue,
 	parseReopenValue,
 	REOPEN_ACTION,
 	type DecideSubmission,
 } from '../planning/card-blocks.ts';
-import type { Card, CardRevision, PlanningStore } from '../planning/decision-log.ts';
+import type { CardRevision, PlanningStore } from '../planning/decision-log.ts';
 import { redrawCard } from '../planning/redraw-card.ts';
 import { errorMessage } from '../json.ts';
 import type { SlackBotClient } from './slack-reply.ts';
 
 export type PlanningContinuation = {
 	conversationId: string;
-	channelId: string;
-	threadTs: string;
-	type: 'planning.decision' | 'planning.reopen';
+	type: 'planning.decision';
 	eventId: string; // idempotency key
 	userId: string;
 	body: string;
@@ -75,30 +73,36 @@ export async function handlePlanningInteraction(
 
 async function onDecideClick(
 	payload: SlackBlockActionsPayload,
-	cardId: string,
+	value: string,
 	deps: PlanningInteractionDeps,
 ): Promise<void> {
+	const shown = parseDecideValue(value);
+
+	if (!shown) return;
+	const { cardId, label } = shown;
+
 	const latest = await deps.store.log.latest(cardId);
 
 	if (!latest) return;
 
 	if (!isMember(payload.user, latest, deps)) {
-		await refuse(payload.user, latest, deps);
+		await deps.defer(refuse(payload.user, latest, deps));
 
 		return;
 	}
 
 	if (latest.decision) {
-		await redraw(latest, deps);
+		await deps.defer(redraw(latest, deps));
 
 		return;
 	}
 
-	const card = await findCard(latest, deps);
+	if (!payload.trigger_id) return;
 
-	if (!card || !payload.trigger_id) return;
-
-	await deps.slack.views.open({ trigger_id: payload.trigger_id, view: decideModal(card) });
+	await deps.slack.views.open({
+		trigger_id: payload.trigger_id,
+		view: decideModal({ latest, label }),
+	});
 }
 
 async function onReopenClick(
@@ -115,7 +119,7 @@ async function onReopenClick(
 	if (!latest) return;
 
 	if (!isMember(payload.user, latest, deps)) {
-		await refuse(payload.user, latest, deps);
+		await deps.defer(refuse(payload.user, latest, deps));
 
 		return;
 	}
@@ -129,24 +133,12 @@ async function onReopenClick(
 	});
 
 	if (!reopened) {
-		await redraw(latest, deps);
+		await deps.defer(redraw(latest, deps));
 
 		return;
 	}
 
-	await deps.defer(
-		(async () => {
-			const card = await redraw(reopened, deps);
-
-			await deps.continueConversation({
-				...threadOf(reopened),
-				type: 'planning.reopen',
-				eventId: `planning-reopen:${shown.cardId}:${reopened.revision}`,
-				userId: payload.user.id,
-				body: reopenBody(card?.label, latest, payload.user.id),
-			});
-		})(),
-	);
+	await deps.defer(redraw(reopened, deps));
 }
 
 async function onDecideSubmission(
@@ -186,24 +178,23 @@ async function onDecideSubmission(
 	});
 
 	if (!decided) {
-		await deps.defer(redraw(latest, deps).then(() => undefined));
+		await deps.defer(redraw(latest, deps));
 
 		return reasoningError(CARD_CHANGED);
 	}
 
-	await deps.defer(
-		(async () => {
-			const card = await redraw(latest, deps);
-
-			await deps.continueConversation({
-				...threadOf(latest),
+	await Promise.all([
+		deps.defer(redraw(latest, deps)),
+		deps.defer(
+			deps.continueConversation({
+				conversationId: latest.conversationId,
 				type: 'planning.decision',
 				eventId: `planning-decide:${submission.cardId}:${submission.revision}`,
 				userId: payload.user.id,
-				body: decisionBody(card?.label, latest, submission, payload.user.id),
-			});
-		})(),
-	);
+				body: decisionBody(latest, submission, payload.user.id),
+			}),
+		),
+	]);
 
 	return undefined;
 }
@@ -229,45 +220,18 @@ function reasoningError(message: string): SubmissionErrors {
 	return { response_action: 'errors', errors: { reasoning: message } };
 }
 
-function threadOf(card: CardRevision) {
-	return {
-		conversationId: card.conversationId,
-		channelId: card.channelId,
-		threadTs: card.threadTs,
-	};
-}
-
-// Read through listCards so the redraw has the card's label and history.
-async function findCard(
-	revision: CardRevision,
-	deps: PlanningInteractionDeps,
-): Promise<Card | undefined> {
-	const cards = await deps.store.log.listCards(revision.conversationId);
-
-	return cards.find((card) => card.latest.cardId === revision.cardId);
-}
-
 // A failed redraw must not stop continuation after a decision was saved.
-async function redraw(
-	revision: CardRevision,
-	deps: PlanningInteractionDeps,
-): Promise<Card | undefined> {
+async function redraw(revision: CardRevision, deps: PlanningInteractionDeps): Promise<void> {
 	try {
-		const card = await redrawCard(revision, { log: deps.store.log, slack: deps.slack });
-
-		return card;
+		await redrawCard(revision, { log: deps.store.log, slack: deps.slack });
 	} catch (error) {
 		console.warn(`[planning] Card ${revision.cardId} redraw failed: ${errorMessage(error)}`);
 	}
-
-	return undefined;
 }
 
 // Dispatch bodies are model prompts: user and model text is quoted as-is.
 // Built from what was submitted, not re-read, so a later reopen cannot blank the answer.
-// Without a label (the redraw read failed), the question still names the card.
 function decisionBody(
-	label = 'a card',
 	revision: CardRevision,
 	submission: DecideSubmission,
 	userId: string,
@@ -278,22 +242,12 @@ function decisionBody(
 		'';
 
 	return [
-		`<@${userId}> decided ${label} "${revision.question}": ${answer}`,
+		`<@${userId}> decided ${revision.cardId} "${revision.question}": ${answer}`,
 		submission.reasoning ? `. Reasoning: "${submission.reasoning}"` : '',
+		revision.revision > 1 ? '. This answer supersedes any earlier answer for this question' : '',
 		'. This is their decision; do not replace it.',
-		' Check list_decisions for contradictions with earlier decisions and call any out before asking the next question.',
-	].join('');
-}
-
-// `earlier` is the decided revision the reopen replaced.
-function reopenBody(label = 'a card', earlier: CardRevision, userId: string): string {
-	const decision = earlier.decision;
-
-	return [
-		`<@${userId}> reopened ${label} "${earlier.question}".`,
-		` Earlier answer: "${answerText(earlier) ?? ''}"`,
-		decision ? `, decided by <@${decision.decidedBy}>` : '',
-		decision?.reasoning ? ` (reasoning: "${decision.reasoning}")` : '',
-		'. Ask what needs reconsidering; do not pick a new answer yourself.',
+		' Call list_decisions and compare this answer with the latest answers for the other cards.',
+		' If there is a contradiction, explain which card conflicts and how, and ask whether to reopen it before moving on.',
+		' If there are no contradictions, continue with the follow-up or next question.',
 	].join('');
 }

@@ -493,71 +493,93 @@ describe('Slack ingress', () => {
 			expect(dispatchRequests).toHaveLength(1);
 		});
 
-		test('a decide submission records the decision and continues the conversation', async () => {
-			const { runtime, dispatchRequests } = recordingRuntime();
-			stubSlackApi(async () => ({ ok: true, messages: [] }));
-			const db = await openTestDatabase();
-			const planning = createD1PlanningStore(db);
-			const channel = createSlackChannelForEnv(env, codexAuth, runtime, planning);
+		test.each(['available', 'rate-limited', 'unresponsive'])(
+			'a decide submission continues when Slack history is %s',
+			async (history) => {
+				const { runtime, dispatchRequests } = recordingRuntime();
+				stubSlackApi(async () => ({ ok: true, messages: [] }));
+				const network = globalThis.fetch;
 
-			const conversationId = channel.instanceId({
-				teamId: WORKSPACE_TEAM,
-				channelId: CHANNEL_ID,
-				threadTs: THREAD_TS,
-			});
+				vi.stubGlobal('fetch', (input: string | URL, init?: RequestInit) => {
+					if (String(input).endsWith('/conversations.replies') && history !== 'available') {
+						if (history === 'rate-limited') {
+							return Promise.resolve(
+								new Response('', { status: 429, headers: { 'retry-after': '60' } }),
+							);
+						}
 
-			await planning.log.ask({
-				cardId: 'card-1',
-				messageTs: '1710000000.000010',
-				conversationId,
-				channelId: CHANNEL_ID,
-				threadTs: THREAD_TS,
-				question: 'Which database?',
-				recommendation: 'D1',
-				choices: [
-					{ id: 'pg', label: 'Postgres' },
-					{ id: 'd1', label: 'D1' },
-				],
-				createdAt: '2026-10-10T10:00:00.000Z',
-			});
-			const [card] = await planning.log.listCards(conversationId);
+						return new Promise<Response>((_resolve, reject) => {
+							init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
+								once: true,
+							});
+						});
+					}
 
-			const view = {
-				...decideModal(card!),
-				state: {
-					values: {
-						choice: { choice: { selected_option: { value: 'd1' } } },
-						custom: { custom: { value: null } },
-						reasoning: { reasoning: { value: 'No server to run' } },
+					return network(input, init);
+				});
+				const db = await openTestDatabase();
+				const planning = createD1PlanningStore(db);
+				const channel = createSlackChannelForEnv(env, codexAuth, runtime, planning);
+
+				const conversationId = channel.instanceId({
+					teamId: WORKSPACE_TEAM,
+					channelId: CHANNEL_ID,
+					threadTs: THREAD_TS,
+				});
+
+				await planning.log.ask({
+					cardId: 'card-1',
+					messageTs: '1710000000.000010',
+					conversationId,
+					channelId: CHANNEL_ID,
+					threadTs: THREAD_TS,
+					question: 'Which database?',
+					recommendation: 'D1',
+					choices: [
+						{ id: 'pg', label: 'Postgres' },
+						{ id: 'd1', label: 'D1' },
+					],
+					createdAt: '2026-10-10T10:00:00.000Z',
+				});
+				const [card] = await planning.log.listCards(conversationId);
+
+				const view = {
+					...decideModal(card!),
+					state: {
+						values: {
+							choice: { choice: { selected_option: { value: 'd1' } } },
+							custom: { custom: { value: null } },
+							reasoning: { reasoning: { value: 'No server to run' } },
+						},
 					},
-				},
-			};
+				};
 
-			const response = await channel.route().fetch(
-				signedInteractionRequest({
-					type: 'view_submission',
-					team: { id: WORKSPACE_TEAM },
-					user: { id: FOLLOW_UP_USER, name: 'maya', team_id: WORKSPACE_TEAM },
-					api_app_id: 'AAPP',
-					view,
-				}),
-			);
+				const response = await channel.route().fetch(
+					signedInteractionRequest({
+						type: 'view_submission',
+						team: { id: WORKSPACE_TEAM },
+						user: { id: FOLLOW_UP_USER, name: 'maya', team_id: WORKSPACE_TEAM },
+						api_app_id: 'AAPP',
+						view,
+					}),
+				);
 
-			expect(response.status).toBe(200);
-			expect((await planning.log.latest('card-1'))?.decision).toMatchObject({
-				choiceId: 'd1',
-				decidedBy: FOLLOW_UP_USER,
-			});
-			expect(dispatchRequests).toHaveLength(1);
-			expect(dispatchRequests[0]).not.toHaveProperty('initialData');
-			expect(dispatchRequests[0]).toMatchObject({
-				id: conversationId,
-				message: {
-					kind: 'signal',
-					type: 'planning.decision',
-					attributes: { modelRoute: 'opencode-go', userId: FOLLOW_UP_USER },
-				},
-			});
-		});
+				expect(response.status).toBe(200);
+				expect((await planning.log.latest('card-1'))?.decision).toMatchObject({
+					choiceId: 'd1',
+					decidedBy: FOLLOW_UP_USER,
+				});
+				expect(dispatchRequests).toHaveLength(1);
+				expect(dispatchRequests[0]).not.toHaveProperty('initialData');
+				expect(dispatchRequests[0]).toMatchObject({
+					id: conversationId,
+					message: {
+						kind: 'signal',
+						type: 'planning.decision',
+						attributes: { modelRoute: 'opencode-go', userId: FOLLOW_UP_USER },
+					},
+				});
+			},
+		);
 	});
 });

@@ -1,5 +1,6 @@
 // flue-blueprint: channel/slack@1
 import { dispatch, getAgentInstance } from '@flue/runtime';
+import { WebClient } from '@slack/web-api';
 import {
 	createSlackChannel,
 	type SlackChannel,
@@ -23,7 +24,7 @@ import {
 import type { SlackSignal } from './admit.ts';
 import { handlePlanningInteraction, type PlanningContinuation } from './planning-interactions.ts';
 import { handleSlashCommand } from './slash-command.ts';
-import { getSlackClient } from './slack-reply.ts';
+import { getSlackClient, slackFetch, type SlackBotClient } from './slack-reply.ts';
 import { loadThreadContext } from './thread-context.ts';
 import { buildSignalAttributes, type SignalAttributes } from './signal-attributes.ts';
 import type { ServerEnv } from '../env.ts';
@@ -73,7 +74,7 @@ async function modelRouteForDispatch(codexAuth: () => CodexAuthControl): Promise
 
 // Thread history is context for the agent, not a dispatch requirement.
 async function dispatchAttributes(
-	env: ServerEnv,
+	slack: SlackBotClient,
 	thread: SlackThreadRef,
 	eventId: string,
 	userId: string | undefined,
@@ -82,12 +83,23 @@ async function dispatchAttributes(
 	let threadContext: string | undefined;
 
 	try {
-		threadContext = await loadThreadContext(getSlackClient(env.SLACK_BOT_TOKEN), thread);
+		threadContext = await loadThreadContext(slack, thread);
 	} catch {
 		// Dispatch without it.
 	}
 
 	return { ...buildSignalAttributes(eventId, userId, threadContext), modelRoute };
+}
+
+// A shared deadline bounds every page of history; rate limits must not pause dispatch.
+function planningSlackClient(token: string): SlackBotClient {
+	const signal = AbortSignal.timeout(2000);
+
+	return new WebClient(token, {
+		fetch: (url, init) => slackFetch(url, { ...init, signal }),
+		retryConfig: { retries: 0 },
+		rejectRateLimitedCalls: true,
+	});
 }
 
 // A card decision or reopen continues an existing Coworker. No initialData: a
@@ -111,7 +123,14 @@ async function continuePlanning({
 	try {
 		const thread = channel.parseInstanceId(conversationId);
 		const modelRoute = await modelRouteForDispatch(codexAuth);
-		const attributes = await dispatchAttributes(env, thread, eventId, userId, modelRoute);
+
+		const attributes = await dispatchAttributes(
+			planningSlackClient(env.SLACK_BOT_TOKEN),
+			thread,
+			eventId,
+			userId,
+			modelRoute,
+		);
 
 		await runtime.dispatch(Coworker, {
 			id: conversationId,
@@ -144,7 +163,7 @@ export function createSlackChannelForEnv(
 			? ({ c, payload }) =>
 					handlePlanningInteraction(payload, {
 						store: planning,
-						slack: getSlackClient(env.SLACK_BOT_TOKEN),
+						slack: planningSlackClient(env.SLACK_BOT_TOKEN),
 						workspaceTeamOf: (id) => channel.parseInstanceId(id).teamId,
 						continueConversation: (continuation) =>
 							continuePlanning({ channel, env, codexAuth, runtime, continuation }),
@@ -348,7 +367,13 @@ async function admitThread({
 				return;
 			}
 
-			const attributes = await dispatchAttributes(env, thread, eventId, userId, modelRoute);
+			const attributes = await dispatchAttributes(
+				getSlackClient(env.SLACK_BOT_TOKEN),
+				thread,
+				eventId,
+				userId,
+				modelRoute,
+			);
 
 			try {
 				const receipt = await runtime.dispatch(Coworker, {
