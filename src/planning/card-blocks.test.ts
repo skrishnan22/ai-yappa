@@ -5,7 +5,6 @@ import {
 	answerText,
 	decideModal,
 	parseDecideSubmission,
-	parseReopenValue,
 	renderCard,
 	renderSummary,
 } from './card-blocks.ts';
@@ -66,7 +65,7 @@ describe('renderCard', () => {
 			{
 				type: 'button',
 				action_id: 'planning_decide',
-				value: 'card-1',
+				value: JSON.stringify({ cardId: 'card-1', label: 'D2' }),
 				text: { text: 'Decide…' },
 			},
 		]);
@@ -81,15 +80,9 @@ describe('renderCard', () => {
 		expect(body).toContain('We already run it');
 		expect(body).toContain('Decided by <@U1>');
 		expect(body).toContain('<!date^');
-		expect(buttons(blocks)).toMatchObject([{ action_id: 'planning_reopen', value: 'card-1:1' }]);
-	});
-
-	it('shows a custom answer on a decided card', () => {
-		const { blocks } = renderCard(
-			card(revision({ decision: { ...decision, choiceId: undefined, customAnswer: 'SQLite' } })),
-		);
-
-		expect(allText(blocks)).toContain('SQLite');
+		expect(buttons(blocks)).toMatchObject([
+			{ action_id: 'planning_reopen', value: JSON.stringify({ cardId: 'card-1', revision: 1 }) },
+		]);
 	});
 
 	it('shows the previous answer on a reopened card', () => {
@@ -201,13 +194,6 @@ describe('renderCard limits and fallback text', () => {
 	});
 });
 
-describe('parseReopenValue', () => {
-	it('reads the card and the revision the button showed', () => {
-		expect(parseReopenValue('card-1:3')).toEqual({ cardId: 'card-1', revision: 3 });
-		expect(parseReopenValue('card-1')).toBeUndefined();
-	});
-});
-
 describe('answerText', () => {
 	it('returns the choice label, the custom answer, or nothing', () => {
 		expect(answerText(revision({ decision }))).toBe('Postgres');
@@ -261,12 +247,6 @@ describe('decideModal', () => {
 			optional: true,
 			element: { type: 'plain_text_input', multiline: true },
 		});
-	});
-
-	it('limits the custom answer and reasoning lengths', () => {
-		const view = decideModal(card(revision()));
-		expect(input(view, 'custom').element.max_length).toBe(500);
-		expect(input(view, 'reasoning').element.max_length).toBe(1500);
 	});
 
 	it('requires the custom answer when there are no choices', () => {

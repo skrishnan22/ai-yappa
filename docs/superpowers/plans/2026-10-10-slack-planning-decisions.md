@@ -304,7 +304,7 @@ export type PlanningContinuation = {
 	conversationId: string;
 	channelId: string;
 	threadTs: string;
-	type: 'planning.decision' | 'planning.reopen';
+	type: 'planning.decision';
 	eventId: string; // idempotency key
 	userId: string;
 	body: string;
@@ -336,7 +336,7 @@ Behavior:
   - External users are refused the same way.
   - Call `store.log.reopen`.
     - `undefined`: redraw the latest revision.
-    - Otherwise: redraw, then `continueConversation` with `type: 'planning.reopen'`, `eventId: \`planning-reopen:${cardId}:${revision}\`` and a body such as `<@U2> reopened D3 "<question>". Earlier answer: "<answer>", decided by <@U1>[ (reasoning: "…")]. Ask what needs reconsidering; do not pick a new answer yourself.`
+    - Otherwise: defer the redraw. Do not dispatch Yappa; wait for a new decision or an explicit mention.
 - **`view_submission` with `callback_id === DECIDE_CALLBACK`.**
   1. Parse the submission; on validation errors return `{ response_action: 'errors', errors }`.
   2. External users get `errors.reasoning = 'Yappa only works for members of this workspace.'`.
@@ -362,7 +362,7 @@ Behavior:
   - A submission opened at revision 1 after a `reword` returns errors with no decision written (Review Focus 1).
   - A tampered `choice` value returns errors with no write (Review Focus 3).
   - External user (`team_id: 'T_OTHER'` or missing) on decide click, reopen click and submit: refused, no write, no continuation (Review Focus 4).
-  - Reopen on a decided card inserts revision 2, redraws with `Previously:`, and continues with type `planning.reopen`.
+  - Reopen on a decided card inserts revision 2, redraws with `Previously:`, and does not dispatch Yappa. Deciding again dispatches the replacement answer and requests a check against other cards' latest answers.
   - Reopen on an open card: no new revision, no continuation.
 - [ ] **Step 2:** Run `pnpm vitest run src/channels/planning-interactions.test.ts` and expect FAIL.
 - [ ] **Step 3:** Implement. **Step 4:** run the tests and expect PASS.
@@ -481,8 +481,8 @@ Keep the frontmatter `name` and `license`/`metadata`. Update `description` so it
 - **One question at a time.** Ask with `ask_decision`, never as a plain message. Give a recommendation, and choices only when the decision is genuinely discrete.
 - **Facts are your job; decisions are theirs.** Keep the existing paragraph and its read-only lookups.
 - **People decide only with the Decide button.** Replies are discussion. Never treat a reply as an answer, and don't respond to unmentioned replies (you won't receive them). A mention asks you to research, clarify, or revise a question (`reword_decision` for open cards); it doesn't record a decision.
-- **When a `planning.decision` signal arrives:** the answer is final and you may not substitute another. Call `list_decisions` and check the new answer against earlier decisions. If it contradicts one, say which card and how, and ask whether to reopen it, before moving on. Then ask a follow-up or the next frontier question.
-- **When a `planning.reopen` signal arrives:** explain what needs reconsidering, and reword the card if the question should change. Don't choose an answer.
+- **When a `planning.decision` signal arrives:** the answer is final and you may not substitute another. A replacement answer supersedes any earlier answer for the same question. Call `list_decisions` and check the new answer against the latest answers for other cards. If it contradicts one, say which card and how, and ask whether to reopen it, before moving on. Then ask a follow-up or the next frontier question.
+- **Reopen stays quiet.** Reopening a card does not invoke Yappa. Wait for a new decision or an explicit mention; do not choose an answer yourself.
 - **Planning only.** No edits, commits, checkpoints or pull requests. You may keep notes in `plan.md` in the sandbox and cite card labels; the decision log wins over the notes.
 - **Finish.** When the frontier is empty, or someone asks to stop, call `end_planning`. Offer next steps but take none until asked.
 - If the invocation names no topic, the first question (a card without choices) asks what to plan.

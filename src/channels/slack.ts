@@ -1,7 +1,10 @@
 // flue-blueprint: channel/slack@1
 import { dispatch, getAgentInstance } from '@flue/runtime';
+import { WebClient } from '@slack/web-api';
+import type { Context, ExecutionContext } from 'hono';
 import {
 	createSlackChannel,
+	type SlackChannel,
 	type SlackEventCallbackPayload,
 	type SlackThreadRef,
 } from '@flue/slack';
@@ -11,6 +14,7 @@ import { repoForChannel } from '../config.ts';
 import type { CodexAuthControl } from '../integrations/codex-auth/codex-auth.ts';
 import { errorMessage } from '../json.ts';
 import { emitSemanticEvent } from '../observability.ts';
+import type { PlanningStore } from '../planning/decision-log.ts';
 import {
 	decideAdmit,
 	decideInvocation,
@@ -19,10 +23,11 @@ import {
 	mentionsAuthorizedBot,
 } from './admit.ts';
 import type { SlackSignal } from './admit.ts';
+import { handlePlanningInteraction, type PlanningContinuation } from './planning-interactions.ts';
 import { handleSlashCommand } from './slash-command.ts';
-import { getSlackClient } from './slack-reply.ts';
+import { getSlackClient, slackFetch, type SlackBotClient } from './slack-reply.ts';
 import { loadThreadContext } from './thread-context.ts';
-import { buildSignalAttributes } from './signal-attributes.ts';
+import { buildSignalAttributes, type SignalAttributes } from './signal-attributes.ts';
 import type { ServerEnv } from '../env.ts';
 
 export type SlackRuntime = {
@@ -68,17 +73,121 @@ async function modelRouteForDispatch(codexAuth: () => CodexAuthControl): Promise
 	}
 }
 
+// Thread history is context for the agent, not a dispatch requirement.
+async function dispatchAttributes(
+	slack: SlackBotClient,
+	thread: SlackThreadRef,
+	eventId: string,
+	userId: string | undefined,
+	modelRoute: ModelRoute,
+): Promise<SignalAttributes & { modelRoute: ModelRoute }> {
+	let threadContext: string | undefined;
+
+	try {
+		threadContext = await loadThreadContext(slack, thread);
+	} catch {
+		// Dispatch without it.
+	}
+
+	return { ...buildSignalAttributes(eventId, userId, threadContext), modelRoute };
+}
+
+// A shared deadline bounds every page of history; rate limits must not pause dispatch.
+function planningSlackClient(token: string): SlackBotClient {
+	const signal = AbortSignal.timeout(2000);
+
+	return new WebClient(token, {
+		fetch: (url, init) => slackFetch(url, { ...init, signal }),
+		retryConfig: { retries: 0 },
+		rejectRateLimitedCalls: true,
+	});
+}
+
+// A card decision continues an existing Coworker. No initialData: a
+// continuation must never create a conversation.
+async function continuePlanning({
+	channel,
+	env,
+	codexAuth,
+	runtime,
+	continuation,
+}: {
+	channel: SlackChannel;
+	env: ServerEnv;
+	codexAuth: () => CodexAuthControl;
+	runtime: SlackRuntime;
+	continuation: PlanningContinuation;
+}): Promise<void> {
+	const { conversationId, eventId, userId, type, body } = continuation;
+
+	// Usually runs under waitUntil, where a rejection is otherwise invisible.
+	try {
+		const thread = channel.parseInstanceId(conversationId);
+		const modelRoute = await modelRouteForDispatch(codexAuth);
+
+		const attributes = await dispatchAttributes(
+			planningSlackClient(env.SLACK_BOT_TOKEN),
+			thread,
+			eventId,
+			userId,
+			modelRoute,
+		);
+
+		await runtime.dispatch(Coworker, {
+			id: conversationId,
+			idempotencyKey: eventId,
+			message: { kind: 'signal', type, body, attributes },
+		});
+	} catch (error) {
+		console.error(`[planning] Continuation ${eventId} failed: ${errorMessage(error)}`);
+
+		throw error;
+	}
+}
+
+// Hono throws when there is no execution context (Node, Vitest, `flue run`).
+export function executionContextOf(c: Context): ExecutionContext | undefined {
+	try {
+		return c.executionCtx;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Without `planning` there is no interactions route and no planning silence. */
 export function createSlackChannelForEnv(
 	env: ServerEnv,
 	codexAuth: () => CodexAuthControl,
 	runtime: SlackRuntime = defaultSlackRuntime,
+	planning?: PlanningStore,
 ) {
-	const channel = createSlackChannel({
+	// Annotated: the interactions handler refers back to `channel`.
+	const channel: SlackChannel = createSlackChannel({
 		signingSecret: env.SLACK_SIGNING_SECRET,
 
 		commands({ payload }) {
 			return handleSlashCommand(payload, codexAuth);
 		},
+
+		interactions: planning
+			? ({ c, payload }) =>
+					handlePlanningInteraction(payload, {
+						store: planning,
+						slack: planningSlackClient(env.SLACK_BOT_TOKEN),
+						workspaceTeamOf: (id) => channel.parseInstanceId(id).teamId,
+						continueConversation: (continuation) =>
+							continuePlanning({ channel, env, codexAuth, runtime, continuation }),
+						defer: (work) => {
+							const executionCtx = executionContextOf(c);
+
+							if (!executionCtx) return work;
+							executionCtx.waitUntil(work);
+
+							return Promise.resolve();
+						},
+						now: () => new Date(),
+					})
+			: undefined,
 
 		async events({ c, payload }) {
 			if (payload.type !== 'event_callback') return;
@@ -92,6 +201,7 @@ export function createSlackChannelForEnv(
 						env,
 						codexAuth,
 						runtime,
+						planning,
 						thread: {
 							teamId: payload.team_id,
 							channelId: event.channel,
@@ -123,6 +233,7 @@ export function createSlackChannelForEnv(
 						env,
 						codexAuth,
 						runtime,
+						planning,
 						thread: {
 							teamId: payload.team_id,
 							channelId: event.channel,
@@ -153,6 +264,7 @@ async function admitThread({
 	env,
 	codexAuth,
 	runtime,
+	planning,
 	thread,
 	userId,
 	external,
@@ -161,10 +273,11 @@ async function admitThread({
 	signalType,
 	timeoutRetry,
 }: {
-	channel: ReturnType<typeof createSlackChannel>;
+	channel: SlackChannel;
 	env: ServerEnv;
 	codexAuth: () => CodexAuthControl;
 	runtime: SlackRuntime;
+	planning: PlanningStore | undefined;
 	thread: SlackThreadRef;
 	userId: string | undefined;
 	external: boolean;
@@ -201,11 +314,25 @@ async function admitThread({
 		});
 	}
 
+	// Read only for a reply that could otherwise continue the conversation.
+	// An unreadable flag (D1 error, missing migration) counts as inactive:
+	// one reply leaking into a session beats silencing every thread.
+	let planningActive = false;
+
+	if (signalType === 'slack.message' && conversationExists && planning) {
+		try {
+			planningActive = await planning.sessions.isActive(id);
+		} catch (error) {
+			console.error(`[planning] Session read failed for ${id}: ${errorMessage(error)}`);
+		}
+	}
+
 	const decision = decideAdmit({
 		signalType,
 		external,
 		repo,
 		conversationExists,
+		planningActive,
 	});
 
 	switch (decision.kind) {
@@ -221,6 +348,7 @@ async function admitThread({
 
 			return;
 		case 'drop-untracked':
+		case 'drop-planning':
 			emitSemanticEvent({
 				event_name: 'slack_admission',
 				outcome: 'dropped',
@@ -247,15 +375,13 @@ async function admitThread({
 				return;
 			}
 
-			let threadContext: string | undefined;
-
-			try {
-				threadContext = await loadThreadContext(getSlackClient(env.SLACK_BOT_TOKEN), thread);
-			} catch {
-				// Thread history is context for the agent, not a dispatch requirement.
-			}
-
-			const attributes = { ...buildSignalAttributes(eventId, userId, threadContext), modelRoute };
+			const attributes = await dispatchAttributes(
+				getSlackClient(env.SLACK_BOT_TOKEN),
+				thread,
+				eventId,
+				userId,
+				modelRoute,
+			);
 
 			try {
 				const receipt = await runtime.dispatch(Coworker, {
