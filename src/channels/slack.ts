@@ -1,6 +1,7 @@
 // flue-blueprint: channel/slack@1
 import { dispatch, getAgentInstance } from '@flue/runtime';
 import { WebClient } from '@slack/web-api';
+import type { Context, ExecutionContext } from 'hono';
 import {
 	createSlackChannel,
 	type SlackChannel,
@@ -144,6 +145,15 @@ async function continuePlanning({
 	}
 }
 
+// Hono throws when there is no execution context (Node, Vitest, `flue run`).
+export function executionContextOf(c: Context): ExecutionContext | undefined {
+	try {
+		return c.executionCtx;
+	} catch {
+		return undefined;
+	}
+}
+
 /** Without `planning` there is no interactions route and no planning silence. */
 export function createSlackChannelForEnv(
 	env: ServerEnv,
@@ -167,15 +177,13 @@ export function createSlackChannelForEnv(
 						workspaceTeamOf: (id) => channel.parseInstanceId(id).teamId,
 						continueConversation: (continuation) =>
 							continuePlanning({ channel, env, codexAuth, runtime, continuation }),
-						// Hono throws when there is no execution context (tests, `flue run`).
 						defer: (work) => {
-							try {
-								c.executionCtx.waitUntil(work);
+							const executionCtx = executionContextOf(c);
 
-								return Promise.resolve();
-							} catch {
-								return work;
-							}
+							if (!executionCtx) return work;
+							executionCtx.waitUntil(work);
+
+							return Promise.resolve();
 						},
 						now: () => new Date(),
 					})

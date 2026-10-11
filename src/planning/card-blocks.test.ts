@@ -5,7 +5,6 @@ import {
 	answerText,
 	decideModal,
 	parseDecideSubmission,
-	parseReopenValue,
 	renderCard,
 	renderSummary,
 } from './card-blocks.ts';
@@ -81,7 +80,9 @@ describe('renderCard', () => {
 		expect(body).toContain('We already run it');
 		expect(body).toContain('Decided by <@U1>');
 		expect(body).toContain('<!date^');
-		expect(buttons(blocks)).toMatchObject([{ action_id: 'planning_reopen', value: 'card-1:1' }]);
+		expect(buttons(blocks)).toMatchObject([
+			{ action_id: 'planning_reopen', value: JSON.stringify({ cardId: 'card-1', revision: 1 }) },
+		]);
 	});
 
 	it('shows a custom answer on a decided card', () => {
@@ -198,13 +199,6 @@ describe('renderCard limits and fallback text', () => {
 
 		expect(text).toContain('&lt;!channel&gt;');
 		expect(text).not.toContain('<!channel>');
-	});
-});
-
-describe('parseReopenValue', () => {
-	it('reads the card and the revision the button showed', () => {
-		expect(parseReopenValue('card-1:3')).toEqual({ cardId: 'card-1', revision: 3 });
-		expect(parseReopenValue('card-1')).toBeUndefined();
 	});
 });
 

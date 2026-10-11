@@ -74,6 +74,10 @@ async function seed(store: PlanningStore, overrides: Partial<NewCard> = {}) {
 	await store.log.setMessageTs(card.cardId, '2.0');
 }
 
+function reopenValue(revision: number): string {
+	return JSON.stringify({ cardId: 'card-1', revision });
+}
+
 function click(
 	actionId: string,
 	user: User = member,
@@ -208,7 +212,7 @@ describe('handlePlanningInteraction', () => {
 					actionId,
 					member,
 					actionId === REOPEN_ACTION
-						? 'card-1:0'
+						? reopenValue(0)
 						: JSON.stringify({ cardId: 'card-1', label: 'D1' }),
 				),
 				deps,
@@ -254,7 +258,7 @@ describe('handlePlanningInteraction', () => {
 				payload = submit(view);
 			} else {
 				await store.log.decide({ cardId: 'card-1', revision: 1, decision: earlierDecision });
-				payload = click(REOPEN_ACTION, member, 'card-1:1');
+				payload = click(REOPEN_ACTION, member, reopenValue(1));
 			}
 
 			const response = handlePlanningInteraction(payload, deps);
@@ -392,7 +396,7 @@ describe('handlePlanningInteraction', () => {
 			await seed(store);
 			await store.log.decide({ cardId: 'card-1', revision: 1, decision: earlierDecision });
 
-			await handlePlanningInteraction(click(REOPEN_ACTION, outsider, 'card-1:1'), deps);
+			await handlePlanningInteraction(click(REOPEN_ACTION, outsider, reopenValue(1)), deps);
 
 			expect(calls.map((call) => call.method)).toEqual(['chat.postEphemeral']);
 			expect((await store.log.latest('card-1'))?.revision).toBe(1);
@@ -418,7 +422,7 @@ describe('handlePlanningInteraction', () => {
 		await store.log.decide({ cardId: 'card-1', revision: 1, decision: earlierDecision });
 
 		await handlePlanningInteraction(
-			click(REOPEN_ACTION, { id: 'U2', team_id: HOME_TEAM }, 'card-1:1'),
+			click(REOPEN_ACTION, { id: 'U2', team_id: HOME_TEAM }, reopenValue(1)),
 			deps,
 		);
 
@@ -455,7 +459,7 @@ describe('handlePlanningInteraction', () => {
 			decision: { ...earlierDecision, choiceId: 'd1' },
 		});
 
-		await handlePlanningInteraction(click(REOPEN_ACTION, member, 'card-1:1'), deps);
+		await handlePlanningInteraction(click(REOPEN_ACTION, member, reopenValue(1)), deps);
 
 		const latest = await store.log.latest('card-1');
 
@@ -467,42 +471,11 @@ describe('handlePlanningInteraction', () => {
 		expect(calls.map((call) => call.method)).toEqual(['chat.update']);
 	});
 
-	it('draws again when the card changes during its redraw', async () => {
-		let store: PlanningStore | undefined;
-		let reopenedMidRedraw = false;
-
-		const { calls, continuations, deps, ...rest } = await setup(async (call) => {
-			if (call.method === 'chat.update' && store && !reopenedMidRedraw) {
-				reopenedMidRedraw = true;
-				await store.log.reopen({
-					cardId: 'card-1',
-					revision: 1,
-					createdAt: '2026-10-10T12:30:00.000Z',
-				});
-			}
-
-			return { ok: true };
-		});
-
-		store = rest.store;
-		await seed(store);
-		const view = await openedView(store, { choice: 'd1' });
-
-		await handlePlanningInteraction(submit(view), deps);
-
-		const updates = calls.filter((call) => call.method === 'chat.update');
-
-		expect(updates).toHaveLength(2);
-		expect(JSON.stringify(updates[0]!.params.blocks)).toContain(REOPEN_ACTION);
-		expect(JSON.stringify(updates[1]!.params.blocks)).toContain(DECIDE_ACTION);
-		expect(continuations).toHaveLength(1);
-	});
-
 	it('does not reopen an open card', async () => {
 		const { store, calls, continuations, deps } = await setup();
 		await seed(store);
 
-		await handlePlanningInteraction(click(REOPEN_ACTION, member, 'card-1:1'), deps);
+		await handlePlanningInteraction(click(REOPEN_ACTION, member, reopenValue(1)), deps);
 
 		expect((await store.log.latest('card-1'))?.revision).toBe(1);
 		expect(continuations).toHaveLength(0);
@@ -546,7 +519,7 @@ describe('handlePlanningInteraction', () => {
 			await seed(store);
 			await store.log.decide({ cardId: 'card-1', revision: 1, decision: earlierDecision });
 
-			await handlePlanningInteraction(click(REOPEN_ACTION, member, 'card-1:1'), deps);
+			await handlePlanningInteraction(click(REOPEN_ACTION, member, reopenValue(1)), deps);
 
 			expect(continuations).toHaveLength(1);
 			expect(continuations[0]!.type).toBe('planning.reopen');

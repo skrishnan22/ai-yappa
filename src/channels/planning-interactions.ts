@@ -4,13 +4,13 @@ import type {
 	SlackUser,
 	SlackViewSubmissionPayload,
 } from '@flue/slack';
-import * as v from 'valibot';
 import {
 	answerText,
 	DECIDE_ACTION,
 	DECIDE_CALLBACK,
 	decideModal,
 	parseDecideSubmission,
+	parseDecideValue,
 	parseReopenValue,
 	renderCard,
 	REOPEN_ACTION,
@@ -40,19 +40,10 @@ export type PlanningInteractionDeps = {
 
 type SubmissionErrors = { response_action: 'errors'; errors: Record<string, string> };
 
-// Redraws that see a newer state after their update draw again, at most this often.
-const REDRAW_ATTEMPTS = 3;
-
 const NOT_A_MEMBER = 'Yappa only works for members of this workspace.';
 
 const CARD_CHANGED =
 	'This card changed since you opened it: it was decided, reopened, or reworded. Close this and review the current card.';
-
-const decideValueSchema = v.pipe(
-	v.string(),
-	v.parseJson(),
-	v.object({ cardId: v.string(), label: v.string() }),
-);
 
 export async function handlePlanningInteraction(
 	payload: SlackInteractionPayload,
@@ -86,10 +77,10 @@ async function onDecideClick(
 	value: string,
 	deps: PlanningInteractionDeps,
 ): Promise<void> {
-	const shown = v.safeParse(decideValueSchema, value);
+	const shown = parseDecideValue(value);
 
-	if (!shown.success) return;
-	const { cardId, label } = shown.output;
+	if (!shown) return;
+	const { cardId, label } = shown;
 
 	const latest = await deps.store.log.latest(cardId);
 
@@ -254,31 +245,20 @@ async function findCard(
 // Redraws the card's current state. Never throws: the log is
 // authoritative, and a failed read or update must not stop the dispatch.
 // Concurrent redraws are unordered, so one may draw an older state over a
-// newer one; each re-reads after its update and draws again if the card moved.
+// newer one; a click on a stale button redraws the current state.
 async function redraw(revision: CardRevision, deps: PlanningInteractionDeps): Promise<void> {
 	try {
-		for (let attempt = 0; attempt < REDRAW_ATTEMPTS; attempt++) {
-			const card = await findCard(revision, deps);
+		const card = await findCard(revision, deps);
+		const messageTs = card?.latest.messageTs;
 
-			const messageTs = card?.latest.messageTs;
+		if (!card || !messageTs) return;
 
-			if (!card || !messageTs) return;
+		const { text, blocks } = renderCard(card);
 
-			const { text, blocks } = renderCard(card);
-
-			await deps.slack.chat.update({ channel: card.latest.channelId, ts: messageTs, text, blocks });
-
-			const current = await deps.store.log.latest(revision.cardId);
-
-			if (!current || sameState(current, card.latest)) return;
-		}
+		await deps.slack.chat.update({ channel: card.latest.channelId, ts: messageTs, text, blocks });
 	} catch (error) {
 		console.warn(`[planning] Card ${revision.cardId} redraw failed: ${errorMessage(error)}`);
 	}
-}
-
-function sameState(a: CardRevision, b: CardRevision): boolean {
-	return a.revision === b.revision && Boolean(a.decision) === Boolean(b.decision);
 }
 
 // Dispatch bodies are model prompts: user and model text is quoted as-is.
