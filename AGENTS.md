@@ -7,7 +7,7 @@ Implementation source of truth: `SLACK_AGENT_SPEC.md`. Milestone scope: `SLACK_A
 ## Layout
 
 - `src/agents/` — agent modules. `'use agent'` at the top; every exported capitalized function is an agent. `Coworker` is the conversation owner. Dispatch-only; do not mount `createAgentRouter` for it.
-- `src/channels/slack.ts` — verified Slack ingress. It also serves the interactions route and keeps planning threads quiet. A mention may create a Coworker; an unmentioned thread reply continues only if `getAgentInstance` finds one. Loaded by `app.ts` only, so `flue run` does not need a signing secret.
+- `src/channels/slack.ts` — verified Slack ingress. It also serves the interactions route and keeps planning threads quiet. A mention in any channel, or any DM (`slack.direct_message`), may create a Coworker; an unmentioned channel thread reply continues only if `getAgentInstance` finds one. There is no no-repo refusal: without a default repo the Coworker attaches one with `attach_repo` (`src/agents/attach-repo.ts`). Loaded by `app.ts` only, so `flue run` does not need a signing secret.
 - `src/channels/slash-command.ts` — `/aiyappa openai connect|status|disconnect` and `/aiyappa models`. Connect/disconnect need `codexAdminIds`; status and models are open to the workspace (Slack does not share slash commands with Slack Connect organizations). Device codes appear only in the ephemeral reply.
 - `src/channels/invocation-args.ts` + `src/agents/model-choice.ts` — `$model:` / `$effort:` in the first mention pick from `modelAliases` in `src/config.ts` (ADR 0021); the choice lives in `initialData.modelChoice`.
 - `src/skills/` — deployment Agent Skills: `<name>/SKILL.md`, imported in `index.ts` (Flue packages and validates each import at build). The Coworker mounts them with `useSkill`, so the model activates one from its description; `/<name>` in a mention (`invocation.ts`) makes the Coworker tell the model to call `activate_skill` first, with a finish guard like the Slack reply's. Vitest stubs `.md` imports; `pnpm run build` checks the real packaging.
@@ -19,7 +19,7 @@ Implementation source of truth: `SLACK_AGENT_SPEC.md`. Milestone scope: `SLACK_A
 - `src/planning/` — the decision log (`card_revisions`), planning sessions (`planning_sessions`), card blocks, and the store holder. Stored in the app's single D1 database (`APP_DB`) beside memory; migrations live in `migrations/`. Tests get a fresh, migrated, real D1 (Miniflare, via wrangler's `getPlatformProxy`) from `openTestDatabase()` in `src/testing/d1.ts`.
 - `src/channels/planning-interactions.ts` — Decide, Reopen, and the Decide modal (ADR 0023). Writes D1 before it responds; redraw and dispatch run under `waitUntil`.
 - `src/agents/planning-tools.ts` — `ask_decision`, `reword_decision`, `list_decisions`, `end_planning`.
-- `src/config.ts` — channel→repo map and Codex admin list. Fail closed when empty. Any workspace member may use a bound channel; `src/channels/admit.ts` refuses users from other organizations (ADR 0022).
+- `src/config.ts` — default repo per channel and Codex admin list. The GitHub App installation, not the channel map, is the access boundary (ADR 0024); `src/channels/admit.ts` refuses users from other organizations (ADR 0022).
 - `src/app.ts` — route map. Slack channel only.
 - `src/cloudflare.ts` — Worker-level exports and non-HTTP handlers.
 - `wrangler.jsonc` — Worker config; every agent needs a Durable Object migration entry (`Coworker` → `FlueCoworkerAgent`). Application-owned Durable Objects (`CodexAuth`) also need a hand-declared binding.
