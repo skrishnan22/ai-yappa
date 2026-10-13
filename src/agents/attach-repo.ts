@@ -62,7 +62,10 @@ function refusal(wanted: string, names: string[]): string {
  * The one repository a conversation works on. Code checks it against the
  * GitHub App installation; the model only names it.
  */
-export function attachRepoTool(args: {
+export function attachRepoTool({
+	directory,
+	attach,
+}: {
 	directory: RepoDirectory;
 	attach: (repoUrl: string) => void;
 }): ToolDefinition {
@@ -73,15 +76,15 @@ export function attachRepoTool(args: {
 		input: v.object({ repo: v.pipe(v.string(), v.minLength(1)) }),
 		async run({ data }) {
 			const wanted = canonicalRepo(data.repo).toLowerCase();
-			const match = await args.directory.find(wanted);
+			const match = await directory.find(wanted);
 
 			if (!match) {
-				const names = await args.directory.list();
+				const names = await directory.list();
 				throw new Error(refusal(wanted, names));
 			}
 
 			const repoUrl = `https://github.com/${match}.git`;
-			args.attach(repoUrl);
+			attach(repoUrl);
 
 			return {
 				output: {
