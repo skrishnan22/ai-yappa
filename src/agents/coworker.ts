@@ -159,7 +159,15 @@ export function Coworker(props: { id: string }) {
 			attachRepoTool({
 				directory: installationRepos,
 				attach: (url) => {
-					setAttachedRepo(url);
+					setAttachedRepo((current) => {
+						if (current && current !== url) {
+							throw new Error(
+								`This conversation is already attached to ${current}. Start a new thread for another repository.`,
+							);
+						}
+
+						return url;
+					});
 				},
 			}),
 		);
