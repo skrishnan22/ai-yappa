@@ -19,8 +19,10 @@ type SlackEventPayload = {
 	event_id: string;
 	event_time: number;
 	is_ext_shared_channel?: boolean;
+	authorizations?: { user_id: string; is_bot: boolean }[];
 	event: {
 		type: 'app_mention' | 'message';
+		channel_type?: 'im' | 'channel';
 		user: string;
 		text: string;
 		channel: string;
@@ -581,5 +583,115 @@ describe('Slack ingress', () => {
 				});
 			},
 		);
+	});
+});
+
+describe('direct messages and channels without a default repo', () => {
+	const DM_CHANNEL = 'D0DIRECT';
+
+	const DM_TS = '1710000100.000001';
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		__resetSlackClientForTests();
+	});
+
+	function dmPayload(eventId: string, text: string, threadTs?: string): SlackEventPayload {
+		const event: SlackEventPayload['event'] = {
+			type: 'message',
+			channel_type: 'im',
+			user: FOLLOW_UP_USER,
+			text,
+			channel: DM_CHANNEL,
+			ts: DM_TS,
+		};
+
+		if (threadTs) event.thread_ts = threadTs;
+
+		return {
+			type: 'event_callback',
+			token: 'verification-token',
+			team_id: WORKSPACE_TEAM,
+			api_app_id: 'AAPP',
+			event_id: eventId,
+			event_time: 1710000000,
+			authorizations: [{ user_id: 'UBOT', is_bot: true }],
+			event,
+		};
+	}
+
+	async function deliver(payload: SlackEventPayload, exists: boolean) {
+		const requests: Array<Parameters<SlackRuntime['dispatch']>[1]> = [];
+
+		const runtime: SlackRuntime = {
+			dispatch: async (_agent, request) => {
+				requests.push(request);
+
+				return { submissionId: 's', acceptedAt: '2026-10-13T00:00:00.000Z', uid: 'uid' };
+			},
+			getAgentInstance: async () => (exists ? { id: 'instance', uid: 'uid' } : null),
+		};
+
+		stubSlackApi(async () => ({ ok: true, messages: [] }));
+		const channel = createSlackChannelForEnv(env, codexAuth, runtime);
+		await channel.route().fetch(signedEventRequest(payload));
+
+		return requests;
+	}
+
+	test('a top-level DM starts a conversation with no repo', async () => {
+		const requests = await deliver(dmPayload('Ev-dm', 'what is new in AI?'), false);
+
+		expect(requests).toHaveLength(1);
+
+		expect(requests[0]?.initialData).toMatchObject({
+			channelId: DM_CHANNEL,
+			threadTs: DM_TS,
+			repo: undefined,
+		});
+
+		expect(requests[0]?.message).toMatchObject({ type: 'slack.direct_message' });
+	});
+
+	test('a DM that mentions the bot is still dispatched', async () => {
+		const requests = await deliver(dmPayload('Ev-dm-mention', '<@UBOT> hi'), false);
+
+		expect(requests).toHaveLength(1);
+	});
+
+	test('a reply in a DM thread continues that conversation', async () => {
+		const requests = await deliver(
+			dmPayload('Ev-dm-reply', 'more please', '1710000000.000009'),
+			true,
+		);
+
+		expect(requests).toHaveLength(1);
+		expect(requests[0]?.initialData).toMatchObject({ threadTs: '1710000000.000009' });
+	});
+
+	test('an external DM is refused', async () => {
+		const payload = dmPayload('Ev-dm-external', 'hi');
+		payload.event.user_team = 'TOTHER';
+
+		const requests = await deliver(payload, false);
+
+		expect(requests).toHaveLength(0);
+	});
+
+	test('a mention in a channel with no default repo dispatches without one', async () => {
+		const payload = eventPayload({
+			eventId: 'Ev-unbound',
+			type: 'app_mention',
+			user: THREAD_STARTER,
+			text: '<@UBOT> hi',
+			ts: THREAD_TS,
+		});
+
+		payload.event.channel = 'C0UNBOUND';
+
+		const requests = await deliver(payload, false);
+
+		expect(requests).toHaveLength(1);
+		expect(requests[0]?.initialData).toMatchObject({ channelId: 'C0UNBOUND', repo: undefined });
 	});
 });
