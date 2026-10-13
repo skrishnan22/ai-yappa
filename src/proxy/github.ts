@@ -124,7 +124,7 @@ export function githubHandlers(
 	};
 }
 
-export function createGitHubPort(env: NodeJS.ProcessEnv = process.env): GitHubPort {
+function githubAppConfig(env: NodeJS.ProcessEnv) {
 	const appId = env.GITHUB_APP_ID;
 	const pem = normalizeGithubAppPrivateKey(env.GITHUB_APP_PRIVATE_KEY);
 	const installationId = env.GITHUB_APP_INSTALLATION_ID;
@@ -135,11 +135,17 @@ export function createGitHubPort(env: NodeJS.ProcessEnv = process.env): GitHubPo
 		);
 	}
 
-	return {
-		async createInstallationToken(args) {
-			const name = args.repo.split('/')[1];
+	return { appId, pem, installationId };
+}
 
-			if (name === undefined) throw new Error(`invalid repo ${args.repo}`);
+export function createGitHubPort(env: NodeJS.ProcessEnv = process.env): GitHubPort {
+	const { appId, pem, installationId } = githubAppConfig(env);
+
+	return {
+		async createInstallationToken({ repo, permissions }) {
+			const name = repo.split('/')[1];
+
+			if (name === undefined) throw new Error(`invalid repo ${repo}`);
 			const jwt = signAppJwt({ appId, privateKeyPem: pem, now: Math.floor(Date.now() / 1000) });
 
 			const response = await githubFetch({
@@ -147,7 +153,7 @@ export function createGitHubPort(env: NodeJS.ProcessEnv = process.env): GitHubPo
 				path: `/app/installations/${installationId}/access_tokens`,
 				token: jwt,
 				tokenType: 'Bearer',
-				body: { repositories: [name], permissions: args.permissions },
+				body: { repositories: [name], permissions },
 			});
 
 			const json = await githubOk(response);
@@ -166,16 +172,118 @@ export function createGitHubPort(env: NodeJS.ProcessEnv = process.env): GitHubPo
 				throw new Error(`GitHub ${response.status} while revoking installation token`);
 			}
 		},
-		async request(args) {
+		async request({ method, path, token, body }) {
 			return githubFetch({
-				method: args.method,
-				path: args.path,
-				token: args.token,
+				method,
+				path,
+				token,
 				tokenType: 'Bearer',
-				body: args.body,
+				body,
 			});
 		},
 	};
+}
+
+const INSTALLATION_PAGE_SIZE = 100;
+
+const METADATA_ONLY = { metadata: 'read' } as const;
+
+async function mintMetadataToken(
+	env: NodeJS.ProcessEnv,
+	repositories?: string[],
+): Promise<{ status: number; json: JsonValue }> {
+	const { appId, pem, installationId } = githubAppConfig(env);
+	const jwt = signAppJwt({ appId, privateKeyPem: pem, now: Math.floor(Date.now() / 1000) });
+
+	return githubFetch({
+		method: 'POST',
+		path: `/app/installations/${installationId}/access_tokens`,
+		token: jwt,
+		tokenType: 'Bearer',
+		body: repositories
+			? { repositories, permissions: METADATA_ONLY }
+			: { permissions: METADATA_ONLY },
+	});
+}
+
+// Best effort: the token expires within the hour anyway.
+async function revokeQuietly(token: string): Promise<void> {
+	await githubFetch({
+		method: 'DELETE',
+		path: '/installation/token',
+		token,
+		tokenType: 'Bearer',
+	}).catch(() => undefined);
+}
+
+/**
+ * The installation's spelling of `owner/name`, or undefined when the App
+ * cannot access it. GitHub refuses (422) to mint a token scoped to a
+ * repository outside the installation, so the mint itself is the check.
+ */
+export async function findInstallationRepository(
+	repo: string,
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<string | undefined> {
+	const [owner, name] = repo.split('/');
+
+	if (!owner || !name) throw new Error(`invalid repo ${repo}`);
+	const response = await mintMetadataToken(env, [name]);
+
+	if (response.status === 422) return undefined;
+	const json = await githubOk(response);
+	const minted = mapToken(json);
+	await revokeQuietly(minted.token);
+
+	const { repositories } = parsedOutput(
+		v.looseObject({ repositories: v.array(v.looseObject({ full_name: v.string() })) }),
+		json,
+		'unexpected GitHub installation token payload',
+	);
+
+	// The mint takes only the name; the owner is the installation's account.
+	return repositories
+		.map((repository) => repository.full_name)
+		.find((fullName) => fullName.toLowerCase() === repo.toLowerCase());
+}
+
+/**
+ * Every repository the App installation can reach, as `owner/name`. Mints a
+ * metadata-only token for the whole installation and revokes it afterwards.
+ */
+export async function listInstallationRepositories(
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<string[]> {
+	const mintResponse = await mintMetadataToken(env);
+	const mintJson = await githubOk(mintResponse);
+	const minted = mapToken(mintJson);
+
+	try {
+		const names: string[] = [];
+
+		for (let page = 1; ; page++) {
+			const response = await githubFetch({
+				method: 'GET',
+				path: `/installation/repositories?per_page=${INSTALLATION_PAGE_SIZE}&page=${page}`,
+				token: minted.token,
+				tokenType: 'Bearer',
+			});
+
+			const json = await githubOk(response);
+
+			const { repositories } = parsedOutput(
+				v.looseObject({ repositories: v.array(v.looseObject({ full_name: v.string() })) }),
+				json,
+				'unexpected GitHub installation repository list',
+			);
+
+			names.push(...repositories.map((repository) => repository.full_name));
+
+			if (repositories.length < INSTALLATION_PAGE_SIZE) return names;
+		}
+	} finally {
+		await revokeQuietly(minted.token);
+	}
 }
 
 function createTokenCache(
@@ -204,17 +312,25 @@ function createTokenCache(
 	};
 }
 
-function signAppJwt(args: { appId: string; privateKeyPem: string; now: number }): string {
+function signAppJwt({
+	appId,
+	privateKeyPem,
+	now,
+}: {
+	appId: string;
+	privateKeyPem: string;
+	now: number;
+}): string {
 	const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
 
 	const payload = Buffer.from(
-		JSON.stringify({ iat: args.now - 60, exp: args.now + 540, iss: args.appId }),
+		JSON.stringify({ iat: now - 60, exp: now + 540, iss: appId }),
 	).toString('base64url');
 
 	const data = `${header}.${payload}`;
 
 	try {
-		const signature = createSign('RSA-SHA256').update(data).sign(args.privateKeyPem);
+		const signature = createSign('RSA-SHA256').update(data).sign(privateKeyPem);
 
 		return `${data}.${signature.toString('base64url')}`;
 	} catch (error) {
@@ -262,7 +378,13 @@ export function normalizeGithubAppPrivateKey(raw: string | undefined): string | 
 	return pem;
 }
 
-async function githubFetch(args: {
+async function githubFetch({
+	method,
+	path,
+	token,
+	tokenType,
+	body,
+}: {
 	method: 'GET' | 'POST' | 'DELETE';
 	path: string;
 	token: string;
@@ -271,17 +393,17 @@ async function githubFetch(args: {
 }): Promise<{ status: number; json: JsonValue }> {
 	const headers = new Headers({
 		accept: 'application/vnd.github+json',
-		authorization: `${args.tokenType} ${args.token}`,
+		authorization: `${tokenType} ${token}`,
 		'user-agent': 'slack-agent',
 		'x-github-api-version': '2022-11-28',
 	});
 
-	if (args.body !== undefined) headers.set('content-type', 'application/json');
+	if (body !== undefined) headers.set('content-type', 'application/json');
 
-	const response = await fetch(`https://api.github.com${args.path}`, {
-		method: args.method,
+	const response = await fetch(`https://api.github.com${path}`, {
+		method,
 		headers,
-		body: args.body !== undefined ? JSON.stringify(args.body) : undefined,
+		body: body !== undefined ? JSON.stringify(body) : undefined,
 	});
 
 	if (response.status === 204) return { status: 204, json: null };
