@@ -1,7 +1,12 @@
 import { type ModelChoice, modelHelpText, resolveModelChoice } from '../agents/model-choice.ts';
 import { parseInvocationArgs } from './invocation-args.ts';
 
-export type SlackSignal = 'slack.app_mention' | 'slack.message';
+export type SlackSignal = 'slack.app_mention' | 'slack.direct_message' | 'slack.message';
+
+/** A mention or any DM: the user is talking to Yappa, not only to the thread. */
+export function isAddressed(signal: SlackSignal): boolean {
+	return signal !== 'slack.message';
+}
 
 type SlackAuthorization = {
 	user_id: string;
@@ -10,10 +15,9 @@ type SlackAuthorization = {
 
 export type AdmitDecision =
 	| { kind: 'refuse-external' }
-	| { kind: 'no-repo' }
 	| { kind: 'drop-untracked' }
 	| { kind: 'drop-planning' }
-	| { kind: 'dispatch'; repo: string };
+	| { kind: 'dispatch'; repo: string | undefined };
 
 /**
  * Whether a Slack user belongs to another organization. In a Slack Connect
@@ -36,19 +40,18 @@ export function decideAdmit(args: {
 	external: boolean;
 	repo: string | undefined;
 	conversationExists: boolean;
-	// A planning session is open in the thread: only mentions and cards reach Yappa.
+	// A planning session is open in the thread: only addressed messages and cards reach Yappa.
 	planningActive: boolean;
 }): AdmitDecision {
-	if (args.signalType === 'slack.message' && !args.conversationExists) {
-		return { kind: 'drop-untracked' };
-	}
+	const addressed = isAddressed(args.signalType);
+
+	if (!addressed && !args.conversationExists) return { kind: 'drop-untracked' };
 
 	if (args.external) return { kind: 'refuse-external' };
 
-	if (args.signalType === 'slack.message' && args.planningActive) return { kind: 'drop-planning' };
+	if (!addressed && args.planningActive) return { kind: 'drop-planning' };
 
-	if (args.repo === undefined) return { kind: 'no-repo' };
-
+	// The repo is the channel's default, if any; the Coworker attaches one otherwise.
 	return { kind: 'dispatch', repo: args.repo };
 }
 
@@ -58,7 +61,7 @@ export type InvocationDecision =
 	| { kind: 'proceed'; body: string; modelChoice?: ModelChoice };
 
 /**
- * Inline `$model:` / `$effort:` arguments on a mention that creates a
+ * Inline `$model:` / `$effort:` arguments on a mention or DM that creates a
  * conversation. Replies and later mentions are plain text: the thread's
  * choice is already recorded and they could not change it. A ChatGPT model
  * is refused while ChatGPT is not usable, so asking for Luna never silently
@@ -70,7 +73,7 @@ export function decideInvocation(args: {
 	chatgptConnected: boolean;
 	conversationExists: boolean;
 }): InvocationDecision {
-	if (args.signalType !== 'slack.app_mention' || args.conversationExists) {
+	if (!isAddressed(args.signalType) || args.conversationExists) {
 		return { kind: 'proceed', body: args.text };
 	}
 

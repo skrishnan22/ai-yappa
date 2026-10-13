@@ -294,7 +294,7 @@ async function admitThread({
 	const conversationExists = await conversationExistsInThread(runtime, id);
 
 	async function refuse(
-		kind: 'refuse-external' | 'no-repo' | 'bad-args' | 'model-unavailable',
+		kind: 'refuse-external' | 'bad-args' | 'model-unavailable',
 		reply: string,
 	): Promise<void> {
 		emitSemanticEvent({
@@ -338,13 +338,6 @@ async function admitThread({
 	switch (decision.kind) {
 		case 'refuse-external':
 			await refuse(decision.kind, 'Yappa only works for members of this workspace.');
-
-			return;
-		case 'no-repo':
-			await refuse(
-				decision.kind,
-				'This channel has no default repo. Add it to `src/config.ts` (or pass `repo:` once that override exists).',
-			);
 
 			return;
 		case 'drop-untracked':
