@@ -6,6 +6,7 @@ import type { OperationContext } from './ops.ts';
 import {
 	createGitHubPort,
 	githubHandlers,
+	findInstallationRepository,
 	listInstallationRepositories,
 	normalizeGithubAppPrivateKey,
 	type GitHubInstallationPermissions,
@@ -387,5 +388,99 @@ describe('listInstallationRepositories', () => {
 
 	test('names the missing GitHub App secrets', async () => {
 		await expect(listInstallationRepositories({})).rejects.toThrow(/GITHUB_APP_ID/);
+	});
+});
+
+describe('findInstallationRepository', () => {
+	const rsaPem = generateKeyPairSync('rsa', { modulusLength: 2048 })
+		.privateKey.export({ type: 'pkcs1', format: 'pem' })
+		.toString();
+
+	const env = {
+		GITHUB_APP_ID: '1',
+		GITHUB_APP_PRIVATE_KEY: rsaPem,
+		GITHUB_APP_INSTALLATION_ID: '2',
+	};
+
+	async function withMint<T>(
+		mint: Response,
+		body: () => Promise<T>,
+	): Promise<{ result: T; requests: { method: string; body: string | undefined }[] }> {
+		const requests: { method: string; body: string | undefined }[] = [];
+		const original = globalThis.fetch;
+
+		const fakeFetch: typeof fetch = async (_input, init) => {
+			const method = init?.method ?? 'GET';
+			requests.push({ method, body: v.is(v.string(), init?.body) ? init.body : undefined });
+
+			return method === 'DELETE' ? new Response(null, { status: 204 }) : mint;
+		};
+
+		globalThis.fetch = fakeFetch;
+
+		try {
+			const result = await body();
+
+			return { result, requests };
+		} finally {
+			globalThis.fetch = original;
+		}
+	}
+
+	test('mints a token scoped to the repo and returns the installation spelling', async () => {
+		const mint = new Response(
+			JSON.stringify({
+				token: 'ghs_check',
+				expires_at: '2099-01-01T00:00:00Z',
+				repositories: [{ full_name: 'Acme/API' }],
+			}),
+			{ status: 201 },
+		);
+
+		const { result, requests } = await withMint(mint, () =>
+			findInstallationRepository('acme/api', env),
+		);
+
+		expect(result).toBe('Acme/API');
+
+		expect(JSON.parse(requests[0]?.body ?? '{}')).toEqual({
+			repositories: ['api'],
+			permissions: { metadata: 'read' },
+		});
+
+		expect(requests.map((request) => request.method)).toEqual(['POST', 'DELETE']);
+	});
+
+	test('returns undefined when GitHub refuses a repo outside the installation', async () => {
+		const mint = new Response(JSON.stringify({ message: 'not accessible' }), { status: 422 });
+
+		const { result, requests } = await withMint(mint, () =>
+			findInstallationRepository('acme/nope', env),
+		);
+
+		expect(result).toBeUndefined();
+		expect(requests.map((request) => request.method)).toEqual(['POST']);
+	});
+
+	test('returns undefined for the same name under another owner', async () => {
+		const mint = new Response(
+			JSON.stringify({
+				token: 'ghs_check',
+				expires_at: '2099-01-01T00:00:00Z',
+				repositories: [{ full_name: 'acme/api' }],
+			}),
+			{ status: 201 },
+		);
+
+		const { result } = await withMint(mint, () => findInstallationRepository('other/api', env));
+
+		expect(result).toBeUndefined();
+	});
+
+	test('surfaces other GitHub errors', async () => {
+		const mint = new Response(JSON.stringify({ message: 'down' }), { status: 503 });
+		await expect(withMint(mint, () => findInstallationRepository('acme/api', env))).rejects.toThrow(
+			/503/,
+		);
 	});
 });

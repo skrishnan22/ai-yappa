@@ -223,6 +223,7 @@ git commit -m "List the GitHub App installation's repositories"
 - Produces:
   - `type RepoDirectory = { list(): Promise<string[]> }`
   - `cachedRepoDirectory(list: () => Promise<string[]>, now?: () => number): RepoDirectory`, 5-minute cache, failures not cached.
+  - Revised in review: `RepoDirectory` became `{ find(repo); list() }` with no cache. `find` is an exact check (`findInstallationRepository` in `src/proxy/github.ts`, a repo-scoped metadata token mint); `list` runs only on a miss, for suggestions.
   - `attachRepoTool(args: { directory: RepoDirectory; attach: (repoUrl: string) => void }): ToolDefinition`, the tool named `attach_repo` with input `{ repo: string }`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -431,7 +432,7 @@ git commit -m "Add attach_repo, checked against the GitHub App installation"
 - Test: `src/sandboxes/hydrate.test.ts`
 
 **Interfaces:**
-- Consumes: `attachRepoTool`, `cachedRepoDirectory` (Task 2); `listInstallationRepositories` (Task 1).
+- Consumes: `attachRepoTool` (Task 2); `findInstallationRepository`, `listInstallationRepositories` (Task 1).
 - Produces: `initialData.repo` is optional on `Coworker`. Persistent state key `'repo'` (`string | null`) holds an attached repo. Batch 3 dispatches with `repo: undefined`.
 
 - [ ] **Step 1: Write the failing test** (add to `describe('coworkerInstructions', …)`)
@@ -474,12 +475,14 @@ const binding = repo
 In `src/agents/coworker.ts`:
 
 1. Schema: `repo: v.optional(v.pipe(v.string(), v.url())),`
-2. Imports: `attachRepoTool, cachedRepoDirectory` from `./attach-repo.ts`; `listInstallationRepositories` from `../proxy/github.ts`.
+2. Imports: `attachRepoTool` from `./attach-repo.ts`; `findInstallationRepository`, `listInstallationRepositories` from `../proxy/github.ts`.
 3. Module scope, after `instrument(...)`:
 
 ```ts
-// Shared by every Coworker in the isolate; refreshed every few minutes.
-const installationRepos = cachedRepoDirectory(() => listInstallationRepositories());
+const installationRepos = {
+	find: (repo: string) => findInstallationRepository(repo),
+	list: () => listInstallationRepositories(),
+};
 ```
 
 4. In `Coworker`, after `const agentEnv = loadAgentEnv();`:

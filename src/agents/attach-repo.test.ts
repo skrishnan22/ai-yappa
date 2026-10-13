@@ -1,6 +1,6 @@
 import type { ToolDefinition } from '@flue/runtime';
 import { describe, expect, test, vi } from 'vitest';
-import { attachRepoTool, cachedRepoDirectory } from './attach-repo.ts';
+import { attachRepoTool } from './attach-repo.ts';
 
 const INSTALLED = ['acme/api', 'acme/web', 'acme/infra'];
 
@@ -12,17 +12,24 @@ function run(tool: ToolDefinition, repo: string) {
 	});
 }
 
-function setup(list: () => Promise<string[]> = async () => INSTALLED) {
+function setup(installed: string[] = INSTALLED) {
 	const attached: string[] = [];
 
+	// Like the GitHub mint: an exact, case-insensitive check returning the installation's spelling.
+	const find = vi.fn<(repo: string) => Promise<string | undefined>>(async (repo) =>
+		installed.find((name) => name.toLowerCase() === repo),
+	);
+
+	const list = vi.fn<() => Promise<string[]>>(async () => installed);
+
 	const tool = attachRepoTool({
-		directory: cachedRepoDirectory(list),
+		directory: { find, list },
 		attach: (repo) => {
 			attached.push(repo);
 		},
 	});
 
-	return { tool, attached };
+	return { tool, attached, find, list };
 }
 
 describe('attach_repo', () => {
@@ -39,7 +46,7 @@ describe('attach_repo', () => {
 	});
 
 	test('uses the installation spelling when case differs', async () => {
-		const { tool, attached } = setup(async () => ['Acme/API']);
+		const { tool, attached } = setup(['Acme/API']);
 		await run(tool, 'acme/api');
 		expect(attached).toEqual(['https://github.com/Acme/API.git']);
 	});
@@ -59,45 +66,29 @@ describe('attach_repo', () => {
 	});
 
 	test('suggests a repo with the same name under another owner', async () => {
-		const { tool } = setup(async () => ['acme-inc/api', 'acme/web']);
+		const { tool } = setup(['acme-inc/api', 'acme/web']);
 
 		await expect(run(tool, 'acme/api')).rejects.toThrow(/Closest it can access: acme-inc\/api\.$/);
 	});
 
-	test('refuses a non-GitHub value without a lookup', async () => {
-		const list = vi.fn<() => Promise<string[]>>(async () => INSTALLED);
-		const { tool } = setup(list);
-		await expect(run(tool, 'https://gitlab.com/acme/api')).rejects.toThrow(/github.com/);
+	test('checks a hit without listing the installation', async () => {
+		const { tool, attached, list } = setup();
+
+		await run(tool, 'acme/web');
+		expect(attached).toEqual(['https://github.com/acme/web.git']);
 		expect(list).not.toHaveBeenCalled();
 	});
 
+	test('refuses a non-GitHub value without a lookup', async () => {
+		const { tool, find } = setup();
+		await expect(run(tool, 'https://gitlab.com/acme/api')).rejects.toThrow(/github.com/);
+		expect(find).not.toHaveBeenCalled();
+	});
+
 	test('surfaces a failed installation lookup as a tool error', async () => {
-		const { tool } = setup(async () => {
-			throw new Error('GitHub 503');
-		});
+		const { tool, find } = setup();
+		find.mockRejectedValue(new Error('GitHub 503'));
 
 		await expect(run(tool, 'acme/api')).rejects.toThrow(/GitHub 503/);
-	});
-});
-
-describe('cachedRepoDirectory', () => {
-	test('reuses a lookup for five minutes and does not cache a failure', async () => {
-		let now = 0;
-
-		const list = vi
-			.fn<() => Promise<string[]>>()
-			.mockRejectedValueOnce(new Error('down'))
-			.mockResolvedValue(INSTALLED);
-
-		const directory = cachedRepoDirectory(list, () => now);
-
-		await expect(directory.list()).rejects.toThrow('down');
-		await directory.list();
-		now = 4 * 60 * 1000;
-		await directory.list();
-		expect(list).toHaveBeenCalledTimes(2);
-		now = 6 * 60 * 1000;
-		await directory.list();
-		expect(list).toHaveBeenCalledTimes(3);
 	});
 });

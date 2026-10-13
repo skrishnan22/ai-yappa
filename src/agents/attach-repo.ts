@@ -3,30 +3,16 @@ import levenshtein from 'damerau-levenshtein';
 import * as v from 'valibot';
 import { canonicalRepo } from '../proxy/policy.ts';
 
-export type RepoDirectory = { list(): Promise<string[]> };
-
-const DIRECTORY_TTL_MS = 5 * 60 * 1000;
+/**
+ * The GitHub App installation, as `attach_repo` sees it. `find` is the exact
+ * check on every call; `list` runs only on a miss, to suggest names.
+ */
+export type RepoDirectory = {
+	find(repo: string): Promise<string | undefined>;
+	list(): Promise<string[]>;
+};
 
 const MAX_SUGGESTIONS = 5;
-
-/** Per-isolate cache of the installation's repositories. A failed lookup is retried next call. */
-export function cachedRepoDirectory(
-	list: () => Promise<string[]>,
-	now: () => number = Date.now,
-): RepoDirectory {
-	let cached: { names: string[]; at: number } | undefined;
-
-	return {
-		async list() {
-			if (cached && now() - cached.at < DIRECTORY_TTL_MS) return cached.names;
-
-			const names = await list();
-			cached = { names, at: now() };
-
-			return names;
-		},
-	};
-}
 
 function repoName(fullName: string): string {
 	return fullName.split('/')[1] ?? fullName;
@@ -87,10 +73,10 @@ export function attachRepoTool(args: {
 		input: v.object({ repo: v.pipe(v.string(), v.minLength(1)) }),
 		async run({ data }) {
 			const wanted = canonicalRepo(data.repo).toLowerCase();
-			const names = await args.directory.list();
-			const match = names.find((name) => name.toLowerCase() === wanted);
+			const match = await args.directory.find(wanted);
 
 			if (!match) {
+				const names = await args.directory.list();
 				throw new Error(refusal(wanted, names));
 			}
 

@@ -63,12 +63,13 @@ Unchanged:
 - **No repo yet:** no `useSandbox`, no GitHub tools, so a chat-only thread
   never creates a Daytona container. Mount `attach_repo`.
 - **`attach_repo({ repo })`:** accepts `owner/name` or a GitHub URL. Code,
-  not the model, checks it against the GitHub App installation's repositories
-  (`GET /installation/repositories` through the existing App token path in
-  `src/proxy/github.ts`, cached for a few minutes per isolate). On success it
-  writes `repo` (normalized to the HTTPS clone URL) and returns it. On a miss
-  it returns an error with up to five closest accessible names so the model
-  can ask "did you mean…".
+  not the model, checks it against the GitHub App installation: it mints a
+  metadata-only token scoped to that repository, which GitHub refuses (422)
+  for a repository outside the installation. No list and no cache on a hit.
+  On success it writes `repo` (normalized to the HTTPS clone URL, in the
+  installation's spelling) and returns it. On a miss it lists the
+  installation (`GET /installation/repositories`) and returns an error with up
+  to five close accessible names so the model can ask "did you mean…".
 - **Repo attached:** mount `useSandbox` and `githubTools` for that repo, and
   stop mounting `attach_repo`. Flue attaches the sandbox at the next turn
   boundary and announces it with an `environment` signal; hydration runs in
