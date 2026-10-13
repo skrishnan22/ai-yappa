@@ -29,6 +29,7 @@ import { gitAuthorFromEnv, loadAgentEnv } from '../env.ts';
 import { INTEGRATION_CATALOG, resolveIntegrationCatalog } from '../integrations/mcp-catalog.ts';
 import { planningStore } from '../planning/planning-store.ts';
 import { createPlanningStartup } from '../planning/planning-startup.ts';
+import { findInstallationRepository, listInstallationRepositories } from '../proxy/github.ts';
 import type { AuditRecord } from '../proxy/ops.ts';
 import { createContainerSandbox, daytona } from '../sandboxes/daytona.ts';
 import {
@@ -39,6 +40,7 @@ import {
 } from '../sandboxes/hydrate.ts';
 import { skills } from '../skills/index.ts';
 import { invokedSkills } from '../skills/invocation.ts';
+import { attachRepoTool } from './attach-repo.ts';
 import { githubTools } from './github-tools.ts';
 import { coworkerModel, modelChoiceSchema } from './model-choice.ts';
 import { deliveredModelRoute } from './model-route.ts';
@@ -53,12 +55,17 @@ observe((event, context) => {
 
 instrument(createPlanningStartup());
 
+const installationRepos = {
+	find: (repo: string) => findInstallationRepository(repo),
+	list: () => listInstallationRepositories(),
+};
+
 const initialDataSchema = v.object({
 	channelId: v.string(),
 	threadTs: v.string(),
 	startedBy: v.optional(v.string()),
 	startedAt: v.pipe(v.string(), v.isoTimestamp()),
-	repo: v.pipe(v.string(), v.url()),
+	repo: v.optional(v.pipe(v.string(), v.url())),
 	modelChoice: v.optional(modelChoiceSchema),
 });
 
@@ -81,6 +88,10 @@ export function Coworker(props: { id: string }) {
 	// Fail fast with the full missing-secret list (Slack optional here — the
 	// reply tool degrades to `posted: false` without a token).
 	const agentEnv = loadAgentEnv();
+
+	// An attached repo wins; older conversations carry theirs in initialData.
+	const [attachedRepo, setAttachedRepo] = usePersistentState<string | null>('repo', null);
+	const repo = attachedRepo ?? data.repo;
 
 	useTool(replyInThread(data, agentEnv.SLACK_BOT_TOKEN));
 
@@ -129,16 +140,29 @@ export function Coworker(props: { id: string }) {
 	// ponytail: conversation-scoped audit array until the D1 cross-conversation store in M4
 	const [, setProxyAudit] = usePersistentState<AuditRecord[]>('proxy-audit', []);
 
-	for (const tool of githubTools({
-		conversationId: props.id,
-		repo: data.repo,
-		audit: {
-			append: (record) => {
-				setProxyAudit((entries) => [...entries, record]);
+	// Until a repo is attached there is no sandbox and no GitHub tools, so a
+	// chat-only thread never creates a container. Once attached, it is permanent.
+	if (repo) {
+		for (const tool of githubTools({
+			conversationId: props.id,
+			repo,
+			audit: {
+				append: (record) => {
+					setProxyAudit((entries) => [...entries, record]);
+				},
 			},
-		},
-	})) {
-		useTool(tool);
+		})) {
+			useTool(tool);
+		}
+	} else {
+		useTool(
+			attachRepoTool({
+				directory: installationRepos,
+				attach: (url) => {
+					setAttachedRepo(url);
+				},
+			}),
+		);
 	}
 
 	// The model activates a skill on its own when a request matches its
@@ -201,35 +225,37 @@ export function Coworker(props: { id: string }) {
 		});
 	}
 
-	useSandbox({
-		async createSandbox(options) {
-			const apiKey = agentEnv.DAYTONA_API_KEY;
-			const client = new Daytona({ apiKey });
-			const sandbox = await createContainerSandbox(client, { conversationId: options.id });
-			await publishCardEvent({
-				instanceId: props.id,
-				type: 'hydration',
-				phase: 'start',
-			});
+	if (repo) {
+		useSandbox({
+			async createSandbox(options) {
+				const apiKey = agentEnv.DAYTONA_API_KEY;
+				const client = new Daytona({ apiKey });
+				const sandbox = await createContainerSandbox(client, { conversationId: options.id });
+				await publishCardEvent({
+					instanceId: props.id,
+					type: 'hydration',
+					phase: 'start',
+				});
 
-			const result = await hydrateWorkspace(hydrateIoFromDaytona(sandbox), {
-				repo: data.repo,
-				conversationId: options.id,
-				git: gitAuthorFromEnv(agentEnv),
-			});
+				const result = await hydrateWorkspace(hydrateIoFromDaytona(sandbox), {
+					repo,
+					conversationId: options.id,
+					git: gitAuthorFromEnv(agentEnv),
+				});
 
-			await publishCardEvent({
-				instanceId: props.id,
-				type: 'hydration',
-				phase: 'done',
-				skipped: result.skipped,
-			});
+				await publishCardEvent({
+					instanceId: props.id,
+					type: 'hydration',
+					phase: 'done',
+					skipped: result.skipped,
+				});
 
-			return daytona(sandbox, { cwd: WORKSPACE_REPO_DIR }).createSandbox(options);
-		},
-	});
+				return daytona(sandbox, { cwd: WORKSPACE_REPO_DIR }).createSandbox(options);
+			},
+		});
+	}
 
-	return coworkerInstructions(data.repo);
+	return coworkerInstructions(repo);
 }
 
 Coworker.initialData = initialDataSchema;

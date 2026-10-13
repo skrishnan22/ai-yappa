@@ -203,6 +203,14 @@ describe('hydrateWorkspace', () => {
 });
 
 describe('coworkerInstructions', () => {
+	test('without a repository, answers directly and attaches one before code work', () => {
+		const prompt = coworkerInstructions(undefined);
+		expect(prompt).toMatch(/has no repository yet/i);
+		expect(prompt).toContain('attach_repo');
+		expect(prompt).toMatch(/ask the user/i);
+		expect(prompt).not.toContain(WORKSPACE_REPO_DIR);
+	});
+
 	test('is conversational by default and mutates the repository only for a clear implementation request', () => {
 		const prompt = coworkerInstructions('https://github.com/skrishnan22/codevil.git');
 		expect(prompt).toContain(WORKSPACE_REPO_DIR);
