@@ -45,11 +45,22 @@ export function installCommandForLockfile(lockfileName: string): string | undefi
 	}
 }
 
-export function coworkerInstructions(repo: string): string {
+export function coworkerInstructions(repo: string | undefined): string {
+	const binding = repo
+		? [
+				`This conversation is bound to one Slack thread and the repository ${repo}.`,
+				`The workspace is already cloned and dependencies are installed at ${WORKSPACE_REPO_DIR}.`,
+			]
+		: [
+				'This conversation is bound to one Slack thread and has no repository yet.',
+				'Answer requests that need no code directly, without a repository.',
+				'When a request needs code or GitHub, infer the repository from the request and thread, then call attach_repo before any other code work; the workspace and GitHub tools appear after it succeeds.',
+				'If the repository is ambiguous, or attach_repo refuses it, ask the user which one they mean. A thread works on one repository only.',
+			];
+
 	return [
 		'You are a Slack-native software-engineering coworker: a general-purpose conversational agent specialized in software engineering.',
-		`This conversation is bound to one Slack thread and the repository ${repo}.`,
-		`The workspace is already cloned and dependencies are installed at ${WORKSPACE_REPO_DIR}.`,
+		...binding,
 		'Treat the Slack signal body as the request to handle; answering the user is an action.',
 		'Signal attributes may include threadContext: earlier messages in this thread, including ones that did not mention you.',
 		'First decide what kind of help the user requested and use tools proportionately.',
