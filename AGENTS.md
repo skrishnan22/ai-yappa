@@ -38,6 +38,8 @@ Implementation source of truth: `SLACK_AGENT_SPEC.md`. Milestone scope: `SLACK_A
 
 ## Conventions
 
+- Destructure object parameters in function and method signatures instead of accepting an `args` or `options` object and reading its fields in the body. Keep whole domain objects intact when the function works with or forwards the object itself.
+
 - Check optional values by truthiness (`if (x)`, `if (!x)`, `x ? a : b`), not `x !== undefined`, when no falsy value is meaningful: objects, arrays, functions, non-empty string-literal unions, and strings or numbers where `''` or `0` would also mean "absent". Keep `=== undefined` where `''`, `0`, or `false` is a real value, and in generics whose type parameter could be falsy. Oxlint cannot enforce this (the anti-slop rules have no type information), so review does.
 
 ## Domain docs

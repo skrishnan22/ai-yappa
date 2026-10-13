@@ -142,10 +142,10 @@ export function createGitHubPort(env: NodeJS.ProcessEnv = process.env): GitHubPo
 	const { appId, pem, installationId } = githubAppConfig(env);
 
 	return {
-		async createInstallationToken(args) {
-			const name = args.repo.split('/')[1];
+		async createInstallationToken({ repo, permissions }) {
+			const name = repo.split('/')[1];
 
-			if (name === undefined) throw new Error(`invalid repo ${args.repo}`);
+			if (name === undefined) throw new Error(`invalid repo ${repo}`);
 			const jwt = signAppJwt({ appId, privateKeyPem: pem, now: Math.floor(Date.now() / 1000) });
 
 			const response = await githubFetch({
@@ -153,7 +153,7 @@ export function createGitHubPort(env: NodeJS.ProcessEnv = process.env): GitHubPo
 				path: `/app/installations/${installationId}/access_tokens`,
 				token: jwt,
 				tokenType: 'Bearer',
-				body: { repositories: [name], permissions: args.permissions },
+				body: { repositories: [name], permissions },
 			});
 
 			const json = await githubOk(response);
@@ -172,13 +172,13 @@ export function createGitHubPort(env: NodeJS.ProcessEnv = process.env): GitHubPo
 				throw new Error(`GitHub ${response.status} while revoking installation token`);
 			}
 		},
-		async request(args) {
+		async request({ method, path, token, body }) {
 			return githubFetch({
-				method: args.method,
-				path: args.path,
-				token: args.token,
+				method,
+				path,
+				token,
 				tokenType: 'Bearer',
-				body: args.body,
+				body,
 			});
 		},
 	};
@@ -312,17 +312,25 @@ function createTokenCache(
 	};
 }
 
-function signAppJwt(args: { appId: string; privateKeyPem: string; now: number }): string {
+function signAppJwt({
+	appId,
+	privateKeyPem,
+	now,
+}: {
+	appId: string;
+	privateKeyPem: string;
+	now: number;
+}): string {
 	const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
 
 	const payload = Buffer.from(
-		JSON.stringify({ iat: args.now - 60, exp: args.now + 540, iss: args.appId }),
+		JSON.stringify({ iat: now - 60, exp: now + 540, iss: appId }),
 	).toString('base64url');
 
 	const data = `${header}.${payload}`;
 
 	try {
-		const signature = createSign('RSA-SHA256').update(data).sign(args.privateKeyPem);
+		const signature = createSign('RSA-SHA256').update(data).sign(privateKeyPem);
 
 		return `${data}.${signature.toString('base64url')}`;
 	} catch (error) {
@@ -370,7 +378,13 @@ export function normalizeGithubAppPrivateKey(raw: string | undefined): string | 
 	return pem;
 }
 
-async function githubFetch(args: {
+async function githubFetch({
+	method,
+	path,
+	token,
+	tokenType,
+	body,
+}: {
 	method: 'GET' | 'POST' | 'DELETE';
 	path: string;
 	token: string;
@@ -379,17 +393,17 @@ async function githubFetch(args: {
 }): Promise<{ status: number; json: JsonValue }> {
 	const headers = new Headers({
 		accept: 'application/vnd.github+json',
-		authorization: `${args.tokenType} ${args.token}`,
+		authorization: `${tokenType} ${token}`,
 		'user-agent': 'slack-agent',
 		'x-github-api-version': '2022-11-28',
 	});
 
-	if (args.body !== undefined) headers.set('content-type', 'application/json');
+	if (body !== undefined) headers.set('content-type', 'application/json');
 
-	const response = await fetch(`https://api.github.com${args.path}`, {
-		method: args.method,
+	const response = await fetch(`https://api.github.com${path}`, {
+		method,
 		headers,
-		body: args.body !== undefined ? JSON.stringify(args.body) : undefined,
+		body: body !== undefined ? JSON.stringify(body) : undefined,
 	});
 
 	if (response.status === 204) return { status: 204, json: null };
