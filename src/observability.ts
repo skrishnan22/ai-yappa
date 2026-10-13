@@ -1,13 +1,14 @@
+import type { SlackSignal } from './channels/admit.ts';
+
 export type SlackAdmissionEvent = {
 	event_name: 'slack_admission';
 	outcome: 'dispatched' | 'deduplicated' | 'refused' | 'dropped' | 'failed';
 	conversation_id: string;
 	slack_event_id: string;
-	signal_type: 'slack.app_mention' | 'slack.message';
+	signal_type: SlackSignal;
 	decision:
 		| 'dispatch'
 		| 'refuse-external'
-		| 'no-repo'
 		| 'drop-untracked'
 		| 'drop-planning'
 		| 'bad-args'

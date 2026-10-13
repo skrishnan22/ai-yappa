@@ -174,13 +174,14 @@ export function Coworker(props: { id: string }) {
 	}
 
 	// The model activates a skill on its own when a request matches its
-	// description; `/<name>` in a mention makes it activate that one first.
+	// description; `/<name>` in a mention or DM makes it activate that one first.
 	for (const skill of skills) {
 		useSkill(skill);
 	}
 
 	const invoked =
-		delivery.kind === 'signal' && delivery.type === 'slack.app_mention'
+		delivery.kind === 'signal' &&
+		(delivery.type === 'slack.app_mention' || delivery.type === 'slack.direct_message')
 			? invokedSkills(delivery.body, new Set(skills.map((skill) => skill.name)))
 			: [];
 

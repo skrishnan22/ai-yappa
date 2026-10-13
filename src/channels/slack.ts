@@ -18,6 +18,7 @@ import type { PlanningStore } from '../planning/decision-log.ts';
 import {
 	decideAdmit,
 	decideInvocation,
+	isAddressed,
 	isExternalSender,
 	isTimeoutRetry,
 	mentionsAuthorizedBot,
@@ -225,9 +226,13 @@ export function createSlackChannelForEnv(
 
 					if (event.bot_id !== undefined) return;
 
-					if (event.thread_ts === undefined) return;
+					// Every DM is addressed to Yappa; a top-level DM starts its own thread.
+					const direct = event.channel_type === 'im';
 
-					if (mentionsAuthorizedBot(event.text ?? '', payload.authorizations)) return;
+					if (!direct && event.thread_ts === undefined) return;
+
+					// app_mention handles mentions in channels; it does not fire in DMs.
+					if (!direct && mentionsAuthorizedBot(event.text ?? '', payload.authorizations)) return;
 					await admitThread({
 						channel,
 						env,
@@ -237,13 +242,13 @@ export function createSlackChannelForEnv(
 						thread: {
 							teamId: payload.team_id,
 							channelId: event.channel,
-							threadTs: event.thread_ts,
+							threadTs: event.thread_ts ?? event.ts,
 						},
 						userId: event.user,
 						external: isExternalEvent(payload, event),
 						eventId: payload.event_id,
 						text: event.text ?? '',
-						signalType: 'slack.message',
+						signalType: direct ? 'slack.direct_message' : 'slack.message',
 						timeoutRetry,
 					});
 
@@ -294,7 +299,7 @@ async function admitThread({
 	const conversationExists = await conversationExistsInThread(runtime, id);
 
 	async function refuse(
-		kind: 'refuse-external' | 'no-repo' | 'bad-args' | 'model-unavailable',
+		kind: 'refuse-external' | 'bad-args' | 'model-unavailable',
 		reply: string,
 	): Promise<void> {
 		emitSemanticEvent({
@@ -319,7 +324,7 @@ async function admitThread({
 	// one reply leaking into a session beats silencing every thread.
 	let planningActive = false;
 
-	if (signalType === 'slack.message' && conversationExists && planning) {
+	if (!isAddressed(signalType) && conversationExists && planning) {
 		try {
 			planningActive = await planning.sessions.isActive(id);
 		} catch (error) {
@@ -338,13 +343,6 @@ async function admitThread({
 	switch (decision.kind) {
 		case 'refuse-external':
 			await refuse(decision.kind, 'Yappa only works for members of this workspace.');
-
-			return;
-		case 'no-repo':
-			await refuse(
-				decision.kind,
-				'This channel has no default repo. Add it to `src/config.ts` (or pass `repo:` once that override exists).',
-			);
 
 			return;
 		case 'drop-untracked':

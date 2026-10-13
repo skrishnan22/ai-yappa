@@ -20,7 +20,7 @@ describe('decideAdmit', () => {
 		).toEqual({ kind: 'refuse-external' });
 	});
 
-	test('refuses a workspace member in a channel with no repo', () => {
+	test('a mention in a channel with no default repo dispatches without one', () => {
 		expect(
 			decideAdmit({
 				signalType: 'slack.app_mention',
@@ -29,7 +29,31 @@ describe('decideAdmit', () => {
 				conversationExists: false,
 				planningActive: false,
 			}),
-		).toEqual({ kind: 'no-repo' });
+		).toEqual({ kind: 'dispatch', repo: undefined });
+	});
+
+	test('a direct message creates a conversation', () => {
+		expect(
+			decideAdmit({
+				signalType: 'slack.direct_message',
+				external: false,
+				repo: undefined,
+				conversationExists: false,
+				planningActive: false,
+			}),
+		).toEqual({ kind: 'dispatch', repo: undefined });
+	});
+
+	test('an external direct message is refused', () => {
+		expect(
+			decideAdmit({
+				signalType: 'slack.direct_message',
+				external: true,
+				repo: undefined,
+				conversationExists: false,
+				planningActive: false,
+			}),
+		).toEqual({ kind: 'refuse-external' });
 	});
 
 	test('a mention creates a conversation when none exists', () => {
@@ -128,6 +152,18 @@ describe('decideAdmit', () => {
 			).toEqual({ kind: 'dispatch', repo: 'https://github.com/org/pilot.git' });
 		});
 
+		test('a direct message is dispatched', () => {
+			expect(
+				decideAdmit({
+					signalType: 'slack.direct_message',
+					external: false,
+					repo: undefined,
+					conversationExists: true,
+					planningActive: true,
+				}),
+			).toEqual({ kind: 'dispatch', repo: undefined });
+		});
+
 		test('an external reply is still refused', () => {
 			expect(
 				decideAdmit({
@@ -187,6 +223,17 @@ describe('decideInvocation', () => {
 			},
 		});
 		expect(mention('<@U1> fix it')).toEqual({ kind: 'proceed', body: '<@U1> fix it' });
+	});
+
+	test('parses model arguments on a direct message that creates a conversation', () => {
+		expect(
+			decideInvocation({
+				signalType: 'slack.direct_message',
+				text: '$model:kimi hello',
+				chatgptConnected: false,
+				conversationExists: false,
+			}),
+		).toMatchObject({ kind: 'proceed', body: 'hello' });
 	});
 
 	test('refuses bad arguments with the help text', () => {
