@@ -1,7 +1,7 @@
 # Repo-optional conversations and DMs
 
 Date: 2026-10-13
-Status: Agreed in chat; spec ready for review. Not implemented.
+Status: Implemented (PRs #57–#60). ADR 0024.
 
 ## Goal
 

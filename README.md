@@ -144,8 +144,8 @@ Setup writes the assigned host into `TUNNEL_HOSTNAME`. Then:
 
 1. `pnpm run dev` (default `http://localhost:5173`).
 2. `pnpm run tunnel`.
-3. Slack Events URL, once: `https://<assigned-host>/channels/slack/events`. Subscribe to `app_mention` and thread `message` events. Scopes: `app_mentions:read`, `chat:write`, `commands`, channel history. Point the `/aiyappa` slash command at `https://<assigned-host>/channels/slack/commands`.
-4. Mention the bot in a mapped channel.
+3. Slack Events URL, once: `https://<assigned-host>/channels/slack/events`. `slack-app-manifest.yaml` lists the events (`app_mention`, `message.channels`, `message.groups`, `message.im`), the scopes (including `im:history` for DMs), and the App Home messages tab that lets users DM the bot. Point the `/aiyappa` slash command at `https://<assigned-host>/channels/slack/commands`.
+4. Mention the bot in any channel it is in, or DM it. Without a default repo, name the repository in the request (`in owner/name, …`).
 
 Stop with `pnpm run tunnel:stop`. Free ngrok also shows a browser warning page. Slack's event POSTs skip that. If you open the URL in a browser, click through once.
 

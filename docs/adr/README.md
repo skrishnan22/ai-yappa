@@ -24,5 +24,6 @@
 | 0019 Model-authored Block Kit replies | Holds. Markdown by default; native model-authored blocks validated at the posting boundary. App-callback controls require implemented handlers; implemented for planning cards (ADR 0023) |
 | 0020 ChatGPT subscription Model Route | Holds, except decision 6 (superseded by ADR 0021). `openai-codex` via a single `CodexAuth` Durable Object; OpenCode Go when no usable credential. Amends spec §4.1 for the admin-only `/aiyappa openai` slash command |
 | 0021 Per-conversation Model Choice | Holds. `$model:` / `$effort:` in the first mention pick from `modelAliases`; a ChatGPT pick is refused while ChatGPT is not usable and falls back mid-thread |
-| 0022 Channel members may use Yappa | Holds. Replaces the invoker allowlist: any workspace member in a bound channel; external Slack Connect users refused; Codex admins unchanged |
+| 0022 Channel members may use Yappa | Partially superseded by ADR 0024 (decision 1). Replaces the invoker allowlist; external Slack Connect users refused; Codex admins unchanged |
 | 0023 Reversible planning decisions | Holds. Planning decisions live in a D1 card-revision log, decided only through a modal, with quiet planning sessions, Reopen, and no voting |
+| 0024 The GitHub App installation is the access boundary | Holds. A mention in any channel or a DM starts a conversation; one repository per conversation, attached via `attach_repo` and checked against the installation; `channelRepos` is a default repo |
