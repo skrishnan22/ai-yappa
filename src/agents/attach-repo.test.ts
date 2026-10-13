@@ -50,6 +50,20 @@ describe('attach_repo', () => {
 		expect(attached).toEqual([]);
 	});
 
+	test('suggests nothing when no accessible repo is close', async () => {
+		const { tool } = setup();
+
+		await expect(run(tool, 'someone/billing-service')).rejects.toThrow(
+			'The GitHub App cannot access someone/billing-service, and no repository it can access has a similar name.',
+		);
+	});
+
+	test('suggests a repo with the same name under another owner', async () => {
+		const { tool } = setup(async () => ['acme-inc/api', 'acme/web']);
+
+		await expect(run(tool, 'acme/api')).rejects.toThrow(/Closest it can access: acme-inc\/api\.$/);
+	});
+
 	test('refuses a non-GitHub value without a lookup', async () => {
 		const list = vi.fn<() => Promise<string[]>>(async () => INSTALLED);
 		const { tool } = setup(list);

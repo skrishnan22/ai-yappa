@@ -32,22 +32,44 @@ function repoName(fullName: string): string {
 	return fullName.split('/')[1] ?? fullName;
 }
 
+// A suggestion must be within a third of the requested name's length (at least
+// two edits), so a typo finds its repo and an unrelated request finds none.
+function suggestionLimit(wanted: string): number {
+	return Math.max(2, Math.floor(repoName(wanted).length / 3));
+}
+
 function closestRepos(wanted: string, names: string[]): string[] {
+	const limit = suggestionLimit(wanted);
+
 	return names
-		.map((candidate) => {
+		.flatMap((candidate) => {
 			const lower = candidate.toLowerCase();
 
-			return {
-				candidate,
-				steps: Math.min(
-					levenshtein(wanted, lower).steps,
-					levenshtein(repoName(wanted), repoName(lower)).steps,
-				),
-			};
+			// Whole name for a typo; repo name alone for the right repo under another owner.
+			const steps = Math.min(
+				levenshtein(wanted, lower).steps,
+				levenshtein(repoName(wanted), repoName(lower)).steps,
+			);
+
+			return steps <= limit ? [{ candidate, steps }] : [];
 		})
 		.toSorted((a, b) => a.steps - b.steps || a.candidate.localeCompare(b.candidate))
 		.slice(0, MAX_SUGGESTIONS)
 		.map(({ candidate }) => candidate);
+}
+
+function refusal(wanted: string, names: string[]): string {
+	if (names.length === 0) {
+		return `The GitHub App cannot access ${wanted}, and it is installed on no repositories.`;
+	}
+
+	const closest = closestRepos(wanted, names);
+
+	if (closest.length === 0) {
+		return `The GitHub App cannot access ${wanted}, and no repository it can access has a similar name.`;
+	}
+
+	return `The GitHub App cannot access ${wanted}. Closest it can access: ${closest.join(', ')}.`;
 }
 
 /**
@@ -69,13 +91,7 @@ export function attachRepoTool(args: {
 			const match = names.find((name) => name.toLowerCase() === wanted);
 
 			if (!match) {
-				const closest = closestRepos(wanted, names);
-
-				throw new Error(
-					closest.length > 0
-						? `The GitHub App cannot access ${wanted}. Closest it can access: ${closest.join(', ')}.`
-						: `The GitHub App cannot access ${wanted}, and it is installed on no repositories.`,
-				);
+				throw new Error(refusal(wanted, names));
 			}
 
 			const repoUrl = `https://github.com/${match}.git`;
