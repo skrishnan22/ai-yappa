@@ -6,6 +6,7 @@ import type { OperationContext } from './ops.ts';
 import {
 	createGitHubPort,
 	githubHandlers,
+	listInstallationRepositories,
 	normalizeGithubAppPrivateKey,
 	type GitHubInstallationPermissions,
 	type GitHubPort,
@@ -331,5 +332,60 @@ describe('createGitHubPort', () => {
 		} finally {
 			globalThis.fetch = original;
 		}
+	});
+});
+
+describe('listInstallationRepositories', () => {
+	const rsaPem = generateKeyPairSync('rsa', { modulusLength: 2048 })
+		.privateKey.export({ type: 'pkcs1', format: 'pem' })
+		.toString();
+
+	const env = {
+		GITHUB_APP_ID: '1',
+		GITHUB_APP_PRIVATE_KEY: rsaPem,
+		GITHUB_APP_INSTALLATION_ID: '2',
+	};
+
+	test('pages through every repository with an unscoped token, then revokes it', async () => {
+		const requests: { method: string; url: string; body: string | undefined }[] = [];
+		const original = globalThis.fetch;
+		const page1 = Array.from({ length: 100 }, (_, i) => ({ full_name: `acme/repo-${i}` }));
+
+		const fakeFetch: typeof fetch = async (input, init) => {
+			const url = input instanceof Request ? input.url : input.toString();
+			const method = init?.method ?? 'GET';
+			requests.push({ method, url, body: v.is(v.string(), init?.body) ? init.body : undefined });
+
+			if (url.endsWith('/access_tokens')) {
+				return new Response(
+					JSON.stringify({ token: 'ghs_list', expires_at: '2099-01-01T00:00:00Z' }),
+					{ status: 201 },
+				);
+			}
+
+			if (method === 'DELETE') return new Response(null, { status: 204 });
+
+			const page = new URL(url).searchParams.get('page');
+			const repositories = page === '1' ? page1 : [{ full_name: 'acme/api' }];
+
+			return new Response(JSON.stringify({ repositories }), { status: 200 });
+		};
+
+		globalThis.fetch = fakeFetch;
+
+		try {
+			const names = await listInstallationRepositories(env);
+
+			expect(names).toHaveLength(101);
+			expect(names.at(-1)).toBe('acme/api');
+			expect(JSON.parse(requests[0]?.body ?? '{}')).toEqual({ permissions: { metadata: 'read' } });
+			expect(requests.map((request) => request.method)).toEqual(['POST', 'GET', 'GET', 'DELETE']);
+		} finally {
+			globalThis.fetch = original;
+		}
+	});
+
+	test('names the missing GitHub App secrets', async () => {
+		await expect(listInstallationRepositories({})).rejects.toThrow(/GITHUB_APP_ID/);
 	});
 });

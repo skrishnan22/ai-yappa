@@ -124,7 +124,7 @@ export function githubHandlers(
 	};
 }
 
-export function createGitHubPort(env: NodeJS.ProcessEnv = process.env): GitHubPort {
+function githubAppConfig(env: NodeJS.ProcessEnv) {
 	const appId = env.GITHUB_APP_ID;
 	const pem = normalizeGithubAppPrivateKey(env.GITHUB_APP_PRIVATE_KEY);
 	const installationId = env.GITHUB_APP_INSTALLATION_ID;
@@ -134,6 +134,12 @@ export function createGitHubPort(env: NodeJS.ProcessEnv = process.env): GitHubPo
 			'GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, and GITHUB_APP_INSTALLATION_ID are required.',
 		);
 	}
+
+	return { appId, pem, installationId };
+}
+
+export function createGitHubPort(env: NodeJS.ProcessEnv = process.env): GitHubPort {
+	const { appId, pem, installationId } = githubAppConfig(env);
 
 	return {
 		async createInstallationToken(args) {
@@ -176,6 +182,63 @@ export function createGitHubPort(env: NodeJS.ProcessEnv = process.env): GitHubPo
 			});
 		},
 	};
+}
+
+const INSTALLATION_PAGE_SIZE = 100;
+
+/**
+ * Every repository the App installation can reach, as `owner/name`. Mints a
+ * metadata-only token for the whole installation and revokes it afterwards.
+ */
+export async function listInstallationRepositories(
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<string[]> {
+	const { appId, pem, installationId } = githubAppConfig(env);
+	const jwt = signAppJwt({ appId, privateKeyPem: pem, now: Math.floor(Date.now() / 1000) });
+
+	const mintResponse = await githubFetch({
+		method: 'POST',
+		path: `/app/installations/${installationId}/access_tokens`,
+		token: jwt,
+		tokenType: 'Bearer',
+		body: { permissions: { metadata: 'read' } },
+	});
+
+	const mintJson = await githubOk(mintResponse);
+	const minted = mapToken(mintJson);
+
+	try {
+		const names: string[] = [];
+
+		for (let page = 1; ; page++) {
+			const response = await githubFetch({
+				method: 'GET',
+				path: `/installation/repositories?per_page=${INSTALLATION_PAGE_SIZE}&page=${page}`,
+				token: minted.token,
+				tokenType: 'Bearer',
+			});
+
+			const json = await githubOk(response);
+
+			const { repositories } = parsedOutput(
+				v.looseObject({ repositories: v.array(v.looseObject({ full_name: v.string() })) }),
+				json,
+				'unexpected GitHub installation repository list',
+			);
+
+			names.push(...repositories.map((repository) => repository.full_name));
+
+			if (repositories.length < INSTALLATION_PAGE_SIZE) return names;
+		}
+	} finally {
+		// Best effort: the token expires within the hour anyway.
+		await githubFetch({
+			method: 'DELETE',
+			path: '/installation/token',
+			token: minted.token,
+			tokenType: 'Bearer',
+		}).catch(() => undefined);
+	}
 }
 
 function createTokenCache(
