@@ -4,7 +4,7 @@ export type ChannelConfig = {
 
 // Slack users who may run `/aiyappa openai connect` and `disconnect`, which
 // bind the whole deployment to one ChatGPT subscription (ADR 0020). Any
-// workspace member may use Yappa in a bound channel (ADR 0022); empty means
+// workspace member may use Yappa in any channel or DM (ADR 0024); empty means
 // nobody may connect.
 export const codexAdminIds = new Set<string>(['U0BGR738WMC', 'U07DF242XU6']);
 

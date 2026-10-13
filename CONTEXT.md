@@ -15,8 +15,15 @@ The Slack organization served by one Slack Agent Deployment.
 _Avoid_: Tenant
 
 **Configured Channel**:
-A Slack channel listed in the deployment's channel→repo map. It supplies the default repository for new agent work. Binding is the opt-in: any human member of the Slack Workspace may start or continue a conversation there; users from another organization may not.
-_Avoid_: Allowed user group, authorized users
+A Slack channel listed in the deployment's channel→repo map. It supplies the Default Repo for new conversations there. It is not an access list: any human member of the Slack Workspace may use Yappa in any channel the bot is in or in a DM; users from another organization may not (ADR 0024).
+_Avoid_: Allowed user group, authorized users, bound channel as access
+
+**Default Repo**:
+The repository a Configured Channel attaches to each new conversation from the start.
+
+**Attached Repo**:
+The one repository an Agent Conversation works on: the Default Repo, or the one the model named through `attach_repo` and code checked against the GitHub App installation. Permanent once attached; a conversation without one has no Execution Workspace.
+_Avoid_: Bound repo, current repo
 
 **Channel Adapter**:
 A Flue channel integration that translates one chat provider's verified events and presentation capabilities to and from Agent Conversations. Slack is the only v1 adapter.

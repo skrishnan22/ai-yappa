@@ -1,7 +1,11 @@
 display_information:
   name: Slack Agent
-  description: Internal coding coworker. A mention in a mapped channel starts a thread-bound conversation.
+  description: Internal coding coworker. Mention it in a channel or DM it to start a thread-bound conversation.
 features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
   bot_user:
     display_name: Slack Agent
     always_online: true
@@ -20,7 +24,15 @@ oauth_config:
       - commands
       - channels:history
       - groups:history
+      - im:history
 settings:
+  event_subscriptions:
+    request_url: https://example.invalid/channels/slack/events
+    bot_events:
+      - app_mention
+      - message.channels
+      - message.groups
+      - message.im
   interactivity:
     is_enabled: true
     request_url: https://example.invalid/channels/slack/interactions
