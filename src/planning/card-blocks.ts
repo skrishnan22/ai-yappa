@@ -1,5 +1,6 @@
 import type { KnownBlock, ModalView } from '@slack/web-api';
 import * as v from 'valibot';
+import { clip, contextBlock, escapeMrkdwn, sectionBlock } from '../channels/mrkdwn.ts';
 import type { Card, CardRevision } from './decision-log.ts';
 
 export const DECIDE_ACTION = 'planning_decide';
@@ -324,15 +325,6 @@ function slackDate(iso: string): string {
 	return `<!date^${Math.floor(Date.parse(iso) / 1000)}^{date_short_pretty} at {time}|${iso}>`;
 }
 
-function escapeMrkdwn(value: string): string {
-	return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-}
-
-// Slack rejects section text over 3000 chars and context text over 2000, after the decision is saved.
-function sectionBlock(text: string): KnownBlock {
-	return { type: 'section', text: { type: 'mrkdwn', text: clip(text, 2900) } };
-}
-
 function buttonBlock(button: {
 	action_id: string;
 	value: string;
@@ -343,12 +335,4 @@ function buttonBlock(button: {
 		type: 'actions',
 		elements: [{ type: 'button', ...button, text: { type: 'plain_text', text: button.text } }],
 	};
-}
-
-function contextBlock(text: string): KnownBlock {
-	return { type: 'context', elements: [{ type: 'mrkdwn', text: clip(text, 1900) }] };
-}
-
-function clip(value: string, max: number): string {
-	return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
 }
