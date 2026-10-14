@@ -3,12 +3,8 @@ import {
 	describeSchedule,
 	formatRunTime,
 	nextRunAfter,
-	presetCron,
-	presetOf,
 	scheduleError,
 	upcomingRuns,
-	wallTimeIn,
-	zonedTimeToUtc,
 } from './schedule.ts';
 
 const IST = 'Asia/Kolkata';
@@ -84,55 +80,27 @@ describe('scheduleError', () => {
 });
 
 describe('describeSchedule', () => {
-	test('names presets in words with the zone abbreviation', () => {
-		expect(describeSchedule(weekdays, IST, now)).toBe('Weekdays at 09:00 IST');
-		expect(describeSchedule({ kind: 'recurring', cron: '30 7 * * *' }, IST, now)).toBe(
-			'Daily at 07:30 IST',
-		);
-		expect(describeSchedule({ kind: 'recurring', cron: '0 18 * * 4,1' }, NEW_YORK, now)).toBe(
-			'Weekly on Mon, Thu at 18:00 EDT',
+	test('describes recurring patterns with their timezone', () => {
+		expect(describeSchedule(weekdays, IST)).toBe('At 09:00, Monday through Friday (Asia/Kolkata)');
+		expect(describeSchedule({ kind: 'recurring', cron: '*/15 9-17 * * 1-5' }, IST)).toBe(
+			'Every 15 minutes, between 09:00 and 17:59, Monday through Friday (Asia/Kolkata)',
 		);
 	});
 
-	test('shows a custom pattern as-is and a one-off as a time', () => {
-		expect(describeSchedule({ kind: 'recurring', cron: '*/15 9-17 * * 1-5' }, IST, now)).toBe(
-			'Cron `*/15 9-17 * * 1-5` (Asia/Kolkata)',
-		);
-		expect(describeSchedule({ kind: 'once', runAt: '2026-10-15T12:30:00.000Z' }, IST, now)).toBe(
-			'Once, Thu 15 Oct, 18:00 IST',
+	test('shows valid Croner extensions as cron when the describer cannot interpret them', () => {
+		const schedule = { kind: 'recurring', cron: '0 9 1 * +1' } as const;
+
+		expect(scheduleError(schedule, IST, now)).toBeUndefined();
+		expect(describeSchedule(schedule, IST)).toBe('Cron `0 9 1 * +1` (Asia/Kolkata)');
+	});
+
+	test('describes a one-off in its timezone', () => {
+		expect(describeSchedule({ kind: 'once', runAt: '2026-10-15T12:30:00.000Z' }, IST)).toBe(
+			'Once, Thu, 15 Oct, 18:00 IST',
 		);
 	});
 });
 
-describe('presets', () => {
-	test('round-trip through cron', () => {
-		for (const cron of ['0 9 * * *', '0 9 * * 1-5', '15 18 * * 1,4']) {
-			const preset = presetOf(cron);
-
-			expect(preset).toBeDefined();
-			expect(preset && presetCron(preset)).toBe(cron);
-		}
-	});
-
-	test('anything else is custom', () => {
-		expect(presetOf('*/15 9-17 * * 1-5')).toBeUndefined();
-		expect(presetOf('0 9 1 * *')).toBeUndefined();
-		expect(presetOf('0 24 * * *')).toBeUndefined();
-	});
-});
-
-describe('wall time', () => {
-	test('converts a local date and time to UTC and back', () => {
-		expect(zonedTimeToUtc('2026-10-15', '18:00', IST)).toBe('2026-10-15T12:30:00.000Z');
-		expect(zonedTimeToUtc('2026-11-01', '09:00', NEW_YORK)).toBe('2026-11-01T14:00:00.000Z');
-		expect(zonedTimeToUtc('2026-10-31', '09:00', NEW_YORK)).toBe('2026-10-31T13:00:00.000Z');
-		expect(wallTimeIn('2026-10-15T12:30:00.000Z', IST)).toEqual({
-			date: '2026-10-15',
-			time: '18:00',
-		});
-	});
-
-	test('formats a run time in the zone', () => {
-		expect(formatRunTime('2026-10-19T03:30:00.000Z', IST)).toBe('Mon 19 Oct, 09:00 IST');
-	});
+test('formats a run time in the zone', () => {
+	expect(formatRunTime('2026-10-19T03:30:00.000Z', IST)).toBe('Mon, 19 Oct, 09:00 IST');
 });

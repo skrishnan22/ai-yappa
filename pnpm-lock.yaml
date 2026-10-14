@@ -29,6 +29,9 @@ importers:
       croner:
         specifier: ^10.0.1
         version: 10.0.1
+      cronstrue:
+        specifier: ^3.31.0
+        version: 3.31.0
       damerau-levenshtein:
         specifier: ^1.0.8
         version: 1.0.8
@@ -2083,6 +2086,10 @@ packages:
   croner@10.0.1:
     resolution: {integrity: sha512-ixNtAJndqh173VQ4KodSdJEI6nuioBWI0V1ITNKhZZsO0pEMoDxz539T4FTTbSZ/xIOSuDnzxLVRqBVSvPNE2g==}
     engines: {node: '>=18.0'}
+
+  cronstrue@3.31.0:
+    resolution: {integrity: sha512-P+qVKwM6CHu6lWfQIq13DCBx95pxY/2zCQhIJvu5FsEsOlt9ZtuUI124V1LafoPsqHH09ruRsentTc4sbWxQHA==}
+    hasBin: true
 
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
@@ -5225,6 +5232,8 @@ snapshots:
   cron-schedule@6.0.0: {}
 
   croner@10.0.1: {}
+
+  cronstrue@3.31.0: {}
 
   cross-spawn@7.0.6:
     dependencies:
