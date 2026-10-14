@@ -4,6 +4,8 @@
 
 > **Revision 2026-10-14: no drafts, no confirmation.** The model creates the automation directly and replies with what it created; people fix it afterwards with Edit, Pause, Run now, and Delete. These deltas override the task text below. Each affected task is rewritten in place when its PR starts.
 >
+> - **PR #63 store correction:** scheduled ticks must use `runs.claimScheduled({ automationId, fireTime, nextRunAt, at })` and return when it is false. It atomically claims and advances only an active row whose next run still matches. The separate `automations.advance` API is removed; older claim/advance snippets below are superseded. `runs.claim` is only for Run now, which leaves the schedule unchanged.
+> - **PR #63 outcome grouping:** `runs.recordOutcome` replaces `runs.finish`, `runs.settle`, `automations.recordSuccess`, and `automations.recordFailure`. Pass either `{ submissionId, status: succeeded|failed, reason?, at, pauseAt }` for a dispatched submission, or `{ automationId, fireTime, status: posted|failed, reason?, at, pauseAt }` for a claimed fire. It records the outcome and updates the failure counter in one transaction, returning the updated automation once (undefined for unrelated or repeated outcomes). Historical store/test snippets below are superseded by the current source; the outcome and scheduler examples use the grouped API.
 > - **Task 1 simplification:** keep schedule validation, next-run calculations, cronstrue descriptions, and Intl run-time formatting. `describeSchedule(schedule, timezone)` no longer takes `now`. Remove `Preset`, `presetOf`, `presetCron`, `zoneLabel`, `WallTime`, `wallTimeIn`, and `zonedTimeToUtc`; they have no production callers. The modal design and its date/time handling will be settled in Task 10 rather than implemented speculatively here.
 > - **Task 2:** no `automation_drafts` table, no `AutomationDraft`/`NewDraft` types, no `drafts` store methods or tests.
 > - **Task 6:** `CardState` is just the created automation. `automationCard({ automation, now })` always shows the status line and Pause/Resume, Run now, Edit, and Delete.
@@ -532,7 +534,7 @@ export type AutomationScope = 'personal' | 'channel';
 export type AutomationStatus = 'active' | 'paused' | 'blocked' | 'completed' | 'deleted';
 export type RunStatus = 'claimed' | 'dispatched' | 'posted' | 'failed' | 'succeeded';
 export type AutomationFields = { kind; title; prompt; scope; destinationChannelId; repo?; schedule: Schedule; timezone };
-export type Automation = AutomationFields & { id; ownerUserId; status; nextRunAt?; lastRunAt?; consecutiveFailures; createdAt; updatedAt };
+export type Automation = AutomationFields & { id; ownerUserId; status; nextRunAt?; lastScheduledAt?; consecutiveFailures; createdAt; updatedAt };
 export type AutomationDraft = AutomationFields & { id; draftedBy; channelId; threadTs; cardTs?; automationId?; consumedAt?; createdAt; updatedAt };
 export type NewDraft = AutomationFields & { id; draftedBy; channelId; threadTs; createdAt };
 export type NewAutomation = AutomationFields & { id; ownerUserId; nextRunAt: string; createdAt };
@@ -560,7 +562,7 @@ CREATE TABLE automations (
   run_at TEXT, -- the one-off instant (UTC ISO); NULL for recurring
   timezone TEXT NOT NULL,
   next_run_at TEXT,
-  last_run_at TEXT,
+  last_scheduled_at TEXT,
   status TEXT NOT NULL CHECK (status IN ('active', 'paused', 'blocked', 'completed', 'deleted')),
   consecutive_failures INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
@@ -644,7 +646,7 @@ export type Automation = AutomationFields & {
 	ownerUserId: string;
 	status: AutomationStatus;
 	nextRunAt?: string;
-	lastRunAt?: string;
+	lastScheduledAt?: string;
 	consecutiveFailures: number;
 	createdAt: string;
 	updatedAt: string;
@@ -715,7 +717,7 @@ export type AutomationStore = {
 		due(args: { now: string; limit: number }): Promise<Automation[]>;
 		// The user's personal automations and the channel's channel automations, not deleted.
 		visibleTo(args: { userId: string; channelId: string }): Promise<Automation[]>;
-		// Moves a claimed fire on: last_run_at = from, next_run_at = nextRunAt, or
+		// Moves a claimed fire on: last_scheduled_at = from, next_run_at = nextRunAt, or
 		// completed when there is none. Only while next_run_at is still `from`.
 		advance(args: { id: string; from: string; nextRunAt?: string; at: string }): Promise<boolean>;
 		update(args: {
@@ -856,7 +858,7 @@ describe('automations', () => {
 
 		expect(await s.automations.advance({ id: 'a1', from: 'stale', nextRunAt: 'x', at: AT })).toBe(false);
 		expect(await s.automations.advance({ id: 'a1', from: '2026-10-14T03:30:00.000Z', nextRunAt: '2026-10-15T03:30:00.000Z', at: AT })).toBe(true);
-		expect(await s.automations.get('a1')).toMatchObject({ status: 'active', lastRunAt: '2026-10-14T03:30:00.000Z', nextRunAt: '2026-10-15T03:30:00.000Z' });
+		expect(await s.automations.get('a1')).toMatchObject({ status: 'active', lastScheduledAt: '2026-10-14T03:30:00.000Z', nextRunAt: '2026-10-15T03:30:00.000Z' });
 
 		await s.automations.advance({ id: 'a1', from: '2026-10-15T03:30:00.000Z', at: AT });
 
@@ -967,7 +969,7 @@ const automationRowSchema = v.object({
 	id: v.string(),
 	owner_user_id: v.string(),
 	next_run_at: v.nullable(v.string()),
-	last_run_at: v.nullable(v.string()),
+	last_scheduled_at: v.nullable(v.string()),
 	status: v.picklist(['active', 'paused', 'blocked', 'completed', 'deleted']),
 	consecutive_failures: v.number(),
 	created_at: v.string(),
@@ -1025,7 +1027,7 @@ const SQL = {
 	visible: `SELECT * FROM automations WHERE status <> 'deleted'
 		AND ((scope = 'personal' AND owner_user_id = ?1) OR (scope = 'channel' AND destination_channel_id = ?2))
 		ORDER BY created_at, id`,
-	advance: `UPDATE automations SET last_run_at = ?2, next_run_at = ?3,
+	advance: `UPDATE automations SET last_scheduled_at = ?2, next_run_at = ?3,
 		status = CASE WHEN ?3 IS NULL THEN 'completed' ELSE status END, updated_at = ?4
 		WHERE id = ?1 AND next_run_at = ?2`,
 	update: `UPDATE automations SET ${SET_FIELDS}, next_run_at = ?11, status = ?12, updated_at = ?13
@@ -1087,7 +1089,7 @@ function readAutomation(raw: JsonObject): Automation {
 		ownerUserId: row.owner_user_id,
 		status: row.status,
 		nextRunAt: row.next_run_at ?? undefined,
-		lastRunAt: row.last_run_at ?? undefined,
+		lastScheduledAt: row.last_scheduled_at ?? undefined,
 		consecutiveFailures: row.consecutive_failures,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
@@ -1484,7 +1486,7 @@ git commit -m "Extract startConversation from Slack admission"
 - Produces:
   - `blocks.ts`: `AUTOMATION_ACTION` (`create`, `editDraft`, `cancel`, `pause`, `resume`, `runNow`, `edit`, `delete`), `AUTOMATION_MODAL = 'automation_modal'`, `type Surface = 'header' | 'card' | 'list'`, `buttonValue(id: string, surface: Surface): string`, `parseButtonValue(value: string): { id: string; surface: Surface } | undefined`, `type Rendered = { text: string; blocks: KnownBlock[] }`, `runMessage(automation: Automation): Rendered`, `ownerNotice({ automation, message }): Rendered`, `manageButtons({ automation, surface, extras }): Button[]` (exported for Tasks 6 and 11)
   - `slack-people.ts`: `openDirectMessage({ slack, userId }): Promise<string>`
-  - `outcome.ts`: `PAUSE_AFTER_FAILURES = 3`, `notifyOwner({ slack, automation, message })`, `recordFailure({ store, slack, automationId, at })`, `recordRunSettled({ store, slack, submissionId, outcome, error, at })`
+  - `outcome.ts`: `PAUSE_AFTER_FAILURES = 3`, `notifyOwner({ slack, automation, message })`, `notifyPaused({ slack, automation })`, `recordRunSettled({ store, slack, submissionId, outcome, error, at })`
   - `scheduler.ts`: `type StartRun = (args: { automation: Automation; threadTs: string; fireTime: string }) => Promise<{ conversationId: string; submissionId: string }>`, `type SchedulerDeps = { store; slack; startRun; now(): Date }`, `runDueAutomations(deps)`, `fireAutomation({ automation, fireTime, deps })`, `runNow({ automation, deps }): Promise<boolean>`, `ownerGoneReason({ slack, userId }): Promise<string | undefined>`, `slackErrorCode(error: unknown): string | undefined`
 
 - [ ] **Step 1: Move the mrkdwn helpers**
@@ -1610,7 +1612,7 @@ describe('runDueAutomations', () => {
 			{ automation: expect.objectContaining({ id: 'a1' }), threadTs: '100.1', fireTime: '2026-10-14T03:30:00.000Z' },
 		]);
 		expect(await store.automations.get('a1')).toMatchObject({
-			lastRunAt: '2026-10-14T03:30:00.000Z',
+			lastScheduledAt: '2026-10-14T03:30:00.000Z',
 			nextRunAt: '2026-10-15T03:30:00.000Z',
 		});
 		expect(await store.runs.list('a1')).toMatchObject([{ status: 'dispatched', conversationId: 'conv-1', submissionId: 'sub-1' }]);
@@ -1982,28 +1984,22 @@ export async function notifyOwner({
 	}
 }
 
-export async function recordFailure({
-	store,
+export async function notifyPaused({
 	slack,
-	automationId,
-	at,
+	automation,
 }: {
-	store: AutomationStore;
 	slack: SlackBotClient | undefined;
-	automationId: string;
-	at: string;
+	automation: Automation | undefined;
 }): Promise<void> {
-	const after = await store.automations.recordFailure({ id: automationId, at, pauseAt: PAUSE_AFTER_FAILURES });
-
-	// Exactly the failure that paused it; later failures of a paused row stay quiet.
-	if (!after || !slack || after.status !== 'paused' || after.consecutiveFailures !== PAUSE_AFTER_FAILURES) {
+	// Only the outcome that reaches the threshold returns this count; duplicates return undefined.
+	if (!automation || !slack || automation.status !== 'paused' || automation.consecutiveFailures !== PAUSE_AFTER_FAILURES) {
 		return;
 	}
 
 	await notifyOwner({
 		slack,
-		automation: after,
-		message: `I paused your automation *${after.title}* after ${PAUSE_AFTER_FAILURES} failed runs in a row. Resume it when it should run again.`,
+		automation,
+		message: `I paused your automation *${automation.title}* after ${PAUSE_AFTER_FAILURES} failed runs in a row. Resume it when it should run again.`,
 	});
 }
 
@@ -2023,18 +2019,15 @@ export async function recordRunSettled({
 	error?: string;
 	at: string;
 }): Promise<void> {
-	const succeeded = outcome === 'completed';
-	const run = await store.runs.settle({ submissionId, status: succeeded ? 'succeeded' : 'failed', reason: error });
+	const automation = await store.runs.recordOutcome({
+		submissionId,
+		status: outcome === 'completed' ? 'succeeded' : 'failed',
+		reason: error,
+		at,
+		pauseAt: PAUSE_AFTER_FAILURES,
+	});
 
-	if (!run) return;
-
-	if (succeeded) {
-		await store.automations.recordSuccess({ id: run.automationId, at });
-
-		return;
-	}
-
-	await recordFailure({ store, slack, automationId: run.automationId, at });
+	if (outcome !== 'completed') await notifyPaused({ slack, automation });
 }
 ```
 
@@ -2045,7 +2038,7 @@ import type { SlackBotClient } from '../channels/slack-reply.ts';
 import { errorMessage } from '../json.ts';
 import type { Automation, AutomationStore } from './automation.ts';
 import { runMessage } from './blocks.ts';
-import { notifyOwner, recordFailure } from './outcome.ts';
+import { notifyOwner, notifyPaused, PAUSE_AFTER_FAILURES } from './outcome.ts';
 import { nextRunAfter } from './schedule.ts';
 
 export type StartRun = (args: {
@@ -2115,20 +2108,18 @@ async function tick({ automation, deps, now }: { automation: Automation; deps: S
 	if (!fireTime) return;
 
 	const at = now.toISOString();
-	const claimed = await deps.store.runs.claim({ automationId: automation.id, fireTime, createdAt: at });
-
-	if (!claimed) return;
-
 	// From now, not from the fire time, so missed fires collapse into this one.
-	await deps.store.automations.advance({
-		id: automation.id,
-		from: fireTime,
+	const claimed = await deps.store.runs.claimScheduled({
+		automationId: automation.id,
+		fireTime,
 		nextRunAt:
 			automation.schedule.kind === 'recurring'
 				? nextRunAfter(automation.schedule, automation.timezone, now)
 				: undefined,
 		at,
 	});
+
+	if (!claimed) return;
 
 	await fireAutomation({ automation, fireTime, deps });
 }
@@ -2175,8 +2166,7 @@ export async function fireAutomation({
 		});
 
 		if (automation.kind === 'reminder') {
-			await store.runs.finish({ ...run, status: 'posted' });
-			await store.automations.recordSuccess({ id: automation.id, at: deps.now().toISOString() });
+			await store.runs.recordOutcome({ ...run, status: 'posted', at: deps.now().toISOString(), pauseAt: PAUSE_AFTER_FAILURES });
 
 			return;
 		}
@@ -2198,8 +2188,8 @@ export async function fireAutomation({
 			return;
 		}
 
-		await store.runs.finish({ ...run, status: 'failed', reason: errorMessage(error) });
-		await recordFailure({ store, slack, automationId: automation.id, at: deps.now().toISOString() });
+		const failed = await store.runs.recordOutcome({ ...run, status: 'failed', reason: errorMessage(error), at: deps.now().toISOString(), pauseAt: PAUSE_AFTER_FAILURES });
+		await notifyPaused({ slack, automation: failed });
 	}
 }
 
@@ -2220,7 +2210,7 @@ async function block({
 		at: deps.now().toISOString(),
 	});
 
-	await deps.store.runs.finish({ automationId: automation.id, fireTime, status: 'failed', reason });
+	await deps.store.runs.recordOutcome({ automationId: automation.id, fireTime, status: 'failed', reason, at: deps.now().toISOString(), pauseAt: PAUSE_AFTER_FAILURES });
 
 	if (!blocked) return;
 
@@ -2288,7 +2278,7 @@ const automation: Automation = {
 	timezone: 'Asia/Kolkata',
 	ownerUserId: 'U_OWNER',
 	status: 'active',
-	lastRunAt: '2026-10-13T03:30:00.000Z',
+	lastScheduledAt: '2026-10-13T03:30:00.000Z',
 	consecutiveFailures: 0,
 	createdAt: '2026-10-01T00:00:00.000Z',
 	updatedAt: '2026-10-01T00:00:00.000Z',
@@ -2329,7 +2319,7 @@ describe('createStartRun', () => {
 				attributes: {
 					automationId: 'a1',
 					scheduledAt: '2026-10-14T03:30:00.000Z',
-					previousRunAt: '2026-10-13T03:30:00.000Z',
+					previousScheduledAt: '2026-10-13T03:30:00.000Z',
 					userId: 'U_OWNER',
 					modelRoute: 'opencode-go',
 				},
@@ -2426,7 +2416,7 @@ export function createStartRun({
 			modelRoute,
 		};
 
-		if (automation.lastRunAt) attributes.previousRunAt = automation.lastRunAt;
+		if (automation.lastScheduledAt) attributes.previousScheduledAt = automation.lastScheduledAt;
 
 		const receipt = await startConversation({
 			runtime,
@@ -2770,7 +2760,7 @@ export function statusLine({ automation, now }: { automation: Automation; now: D
 		case 'blocked':
 			return '⛔ Blocked: check the DM from Yappa';
 		case 'completed':
-			return `✔ Completed${automation.lastRunAt ? ` · ran ${formatRunTime(automation.lastRunAt, automation.timezone)}` : ''}`;
+			return `✔ Completed${automation.lastScheduledAt ? ` · scheduled for ${formatRunTime(automation.lastScheduledAt, automation.timezone)}` : ''}`;
 		case 'deleted':
 			return '🗑 Deleted';
 		default: {
