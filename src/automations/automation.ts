@@ -56,9 +56,6 @@ export type AutomationStore = {
 		due(args: { now: string; limit: number }): Promise<Automation[]>;
 		// The user's personal automations and the channel's channel automations, not deleted.
 		visibleTo(args: { userId: string; channelId: string }): Promise<Automation[]>;
-		// Moves a claimed fire on: last_run_at = from, next_run_at = nextRunAt, or
-		// completed when there is none. Only while next_run_at is still `from`.
-		advance(args: { id: string; from: string; nextRunAt?: string; at: string }): Promise<boolean>;
 		update(args: {
 			id: string;
 			fields: AutomationFields;
@@ -83,6 +80,14 @@ export type AutomationStore = {
 		}): Promise<Automation | undefined>;
 	};
 	runs: {
+		// Atomically claims and advances an active scheduled fire; false for stale or taken fires.
+		claimScheduled(args: {
+			automationId: string;
+			fireTime: string;
+			nextRunAt?: string;
+			at: string;
+		}): Promise<boolean>;
+		// Run now claims a fire without changing the schedule.
 		claim(args: { automationId: string; fireTime: string; createdAt: string }): Promise<boolean>;
 		dispatched(args: {
 			automationId: string;

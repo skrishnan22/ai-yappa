@@ -83,36 +83,91 @@ describe('automations', () => {
 		expect(due.map((automation) => automation.id)).toEqual(['late', 'now']);
 	});
 
-	test('advance moves only from the expected next run, and completes a one-off', async () => {
+	test('scheduled claim advances a recurring automation once and rejects stale fires', async () => {
 		const s = await store();
-
 		await s.automations.create(newAutomation());
 
-		const stale = await s.automations.advance({ id: 'a1', from: 'stale', nextRunAt: 'x', at: AT });
-
-		const advanced = await s.automations.advance({
-			id: 'a1',
-			from: '2026-10-14T03:30:00.000Z',
+		const claim = {
+			automationId: 'a1',
+			fireTime: '2026-10-14T03:30:00.000Z',
 			nextRunAt: '2026-10-15T03:30:00.000Z',
 			at: AT,
-		});
+		};
+
+		const stale = await s.runs.claimScheduled({ ...claim, fireTime: 'stale' });
+
+		const [first, second] = await Promise.all([
+			s.runs.claimScheduled(claim),
+			s.runs.claimScheduled(claim),
+		]);
 
 		const moved = await s.automations.get('a1');
-
+		const runs = await s.runs.list('a1');
 		expect(stale).toBe(false);
-		expect(advanced).toBe(true);
+		expect(first).not.toBe(second);
 		expect(moved).toMatchObject({
 			status: 'active',
-			lastRunAt: '2026-10-14T03:30:00.000Z',
-			nextRunAt: '2026-10-15T03:30:00.000Z',
+			lastRunAt: claim.fireTime,
+			nextRunAt: claim.nextRunAt,
 		});
+		expect(runs).toEqual([
+			{ automationId: 'a1', fireTime: claim.fireTime, status: 'claimed', createdAt: AT },
+		]);
+	});
 
-		await s.automations.advance({ id: 'a1', from: '2026-10-15T03:30:00.000Z', at: AT });
-
+	test('scheduled claim completes an actual one-off', async () => {
+		const s = await store();
+		await s.automations.create(
+			newAutomation({ schedule: { kind: 'once', runAt: AT }, nextRunAt: AT }),
+		);
+		const claimed = await s.runs.claimScheduled({ automationId: 'a1', fireTime: AT, at: AT });
 		const done = await s.automations.get('a1');
+		expect(claimed).toBe(true);
+		expect(done).toMatchObject({ status: 'completed', lastRunAt: AT, nextRunAt: undefined });
+	});
 
-		expect(done?.status).toBe('completed');
-		expect(done?.nextRunAt).toBeUndefined();
+	test.each(['paused', 'blocked', 'deleted'] as const)(
+		'scheduled claim cannot overwrite %s',
+		async (status) => {
+			const s = await store();
+			await s.automations.create(
+				newAutomation({ schedule: { kind: 'once', runAt: AT }, nextRunAt: AT }),
+			);
+			await s.automations.setStatus({ id: 'a1', status, at: AT });
+			const claimed = await s.runs.claimScheduled({ automationId: 'a1', fireTime: AT, at: AT });
+			const row = await s.automations.get('a1');
+			const runs = await s.runs.list('a1');
+			expect(claimed).toBe(false);
+			expect(row).toMatchObject({ status, nextRunAt: AT, lastRunAt: undefined });
+			expect(runs).toEqual([]);
+		},
+	);
+
+	test('failed advancement rolls back the claim so the next tick can retry', async () => {
+		const db = await openTestDatabase();
+		const s = createD1AutomationStore(db);
+		await s.automations.create(newAutomation());
+		await db
+			.prepare(
+				"CREATE TRIGGER reject_advance BEFORE UPDATE ON automations BEGIN SELECT RAISE(ABORT, 'advance failed'); END",
+			)
+			.run();
+
+		const claim = {
+			automationId: 'a1',
+			fireTime: '2026-10-14T03:30:00.000Z',
+			nextRunAt: '2026-10-15T03:30:00.000Z',
+			at: AT,
+		};
+
+		await expect(s.runs.claimScheduled(claim)).rejects.toThrow('advance failed');
+		const runs = await s.runs.list('a1');
+		const row = await s.automations.get('a1');
+		expect(runs).toEqual([]);
+		expect(row?.nextRunAt).toBe(claim.fireTime);
+		await db.prepare('DROP TRIGGER reject_advance').run();
+		const retried = await s.runs.claimScheduled(claim);
+		expect(retried).toBe(true);
 	});
 
 	test('update replaces fields, next run and status', async () => {
@@ -224,6 +279,24 @@ describe('runs', () => {
 
 		expect(first).toBe(true);
 		expect(second).toBe(false);
+	});
+
+	test('a taken fire does not advance even when its automation still matches', async () => {
+		const s = await store();
+		await s.automations.create(newAutomation());
+		const fireTime = '2026-10-14T03:30:00.000Z';
+		await s.runs.claim({ automationId: 'a1', fireTime, createdAt: AT });
+
+		const claimed = await s.runs.claimScheduled({
+			automationId: 'a1',
+			fireTime,
+			nextRunAt: '2026-10-15T03:30:00.000Z',
+			at: AT,
+		});
+
+		const row = await s.automations.get('a1');
+		expect(claimed).toBe(false);
+		expect(row).toMatchObject({ nextRunAt: fireTime, lastRunAt: undefined, status: 'active' });
 	});
 
 	test('finish records a posted or failed outcome', async () => {

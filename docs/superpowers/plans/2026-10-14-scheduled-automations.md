@@ -4,6 +4,7 @@
 
 > **Revision 2026-10-14: no drafts, no confirmation.** The model creates the automation directly and replies with what it created; people fix it afterwards with Edit, Pause, Run now, and Delete. These deltas override the task text below. Each affected task is rewritten in place when its PR starts.
 >
+> - **PR #63 store correction:** scheduled ticks must use `runs.claimScheduled({ automationId, fireTime, nextRunAt, at })` and return when it is false. It atomically claims and advances only an active row whose next run still matches. The separate `automations.advance` API is removed; older claim/advance snippets below are superseded. `runs.claim` is only for Run now, which leaves the schedule unchanged.
 > - **Task 1 simplification:** keep schedule validation, next-run calculations, cronstrue descriptions, and Intl run-time formatting. `describeSchedule(schedule, timezone)` no longer takes `now`. Remove `Preset`, `presetOf`, `presetCron`, `zoneLabel`, `WallTime`, `wallTimeIn`, and `zonedTimeToUtc`; they have no production callers. The modal design and its date/time handling will be settled in Task 10 rather than implemented speculatively here.
 > - **Task 2:** no `automation_drafts` table, no `AutomationDraft`/`NewDraft` types, no `drafts` store methods or tests.
 > - **Task 6:** `CardState` is just the created automation. `automationCard({ automation, now })` always shows the status line and Pause/Resume, Run now, Edit, and Delete.
@@ -2115,20 +2116,18 @@ async function tick({ automation, deps, now }: { automation: Automation; deps: S
 	if (!fireTime) return;
 
 	const at = now.toISOString();
-	const claimed = await deps.store.runs.claim({ automationId: automation.id, fireTime, createdAt: at });
-
-	if (!claimed) return;
-
 	// From now, not from the fire time, so missed fires collapse into this one.
-	await deps.store.automations.advance({
-		id: automation.id,
-		from: fireTime,
+	const claimed = await deps.store.runs.claimScheduled({
+		automationId: automation.id,
+		fireTime,
 		nextRunAt:
 			automation.schedule.kind === 'recurring'
 				? nextRunAfter(automation.schedule, automation.timezone, now)
 				: undefined,
 		at,
 	});
+
+	if (!claimed) return;
 
 	await fireAutomation({ automation, fireTime, deps });
 }

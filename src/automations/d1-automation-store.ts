@@ -51,7 +51,7 @@ const SQL = {
 		ORDER BY created_at, id`,
 	advance: `UPDATE automations SET last_run_at = ?2, next_run_at = ?3,
 		status = CASE WHEN ?3 IS NULL THEN 'completed' ELSE status END, updated_at = ?4
-		WHERE id = ?1 AND next_run_at = ?2`,
+		WHERE id = ?1 AND status = 'active' AND next_run_at = ?2 AND changes() = 1`,
 	update: `UPDATE automations SET ${SET_FIELDS}, next_run_at = ?11, status = ?12, updated_at = ?13
 		WHERE id = ?1 AND status <> 'deleted' RETURNING *`,
 	setStatus: `UPDATE automations SET status = ?2, next_run_at = COALESCE(?3, next_run_at),
@@ -64,6 +64,10 @@ const SQL = {
 		status = CASE WHEN status = 'active' AND consecutive_failures + 1 >= ?3 THEN 'paused' ELSE status END,
 		updated_at = ?2
 		WHERE id = ?1 RETURNING *`,
+	claimScheduled: `INSERT INTO automation_runs (automation_id, fire_time, status, created_at)
+		SELECT id, ?2, 'claimed', ?3 FROM automations
+		WHERE id = ?1 AND status = 'active' AND next_run_at = ?2
+		ON CONFLICT DO NOTHING`,
 	claim: `INSERT INTO automation_runs (automation_id, fire_time, status, created_at)
 		VALUES (?1, ?2, 'claimed', ?3) ON CONFLICT DO NOTHING`,
 	dispatched: `UPDATE automation_runs SET status = 'dispatched', conversation_id = ?3, submission_id = ?4
@@ -135,14 +139,9 @@ export function createD1AutomationStore(db: D1Database): AutomationStore {
 		values: D1Value[],
 		read: (raw: JsonObject) => T,
 	): Promise<T | undefined> {
-		const { results } = await db
-			.prepare(sql)
-			.bind(...values)
-			.all();
+		const [row] = await allRows(sql, values, read);
 
-		const [row] = results;
-
-		return row ? read(row) : undefined;
+		return row;
 	}
 
 	async function allRows<T>(
@@ -156,15 +155,6 @@ export function createD1AutomationStore(db: D1Database): AutomationStore {
 			.all();
 
 		return results.map(read);
-	}
-
-	async function changedOne(sql: string, values: D1Value[]): Promise<boolean> {
-		const { meta } = await db
-			.prepare(sql)
-			.bind(...values)
-			.run();
-
-		return meta.changes === 1;
 	}
 
 	async function write(sql: string, values: D1Value[]): Promise<void> {
@@ -197,8 +187,6 @@ export function createD1AutomationStore(db: D1Database): AutomationStore {
 			due: ({ now, limit }) => allRows(SQL.due, [now, limit], readAutomation),
 			visibleTo: ({ userId, channelId }) =>
 				allRows(SQL.visible, [userId, channelId], readAutomation),
-			advance: ({ id, from, nextRunAt, at }) =>
-				changedOne(SQL.advance, [id, from, nextRunAt ?? null, at]),
 			update: ({ id, fields, nextRunAt, status, at }) =>
 				firstRow(SQL.update, [id, ...fieldValues(fields), nextRunAt, status, at], readAutomation),
 			setStatus: ({ id, status, nextRunAt, at }) =>
@@ -208,8 +196,20 @@ export function createD1AutomationStore(db: D1Database): AutomationStore {
 				firstRow(SQL.recordFailure, [id, at, pauseAt], readAutomation),
 		},
 		runs: {
-			claim: ({ automationId, fireTime, createdAt }) =>
-				changedOne(SQL.claim, [automationId, fireTime, createdAt]),
+			async claimScheduled({ automationId, fireTime, nextRunAt, at }) {
+				// D1 batches are transactional. changes() limits advancement to this batch's insert.
+				const [claim] = await db.batch([
+					db.prepare(SQL.claimScheduled).bind(automationId, fireTime, at),
+					db.prepare(SQL.advance).bind(automationId, fireTime, nextRunAt ?? null, at),
+				]);
+
+				return claim?.meta.changes === 1;
+			},
+			async claim({ automationId, fireTime, createdAt }) {
+				const { meta } = await db.prepare(SQL.claim).bind(automationId, fireTime, createdAt).run();
+
+				return meta.changes === 1;
+			},
 			dispatched: ({ automationId, fireTime, conversationId, submissionId }) =>
 				write(SQL.dispatched, [automationId, fireTime, conversationId, submissionId]),
 			finish: ({ automationId, fireTime, status, reason }) =>

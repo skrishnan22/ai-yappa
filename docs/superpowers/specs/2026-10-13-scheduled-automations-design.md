@@ -75,14 +75,17 @@ patterns. Only its calculator is used, never its timers.
 `src/automations/scheduler.ts`, called from the `scheduled` handler in
 `src/cloudflare.ts`. For each due row, in order:
 
-1. **Claim.** Insert `automation_runs(automation_id, fire_time = next_run_at)`.
-   A conflict means another tick took it; skip.
-2. **Advance.** Recurring: `next_run_at = nextRun(now)`, so missed fires
-   collapse to one run with no backlog replay. One-off: `status = completed`.
-3. **Re-authorize.** The owner is still a non-deleted workspace member
+1. **Claim and advance atomically.** `runs.claimScheduled` inserts
+   `automation_runs(automation_id, fire_time = next_run_at)` and advances the
+   automation in one D1 transaction, only while it is active and its next run
+   still matches. A stale row or claim conflict returns false; skip it. An
+   advancement error rolls back the claim, allowing the next tick to retry.
+   Recurring: `next_run_at = nextRun(now)`, so missed fires collapse to one run
+   with no backlog replay. One-off: `status = completed`.
+2. **Re-authorize.** The owner is still a non-deleted workspace member
    (`users.info`). For channel scope, the bot can still post there. Otherwise
    set `blocked`, record the run `failed` with the reason, and DM the owner.
-4. **Fire.**
+3. **Fire.**
    - `reminder`: post the text to the destination, mentioning the owner for a
      personal reminder. Run `posted`.
    - `agent`: `startConversation` (below). Run `dispatched` with its
