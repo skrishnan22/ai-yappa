@@ -12,7 +12,7 @@ export type D1Statement = {
 
 export type D1Database = {
 	prepare(sql: string): D1Statement;
-	batch(statements: D1Statement[]): Promise<{ meta: { changes: number } }[]>;
+	batch(statements: D1Statement[]): Promise<{ meta: { changes: number }; results: JsonObject[] }[]>;
 };
 
 export type Clock = { now(): Date; newId(): string };

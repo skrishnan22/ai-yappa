@@ -125,9 +125,15 @@ For an automation fire:
 ## Run outcome and failure
 
 The Coworker's existing `observe` hook sees `submission_settled`. When the
-settled submission matches an `automation_runs.submission_id`, record
-`succeeded` or `failed`. Only the fire's own submission counts; later human
-replies in the thread do not.
+settled submission matches an `automation_runs.submission_id`, call
+`runs.recordOutcome` with `succeeded` or `failed`. It records the terminal run
+status and updates the automation's failure count in one D1 transaction, only
+once. A failed counter write rolls back the run outcome so settlement can retry.
+Only the fire's own submission counts; later human replies in the thread do not.
+Reminder posts and immediate failures use the same operation, identified by
+`automation_id` and `fire_time` while the run is still claimed. The operation
+returns the updated automation for owner notifications; duplicate or unrelated
+outcomes return undefined without changing either row.
 
 - Success resets `consecutive_failures`.
 - A failure (dispatch error or failed settle) increments it.

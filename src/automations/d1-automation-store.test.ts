@@ -191,32 +191,6 @@ describe('automations', () => {
 		});
 	});
 
-	test('three failures pause an active automation; resuming resets the count', async () => {
-		const s = await store();
-
-		await s.automations.create(newAutomation());
-		await s.automations.recordFailure({ id: 'a1', at: AT, pauseAt: 3 });
-		await s.automations.recordFailure({ id: 'a1', at: AT, pauseAt: 3 });
-
-		const third = await s.automations.recordFailure({ id: 'a1', at: AT, pauseAt: 3 });
-		const resumed = await s.automations.setStatus({ id: 'a1', status: 'active', at: AT });
-
-		expect(third).toMatchObject({ status: 'paused', consecutiveFailures: 3 });
-		expect(resumed).toMatchObject({ status: 'active', consecutiveFailures: 0 });
-	});
-
-	test('a success resets the failure count', async () => {
-		const s = await store();
-
-		await s.automations.create(newAutomation());
-		await s.automations.recordFailure({ id: 'a1', at: AT, pauseAt: 3 });
-		await s.automations.recordSuccess({ id: 'a1', at: AT });
-
-		const read = await s.automations.get('a1');
-
-		expect(read?.consecutiveFailures).toBe(0);
-	});
-
 	test('pausing keeps the next run unless one is given', async () => {
 		const s = await store();
 
@@ -299,28 +273,96 @@ describe('runs', () => {
 		expect(row).toMatchObject({ nextRunAt: fireTime, lastRunAt: undefined, status: 'active' });
 	});
 
-	test('finish records a posted or failed outcome', async () => {
+	test('three distinct failed fires pause once, and resume resets failures', async () => {
 		const s = await store();
+		await s.automations.create(newAutomation());
 
-		await s.runs.claim({ automationId: 'a1', fireTime: AT, createdAt: AT });
-		await s.runs.finish({
+		for (const fireTime of ['t1', 't2']) {
+			await s.runs.claim({ automationId: 'a1', fireTime, createdAt: AT });
+			await s.runs.recordOutcome({
+				automationId: 'a1',
+				fireTime,
+				status: 'failed',
+				reason: 'no channel',
+				at: AT,
+				pauseAt: 3,
+			});
+		}
+
+		await s.runs.claim({ automationId: 'a1', fireTime: 't3', createdAt: AT });
+
+		const outcome = {
 			automationId: 'a1',
-			fireTime: AT,
-			status: 'failed',
+			fireTime: 't3',
+			status: 'failed' as const,
 			reason: 'no channel',
-		});
+			at: AT,
+			pauseAt: 3,
+		};
 
+		const third = await s.runs.recordOutcome(outcome);
+		const duplicate = await s.runs.recordOutcome(outcome);
 		const runs = await s.runs.list('a1');
-
-		expect(runs).toEqual([
-			{ automationId: 'a1', fireTime: AT, status: 'failed', reason: 'no channel', createdAt: AT },
+		const resumed = await s.automations.setStatus({ id: 'a1', status: 'active', at: AT });
+		expect(third).toMatchObject({ status: 'paused', consecutiveFailures: 3 });
+		expect(duplicate).toBeUndefined();
+		expect(runs.map((run) => [run.status, run.reason])).toEqual([
+			['failed', 'no channel'],
+			['failed', 'no channel'],
+			['failed', 'no channel'],
 		]);
+		expect(resumed).toMatchObject({ status: 'active', consecutiveFailures: 0 });
 	});
 
-	test('settle matches only a dispatched run, once', async () => {
+	test('posted reminder resets failures and cannot be changed by a late failure', async () => {
 		const s = await store();
+		await s.automations.create(newAutomation({ kind: 'reminder' }));
+		await s.runs.claim({ automationId: 'a1', fireTime: 't1', createdAt: AT });
+		await s.runs.recordOutcome({
+			automationId: 'a1',
+			fireTime: 't1',
+			status: 'failed',
+			at: AT,
+			pauseAt: 3,
+		});
+		await s.runs.claim({ automationId: 'a1', fireTime: 't2', createdAt: AT });
 
+		const posted = await s.runs.recordOutcome({
+			automationId: 'a1',
+			fireTime: 't2',
+			status: 'posted',
+			at: AT,
+			pauseAt: 3,
+		});
+
+		const late = await s.runs.recordOutcome({
+			automationId: 'a1',
+			fireTime: 't2',
+			status: 'failed',
+			at: AT,
+			pauseAt: 3,
+		});
+
+		const row = await s.automations.get('a1');
+		const runs = await s.runs.list('a1');
+		expect(posted?.consecutiveFailures).toBe(0);
+		expect(late).toBeUndefined();
+		expect(row?.consecutiveFailures).toBe(0);
+		expect(runs.map((run) => run.status)).toEqual(['failed', 'posted']);
+	});
+
+	test('settled submission counts once across concurrent deliveries; unrelated submissions do not count', async () => {
+		const s = await store();
+		await s.automations.create(newAutomation());
 		await s.runs.claim({ automationId: 'a1', fireTime: AT, createdAt: AT });
+
+		const other = await s.runs.recordOutcome({
+			submissionId: 'sub-other',
+			status: 'failed',
+			at: AT,
+			pauseAt: 3,
+		});
+
 		await s.runs.dispatched({
 			automationId: 'a1',
 			fireTime: AT,
@@ -328,23 +370,100 @@ describe('runs', () => {
 			submissionId: 'sub-1',
 		});
 
-		const other = await s.runs.settle({ submissionId: 'sub-other', status: 'succeeded' });
-
-		const settled = await s.runs.settle({
+		const outcome = {
 			submissionId: 'sub-1',
-			status: 'failed',
+			status: 'failed' as const,
 			reason: 'boom',
-		});
+			at: AT,
+			pauseAt: 3,
+		};
 
-		const again = await s.runs.settle({ submissionId: 'sub-1', status: 'succeeded' });
+		const outcomes = await Promise.all([
+			s.runs.recordOutcome(outcome),
+			s.runs.recordOutcome(outcome),
+		]);
 
-		expect(other).toBeUndefined();
-		expect(settled).toMatchObject({
+		await s.runs.dispatched({
 			automationId: 'a1',
-			status: 'failed',
-			reason: 'boom',
+			fireTime: AT,
 			conversationId: 'conv',
+			submissionId: 'sub-1',
 		});
-		expect(again).toBeUndefined();
+		const late = await s.runs.recordOutcome(outcome);
+
+		const row = await s.automations.get('a1');
+		const runs = await s.runs.list('a1');
+		expect(late).toBeUndefined();
+		expect(other).toBeUndefined();
+		expect(outcomes.filter(Boolean)).toHaveLength(1);
+		expect(row?.consecutiveFailures).toBe(1);
+		expect(runs).toEqual([
+			{
+				automationId: 'a1',
+				fireTime: AT,
+				status: 'failed',
+				reason: 'boom',
+				createdAt: AT,
+				conversationId: 'conv',
+				submissionId: 'sub-1',
+			},
+		]);
+	});
+
+	test('successful submission resets failures and keeps completed automation completed', async () => {
+		const s = await store();
+		await s.automations.create(newAutomation());
+		await s.runs.claim({ automationId: 'a1', fireTime: 't1', createdAt: AT });
+		await s.runs.recordOutcome({
+			automationId: 'a1',
+			fireTime: 't1',
+			status: 'failed',
+			at: AT,
+			pauseAt: 3,
+		});
+		await s.runs.claim({ automationId: 'a1', fireTime: 't2', createdAt: AT });
+		await s.runs.dispatched({
+			automationId: 'a1',
+			fireTime: 't2',
+			conversationId: 'conv',
+			submissionId: 'sub-2',
+		});
+		await s.automations.setStatus({ id: 'a1', status: 'completed', at: AT });
+
+		const settled = await s.runs.recordOutcome({
+			submissionId: 'sub-2',
+			status: 'succeeded',
+			at: AT,
+			pauseAt: 3,
+		});
+
+		expect(settled).toMatchObject({ status: 'completed', consecutiveFailures: 0 });
+	});
+
+	test('counter write failure rolls back the run outcome so settlement can retry', async () => {
+		const db = await openTestDatabase();
+		const s = createD1AutomationStore(db);
+		await s.automations.create(newAutomation());
+		await s.runs.claim({ automationId: 'a1', fireTime: AT, createdAt: AT });
+		await s.runs.dispatched({
+			automationId: 'a1',
+			fireTime: AT,
+			conversationId: 'conv',
+			submissionId: 'sub-1',
+		});
+		await db
+			.prepare(
+				"CREATE TRIGGER reject_counter BEFORE UPDATE ON automations BEGIN SELECT RAISE(ABORT, 'counter failed'); END",
+			)
+			.run();
+		const outcome = { submissionId: 'sub-1', status: 'failed' as const, at: AT, pauseAt: 3 };
+		await expect(s.runs.recordOutcome(outcome)).rejects.toThrow('counter failed');
+		const runs = await s.runs.list('a1');
+		const row = await s.automations.get('a1');
+		expect(runs[0]?.status).toBe('dispatched');
+		expect(row?.consecutiveFailures).toBe(0);
+		await db.prepare('DROP TRIGGER reject_counter').run();
+		const retried = await s.runs.recordOutcome(outcome);
+		expect(retried?.consecutiveFailures).toBe(1);
 	});
 });

@@ -5,6 +5,7 @@
 > **Revision 2026-10-14: no drafts, no confirmation.** The model creates the automation directly and replies with what it created; people fix it afterwards with Edit, Pause, Run now, and Delete. These deltas override the task text below. Each affected task is rewritten in place when its PR starts.
 >
 > - **PR #63 store correction:** scheduled ticks must use `runs.claimScheduled({ automationId, fireTime, nextRunAt, at })` and return when it is false. It atomically claims and advances only an active row whose next run still matches. The separate `automations.advance` API is removed; older claim/advance snippets below are superseded. `runs.claim` is only for Run now, which leaves the schedule unchanged.
+> - **PR #63 outcome grouping:** `runs.recordOutcome` replaces `runs.finish`, `runs.settle`, `automations.recordSuccess`, and `automations.recordFailure`. Pass either `{ submissionId, status: succeeded|failed, reason?, at, pauseAt }` for a dispatched submission, or `{ automationId, fireTime, status: posted|failed, reason?, at, pauseAt }` for a claimed fire. It records the outcome and updates the failure counter in one transaction, returning the updated automation once (undefined for unrelated or repeated outcomes). Historical store/test snippets below are superseded by the current source; the outcome and scheduler examples use the grouped API.
 > - **Task 1 simplification:** keep schedule validation, next-run calculations, cronstrue descriptions, and Intl run-time formatting. `describeSchedule(schedule, timezone)` no longer takes `now`. Remove `Preset`, `presetOf`, `presetCron`, `zoneLabel`, `WallTime`, `wallTimeIn`, and `zonedTimeToUtc`; they have no production callers. The modal design and its date/time handling will be settled in Task 10 rather than implemented speculatively here.
 > - **Task 2:** no `automation_drafts` table, no `AutomationDraft`/`NewDraft` types, no `drafts` store methods or tests.
 > - **Task 6:** `CardState` is just the created automation. `automationCard({ automation, now })` always shows the status line and Pause/Resume, Run now, Edit, and Delete.
@@ -1485,7 +1486,7 @@ git commit -m "Extract startConversation from Slack admission"
 - Produces:
   - `blocks.ts`: `AUTOMATION_ACTION` (`create`, `editDraft`, `cancel`, `pause`, `resume`, `runNow`, `edit`, `delete`), `AUTOMATION_MODAL = 'automation_modal'`, `type Surface = 'header' | 'card' | 'list'`, `buttonValue(id: string, surface: Surface): string`, `parseButtonValue(value: string): { id: string; surface: Surface } | undefined`, `type Rendered = { text: string; blocks: KnownBlock[] }`, `runMessage(automation: Automation): Rendered`, `ownerNotice({ automation, message }): Rendered`, `manageButtons({ automation, surface, extras }): Button[]` (exported for Tasks 6 and 11)
   - `slack-people.ts`: `openDirectMessage({ slack, userId }): Promise<string>`
-  - `outcome.ts`: `PAUSE_AFTER_FAILURES = 3`, `notifyOwner({ slack, automation, message })`, `recordFailure({ store, slack, automationId, at })`, `recordRunSettled({ store, slack, submissionId, outcome, error, at })`
+  - `outcome.ts`: `PAUSE_AFTER_FAILURES = 3`, `notifyOwner({ slack, automation, message })`, `notifyPaused({ slack, automation })`, `recordRunSettled({ store, slack, submissionId, outcome, error, at })`
   - `scheduler.ts`: `type StartRun = (args: { automation: Automation; threadTs: string; fireTime: string }) => Promise<{ conversationId: string; submissionId: string }>`, `type SchedulerDeps = { store; slack; startRun; now(): Date }`, `runDueAutomations(deps)`, `fireAutomation({ automation, fireTime, deps })`, `runNow({ automation, deps }): Promise<boolean>`, `ownerGoneReason({ slack, userId }): Promise<string | undefined>`, `slackErrorCode(error: unknown): string | undefined`
 
 - [ ] **Step 1: Move the mrkdwn helpers**
@@ -1983,28 +1984,22 @@ export async function notifyOwner({
 	}
 }
 
-export async function recordFailure({
-	store,
+export async function notifyPaused({
 	slack,
-	automationId,
-	at,
+	automation,
 }: {
-	store: AutomationStore;
 	slack: SlackBotClient | undefined;
-	automationId: string;
-	at: string;
+	automation: Automation | undefined;
 }): Promise<void> {
-	const after = await store.automations.recordFailure({ id: automationId, at, pauseAt: PAUSE_AFTER_FAILURES });
-
-	// Exactly the failure that paused it; later failures of a paused row stay quiet.
-	if (!after || !slack || after.status !== 'paused' || after.consecutiveFailures !== PAUSE_AFTER_FAILURES) {
+	// Only the outcome that reaches the threshold returns this count; duplicates return undefined.
+	if (!automation || !slack || automation.status !== 'paused' || automation.consecutiveFailures !== PAUSE_AFTER_FAILURES) {
 		return;
 	}
 
 	await notifyOwner({
 		slack,
-		automation: after,
-		message: `I paused your automation *${after.title}* after ${PAUSE_AFTER_FAILURES} failed runs in a row. Resume it when it should run again.`,
+		automation,
+		message: `I paused your automation *${automation.title}* after ${PAUSE_AFTER_FAILURES} failed runs in a row. Resume it when it should run again.`,
 	});
 }
 
@@ -2024,18 +2019,15 @@ export async function recordRunSettled({
 	error?: string;
 	at: string;
 }): Promise<void> {
-	const succeeded = outcome === 'completed';
-	const run = await store.runs.settle({ submissionId, status: succeeded ? 'succeeded' : 'failed', reason: error });
+	const automation = await store.runs.recordOutcome({
+		submissionId,
+		status: outcome === 'completed' ? 'succeeded' : 'failed',
+		reason: error,
+		at,
+		pauseAt: PAUSE_AFTER_FAILURES,
+	});
 
-	if (!run) return;
-
-	if (succeeded) {
-		await store.automations.recordSuccess({ id: run.automationId, at });
-
-		return;
-	}
-
-	await recordFailure({ store, slack, automationId: run.automationId, at });
+	if (outcome !== 'completed') await notifyPaused({ slack, automation });
 }
 ```
 
@@ -2046,7 +2038,7 @@ import type { SlackBotClient } from '../channels/slack-reply.ts';
 import { errorMessage } from '../json.ts';
 import type { Automation, AutomationStore } from './automation.ts';
 import { runMessage } from './blocks.ts';
-import { notifyOwner, recordFailure } from './outcome.ts';
+import { notifyOwner, notifyPaused, PAUSE_AFTER_FAILURES } from './outcome.ts';
 import { nextRunAfter } from './schedule.ts';
 
 export type StartRun = (args: {
@@ -2174,8 +2166,7 @@ export async function fireAutomation({
 		});
 
 		if (automation.kind === 'reminder') {
-			await store.runs.finish({ ...run, status: 'posted' });
-			await store.automations.recordSuccess({ id: automation.id, at: deps.now().toISOString() });
+			await store.runs.recordOutcome({ ...run, status: 'posted', at: deps.now().toISOString(), pauseAt: PAUSE_AFTER_FAILURES });
 
 			return;
 		}
@@ -2197,8 +2188,8 @@ export async function fireAutomation({
 			return;
 		}
 
-		await store.runs.finish({ ...run, status: 'failed', reason: errorMessage(error) });
-		await recordFailure({ store, slack, automationId: automation.id, at: deps.now().toISOString() });
+		const failed = await store.runs.recordOutcome({ ...run, status: 'failed', reason: errorMessage(error), at: deps.now().toISOString(), pauseAt: PAUSE_AFTER_FAILURES });
+		await notifyPaused({ slack, automation: failed });
 	}
 }
 
@@ -2219,7 +2210,7 @@ async function block({
 		at: deps.now().toISOString(),
 	});
 
-	await deps.store.runs.finish({ automationId: automation.id, fireTime, status: 'failed', reason });
+	await deps.store.runs.recordOutcome({ automationId: automation.id, fireTime, status: 'failed', reason, at: deps.now().toISOString(), pauseAt: PAUSE_AFTER_FAILURES });
 
 	if (!blocked) return;
 

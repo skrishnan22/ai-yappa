@@ -58,12 +58,6 @@ const SQL = {
 		consecutive_failures = CASE WHEN ?2 = 'active' THEN 0 ELSE consecutive_failures END,
 		updated_at = ?4
 		WHERE id = ?1 AND status <> 'deleted' RETURNING *`,
-	recordSuccess: 'UPDATE automations SET consecutive_failures = 0, updated_at = ?2 WHERE id = ?1',
-	// SET expressions read the row as it was, so both use the old count.
-	recordFailure: `UPDATE automations SET consecutive_failures = consecutive_failures + 1,
-		status = CASE WHEN status = 'active' AND consecutive_failures + 1 >= ?3 THEN 'paused' ELSE status END,
-		updated_at = ?2
-		WHERE id = ?1 RETURNING *`,
 	claimScheduled: `INSERT INTO automation_runs (automation_id, fire_time, status, created_at)
 		SELECT id, ?2, 'claimed', ?3 FROM automations
 		WHERE id = ?1 AND status = 'active' AND next_run_at = ?2
@@ -71,11 +65,19 @@ const SQL = {
 	claim: `INSERT INTO automation_runs (automation_id, fire_time, status, created_at)
 		VALUES (?1, ?2, 'claimed', ?3) ON CONFLICT DO NOTHING`,
 	dispatched: `UPDATE automation_runs SET status = 'dispatched', conversation_id = ?3, submission_id = ?4
-		WHERE automation_id = ?1 AND fire_time = ?2`,
-	finish:
-		'UPDATE automation_runs SET status = ?3, reason = ?4 WHERE automation_id = ?1 AND fire_time = ?2',
-	settle: `UPDATE automation_runs SET status = ?2, reason = ?3
-		WHERE submission_id = ?1 AND status = 'dispatched' RETURNING *`,
+		WHERE automation_id = ?1 AND fire_time = ?2 AND status = 'claimed'`,
+	recordOutcome: `UPDATE automation_runs SET status = ?4, reason = ?5
+		WHERE (submission_id = ?1 AND status = 'dispatched')
+			OR (automation_id = ?2 AND fire_time = ?3 AND status = 'claimed')`,
+	countOutcome: `UPDATE automations SET
+		consecutive_failures = CASE WHEN ?4 = 'failed' THEN consecutive_failures + 1 ELSE 0 END,
+		status = CASE WHEN ?4 = 'failed' AND status = 'active' AND consecutive_failures + 1 >= ?5
+			THEN 'paused' ELSE status END,
+		updated_at = ?6
+		WHERE changes() = 1 AND id = (
+			SELECT automation_id FROM automation_runs
+			WHERE submission_id = ?1 OR (automation_id = ?2 AND fire_time = ?3)
+		) RETURNING *`,
 	runs: 'SELECT * FROM automation_runs WHERE automation_id = ?1 ORDER BY fire_time',
 } as const;
 
@@ -157,13 +159,6 @@ export function createD1AutomationStore(db: D1Database): AutomationStore {
 		return results.map(read);
 	}
 
-	async function write(sql: string, values: D1Value[]): Promise<void> {
-		await db
-			.prepare(sql)
-			.bind(...values)
-			.run();
-	}
-
 	return {
 		automations: {
 			async create(automation) {
@@ -191,9 +186,6 @@ export function createD1AutomationStore(db: D1Database): AutomationStore {
 				firstRow(SQL.update, [id, ...fieldValues(fields), nextRunAt, status, at], readAutomation),
 			setStatus: ({ id, status, nextRunAt, at }) =>
 				firstRow(SQL.setStatus, [id, status, nextRunAt ?? null, at], readAutomation),
-			recordSuccess: ({ id, at }) => write(SQL.recordSuccess, [id, at]),
-			recordFailure: ({ id, at, pauseAt }) =>
-				firstRow(SQL.recordFailure, [id, at, pauseAt], readAutomation),
 		},
 		runs: {
 			async claimScheduled({ automationId, fireTime, nextRunAt, at }) {
@@ -210,12 +202,30 @@ export function createD1AutomationStore(db: D1Database): AutomationStore {
 
 				return meta.changes === 1;
 			},
-			dispatched: ({ automationId, fireTime, conversationId, submissionId }) =>
-				write(SQL.dispatched, [automationId, fireTime, conversationId, submissionId]),
-			finish: ({ automationId, fireTime, status, reason }) =>
-				write(SQL.finish, [automationId, fireTime, status, reason ?? null]),
-			settle: ({ submissionId, status, reason }) =>
-				firstRow(SQL.settle, [submissionId, status, reason ?? null], readRun),
+			async dispatched({ automationId, fireTime, conversationId, submissionId }) {
+				await db
+					.prepare(SQL.dispatched)
+					.bind(automationId, fireTime, conversationId, submissionId)
+					.run();
+			},
+			async recordOutcome(outcome) {
+				const identity: D1Value[] =
+					'submissionId' in outcome
+						? [outcome.submissionId, null, null]
+						: [null, outcome.automationId, outcome.fireTime];
+
+				const { status, reason, pauseAt, at } = outcome;
+
+				// Only a newly recorded outcome changes the counter. Errors roll back both writes.
+				const [, counted] = await db.batch([
+					db.prepare(SQL.recordOutcome).bind(...identity, status, reason ?? null),
+					db.prepare(SQL.countOutcome).bind(...identity, status, pauseAt, at),
+				]);
+
+				const [row] = counted?.results ?? [];
+
+				return row ? readAutomation(row) : undefined;
+			},
 			list: (automationId) => allRows(SQL.runs, [automationId], readRun),
 		},
 	};
