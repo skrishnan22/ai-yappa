@@ -13,7 +13,7 @@ CREATE TABLE automations (
   run_at TEXT, -- the one-off instant (UTC ISO); NULL for recurring
   timezone TEXT NOT NULL,
   next_run_at TEXT,
-  last_run_at TEXT,
+  last_scheduled_at TEXT,
   status TEXT NOT NULL CHECK (status IN ('active', 'paused', 'blocked', 'completed', 'deleted')),
   consecutive_failures INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,

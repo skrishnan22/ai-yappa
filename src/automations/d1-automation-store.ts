@@ -16,7 +16,7 @@ const automationRowSchema = v.object({
 	run_at: v.nullable(v.string()),
 	timezone: v.string(),
 	next_run_at: v.nullable(v.string()),
-	last_run_at: v.nullable(v.string()),
+	last_scheduled_at: v.nullable(v.string()),
 	status: v.picklist(['active', 'paused', 'blocked', 'completed', 'deleted']),
 	consecutive_failures: v.number(),
 	created_at: v.string(),
@@ -49,7 +49,7 @@ const SQL = {
 	visible: `SELECT * FROM automations WHERE status <> 'deleted'
 		AND ((scope = 'personal' AND owner_user_id = ?1) OR (scope = 'channel' AND destination_channel_id = ?2))
 		ORDER BY created_at, id`,
-	advance: `UPDATE automations SET last_run_at = ?2, next_run_at = ?3,
+	advance: `UPDATE automations SET last_scheduled_at = ?2, next_run_at = ?3,
 		status = CASE WHEN ?3 IS NULL THEN 'completed' ELSE status END, updated_at = ?4
 		WHERE id = ?1 AND status = 'active' AND next_run_at = ?2 AND changes() = 1`,
 	update: `UPDATE automations SET ${SET_FIELDS}, next_run_at = ?11, status = ?12, updated_at = ?13
@@ -114,7 +114,7 @@ function readAutomation(raw: JsonObject): Automation {
 		ownerUserId: row.owner_user_id,
 		status: row.status,
 		nextRunAt: row.next_run_at ?? undefined,
-		lastRunAt: row.last_run_at ?? undefined,
+		lastScheduledAt: row.last_scheduled_at ?? undefined,
 		consecutiveFailures: row.consecutive_failures,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,

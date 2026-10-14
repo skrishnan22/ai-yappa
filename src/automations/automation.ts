@@ -26,7 +26,7 @@ export type Automation = AutomationFields & {
 	ownerUserId: string;
 	status: AutomationStatus;
 	nextRunAt?: string;
-	lastRunAt?: string;
+	lastScheduledAt?: string; // Last consumed scheduled occurrence, not execution start.
 	consecutiveFailures: number;
 	createdAt: string;
 	updatedAt: string;

@@ -534,7 +534,7 @@ export type AutomationScope = 'personal' | 'channel';
 export type AutomationStatus = 'active' | 'paused' | 'blocked' | 'completed' | 'deleted';
 export type RunStatus = 'claimed' | 'dispatched' | 'posted' | 'failed' | 'succeeded';
 export type AutomationFields = { kind; title; prompt; scope; destinationChannelId; repo?; schedule: Schedule; timezone };
-export type Automation = AutomationFields & { id; ownerUserId; status; nextRunAt?; lastRunAt?; consecutiveFailures; createdAt; updatedAt };
+export type Automation = AutomationFields & { id; ownerUserId; status; nextRunAt?; lastScheduledAt?; consecutiveFailures; createdAt; updatedAt };
 export type AutomationDraft = AutomationFields & { id; draftedBy; channelId; threadTs; cardTs?; automationId?; consumedAt?; createdAt; updatedAt };
 export type NewDraft = AutomationFields & { id; draftedBy; channelId; threadTs; createdAt };
 export type NewAutomation = AutomationFields & { id; ownerUserId; nextRunAt: string; createdAt };
@@ -562,7 +562,7 @@ CREATE TABLE automations (
   run_at TEXT, -- the one-off instant (UTC ISO); NULL for recurring
   timezone TEXT NOT NULL,
   next_run_at TEXT,
-  last_run_at TEXT,
+  last_scheduled_at TEXT,
   status TEXT NOT NULL CHECK (status IN ('active', 'paused', 'blocked', 'completed', 'deleted')),
   consecutive_failures INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
@@ -646,7 +646,7 @@ export type Automation = AutomationFields & {
 	ownerUserId: string;
 	status: AutomationStatus;
 	nextRunAt?: string;
-	lastRunAt?: string;
+	lastScheduledAt?: string;
 	consecutiveFailures: number;
 	createdAt: string;
 	updatedAt: string;
@@ -717,7 +717,7 @@ export type AutomationStore = {
 		due(args: { now: string; limit: number }): Promise<Automation[]>;
 		// The user's personal automations and the channel's channel automations, not deleted.
 		visibleTo(args: { userId: string; channelId: string }): Promise<Automation[]>;
-		// Moves a claimed fire on: last_run_at = from, next_run_at = nextRunAt, or
+		// Moves a claimed fire on: last_scheduled_at = from, next_run_at = nextRunAt, or
 		// completed when there is none. Only while next_run_at is still `from`.
 		advance(args: { id: string; from: string; nextRunAt?: string; at: string }): Promise<boolean>;
 		update(args: {
@@ -858,7 +858,7 @@ describe('automations', () => {
 
 		expect(await s.automations.advance({ id: 'a1', from: 'stale', nextRunAt: 'x', at: AT })).toBe(false);
 		expect(await s.automations.advance({ id: 'a1', from: '2026-10-14T03:30:00.000Z', nextRunAt: '2026-10-15T03:30:00.000Z', at: AT })).toBe(true);
-		expect(await s.automations.get('a1')).toMatchObject({ status: 'active', lastRunAt: '2026-10-14T03:30:00.000Z', nextRunAt: '2026-10-15T03:30:00.000Z' });
+		expect(await s.automations.get('a1')).toMatchObject({ status: 'active', lastScheduledAt: '2026-10-14T03:30:00.000Z', nextRunAt: '2026-10-15T03:30:00.000Z' });
 
 		await s.automations.advance({ id: 'a1', from: '2026-10-15T03:30:00.000Z', at: AT });
 
@@ -969,7 +969,7 @@ const automationRowSchema = v.object({
 	id: v.string(),
 	owner_user_id: v.string(),
 	next_run_at: v.nullable(v.string()),
-	last_run_at: v.nullable(v.string()),
+	last_scheduled_at: v.nullable(v.string()),
 	status: v.picklist(['active', 'paused', 'blocked', 'completed', 'deleted']),
 	consecutive_failures: v.number(),
 	created_at: v.string(),
@@ -1027,7 +1027,7 @@ const SQL = {
 	visible: `SELECT * FROM automations WHERE status <> 'deleted'
 		AND ((scope = 'personal' AND owner_user_id = ?1) OR (scope = 'channel' AND destination_channel_id = ?2))
 		ORDER BY created_at, id`,
-	advance: `UPDATE automations SET last_run_at = ?2, next_run_at = ?3,
+	advance: `UPDATE automations SET last_scheduled_at = ?2, next_run_at = ?3,
 		status = CASE WHEN ?3 IS NULL THEN 'completed' ELSE status END, updated_at = ?4
 		WHERE id = ?1 AND next_run_at = ?2`,
 	update: `UPDATE automations SET ${SET_FIELDS}, next_run_at = ?11, status = ?12, updated_at = ?13
@@ -1089,7 +1089,7 @@ function readAutomation(raw: JsonObject): Automation {
 		ownerUserId: row.owner_user_id,
 		status: row.status,
 		nextRunAt: row.next_run_at ?? undefined,
-		lastRunAt: row.last_run_at ?? undefined,
+		lastScheduledAt: row.last_scheduled_at ?? undefined,
 		consecutiveFailures: row.consecutive_failures,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
@@ -1612,7 +1612,7 @@ describe('runDueAutomations', () => {
 			{ automation: expect.objectContaining({ id: 'a1' }), threadTs: '100.1', fireTime: '2026-10-14T03:30:00.000Z' },
 		]);
 		expect(await store.automations.get('a1')).toMatchObject({
-			lastRunAt: '2026-10-14T03:30:00.000Z',
+			lastScheduledAt: '2026-10-14T03:30:00.000Z',
 			nextRunAt: '2026-10-15T03:30:00.000Z',
 		});
 		expect(await store.runs.list('a1')).toMatchObject([{ status: 'dispatched', conversationId: 'conv-1', submissionId: 'sub-1' }]);
@@ -2278,7 +2278,7 @@ const automation: Automation = {
 	timezone: 'Asia/Kolkata',
 	ownerUserId: 'U_OWNER',
 	status: 'active',
-	lastRunAt: '2026-10-13T03:30:00.000Z',
+	lastScheduledAt: '2026-10-13T03:30:00.000Z',
 	consecutiveFailures: 0,
 	createdAt: '2026-10-01T00:00:00.000Z',
 	updatedAt: '2026-10-01T00:00:00.000Z',
@@ -2319,7 +2319,7 @@ describe('createStartRun', () => {
 				attributes: {
 					automationId: 'a1',
 					scheduledAt: '2026-10-14T03:30:00.000Z',
-					previousRunAt: '2026-10-13T03:30:00.000Z',
+					previousScheduledAt: '2026-10-13T03:30:00.000Z',
 					userId: 'U_OWNER',
 					modelRoute: 'opencode-go',
 				},
@@ -2416,7 +2416,7 @@ export function createStartRun({
 			modelRoute,
 		};
 
-		if (automation.lastRunAt) attributes.previousRunAt = automation.lastRunAt;
+		if (automation.lastScheduledAt) attributes.previousScheduledAt = automation.lastScheduledAt;
 
 		const receipt = await startConversation({
 			runtime,
@@ -2760,7 +2760,7 @@ export function statusLine({ automation, now }: { automation: Automation; now: D
 		case 'blocked':
 			return '⛔ Blocked: check the DM from Yappa';
 		case 'completed':
-			return `✔ Completed${automation.lastRunAt ? ` · ran ${formatRunTime(automation.lastRunAt, automation.timezone)}` : ''}`;
+			return `✔ Completed${automation.lastScheduledAt ? ` · scheduled for ${formatRunTime(automation.lastScheduledAt, automation.timezone)}` : ''}`;
 		case 'deleted':
 			return '🗑 Deleted';
 		default: {

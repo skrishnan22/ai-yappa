@@ -47,7 +47,8 @@ D1 migration `0005_automations.sql`:
   - `schedule`: a 5-field cron pattern, or null for a one-off
   - `run_at`: the one-off instant (UTC ISO), null for recurring
   - `timezone`: IANA
-  - `next_run_at` (UTC ISO, indexed with `status`), `last_run_at`
+  - `next_run_at` (UTC ISO, indexed with `status`), `last_scheduled_at`
+    (the last consumed scheduled occurrence, not the execution start time)
   - `status`: `active | paused | blocked | completed | deleted`
   - `consecutive_failures`, `created_at`, `updated_at`
 - `automation_runs`
@@ -116,7 +117,7 @@ For an automation fire:
   - `initialData`: `channelId`, `threadTs`, `startedBy: owner`,
     `startedAt`, `repo?`, `automationId`.
   - `message`: `{ kind: 'signal', type: 'automation.fire', body: prompt }`.
-  - `attributes`: `automationId`, `scheduledAt`, `previousRunAt`.
+  - `attributes`: `automationId`, `scheduledAt`, `previousScheduledAt`.
   - `idempotencyKey`: `automation:<id>:<fire_time>`.
 - The run has the same `code-change` capability as a mention.
 - The automation tools are not mounted when `initialData.automationId` is

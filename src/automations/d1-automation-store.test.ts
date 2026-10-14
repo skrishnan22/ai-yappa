@@ -107,7 +107,7 @@ describe('automations', () => {
 		expect(first).not.toBe(second);
 		expect(moved).toMatchObject({
 			status: 'active',
-			lastRunAt: claim.fireTime,
+			lastScheduledAt: claim.fireTime,
 			nextRunAt: claim.nextRunAt,
 		});
 		expect(runs).toEqual([
@@ -123,7 +123,7 @@ describe('automations', () => {
 		const claimed = await s.runs.claimScheduled({ automationId: 'a1', fireTime: AT, at: AT });
 		const done = await s.automations.get('a1');
 		expect(claimed).toBe(true);
-		expect(done).toMatchObject({ status: 'completed', lastRunAt: AT, nextRunAt: undefined });
+		expect(done).toMatchObject({ status: 'completed', lastScheduledAt: AT, nextRunAt: undefined });
 	});
 
 	test.each(['paused', 'blocked', 'deleted'] as const)(
@@ -138,7 +138,7 @@ describe('automations', () => {
 			const row = await s.automations.get('a1');
 			const runs = await s.runs.list('a1');
 			expect(claimed).toBe(false);
-			expect(row).toMatchObject({ status, nextRunAt: AT, lastRunAt: undefined });
+			expect(row).toMatchObject({ status, nextRunAt: AT, lastScheduledAt: undefined });
 			expect(runs).toEqual([]);
 		},
 	);
@@ -270,7 +270,11 @@ describe('runs', () => {
 
 		const row = await s.automations.get('a1');
 		expect(claimed).toBe(false);
-		expect(row).toMatchObject({ nextRunAt: fireTime, lastRunAt: undefined, status: 'active' });
+		expect(row).toMatchObject({
+			nextRunAt: fireTime,
+			lastScheduledAt: undefined,
+			status: 'active',
+		});
 	});
 
 	test('three distinct failed fires pause once, and resume resets failures', async () => {
