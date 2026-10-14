@@ -67,6 +67,8 @@ const initialDataSchema = v.object({
 	startedAt: v.pipe(v.string(), v.isoTimestamp()),
 	repo: v.optional(v.pipe(v.string(), v.url())),
 	modelChoice: v.optional(modelChoiceSchema),
+	// Set when an automation fire started this conversation.
+	automationId: v.optional(v.string()),
 });
 
 export function Coworker(props: { id: string }) {
