@@ -152,7 +152,7 @@ The tool creates the automation immediately and posts a card in the thread
 showing:
 
 - title, kind, scope, destination, repo
-- the schedule in words ("Weekdays at 09:00 IST")
+- the schedule in words ("At 09:00, Monday through Friday (Asia/Kolkata)")
 - the next three run times
 - the prompt, verbatim
 - the status ("✅ Created · next run Mon 19 Oct, 09:00 IST")
@@ -167,6 +167,11 @@ or Delete; there is no draft or Create step.
 or a channel picker.
 
 ### The modal
+
+The exact editing controls and local date/time handling are deferred to the
+modal implementation. The schedule module does not prebuild preset or local
+time conversion helpers. Croner calculates run times; cronstrue describes
+recurring expressions; Intl formats individual runs.
 
 Fields:
 
@@ -249,7 +254,7 @@ Authorization, checked in code on every click:
 ## Acceptance
 
 - "Every weekday at 9am, post yesterday's merged PRs in acme/api to #eng"
-  creates the automation and posts a card reading "Weekdays at 09:00 IST". A header
+  creates the automation and posts a card reading "At 09:00, Monday through Friday (Asia/Kolkata)". A header
   plus a run thread appears in #eng the next weekday at 09:00 IST, and a
   reply in that thread continues the conversation.
 - "Remind me Thursday 6pm to book tickets" DMs the reminder once and the

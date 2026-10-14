@@ -4,6 +4,7 @@
 
 > **Revision 2026-10-14: no drafts, no confirmation.** The model creates the automation directly and replies with what it created; people fix it afterwards with Edit, Pause, Run now, and Delete. These deltas override the task text below. Each affected task is rewritten in place when its PR starts.
 >
+> - **Task 1 simplification:** keep schedule validation, next-run calculations, cronstrue descriptions, and Intl run-time formatting. `describeSchedule(schedule, timezone)` no longer takes `now`. Remove `Preset`, `presetOf`, `presetCron`, `zoneLabel`, `WallTime`, `wallTimeIn`, and `zonedTimeToUtc`; they have no production callers. The modal design and its date/time handling will be settled in Task 10 rather than implemented speculatively here.
 > - **Task 2:** no `automation_drafts` table, no `AutomationDraft`/`NewDraft` types, no `drafts` store methods or tests.
 > - **Task 6:** `CardState` is just the created automation. `automationCard({ automation, now })` always shows the status line and Pause/Resume, Run now, Edit, and Delete.
 > - **Task 7:** the tool is `create_automation`. It always creates, then posts the card. There is no `automationConfirmation` in `src/config.ts`. The gate is `mountsCreateAutomation`.
