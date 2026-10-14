@@ -1,7 +1,7 @@
 # Scheduled automations
 
 Date: 2026-10-13
-Status: Agreed in chat; spec ready for review. Not implemented.
+Status: Agreed in chat. Revised 2026-10-14: no drafts or confirmation; the model creates directly. Not implemented.
 Depends on: `2026-10-13-repo-optional-conversations-design.md` (DMs, optional repo).
 
 ## Goal
@@ -12,8 +12,10 @@ Users create recurring or one-off work for Yappa from Slack:
 - "Every morning, DM me a digest of the latest AI news."
 - "Remind me Thursday 6pm to book tickets."
 
-The model only proposes. Every state change to an automation goes through
-deterministic code that a human triggers or the scheduler runs, with
+The model creates an automation through one tool. Code sets the owner,
+timezone, destination, and repo access, and validates every field. After
+creation, every state change goes through deterministic code that a human
+triggers (Edit, Pause, Run now, Delete) or the scheduler runs, with
 authorization checked in code.
 
 Out of scope: event triggers (GitHub webhooks, the PR babysitter) are the next
@@ -53,10 +55,6 @@ D1 migration `0005_automations.sql`:
   - `status`: `dispatched | posted | failed | succeeded`
   - `conversation_id`, `submission_id`, `reason`, `created_at`
   - Kept after the automation is deleted.
-- `automation_drafts`
-  - The proposed automation fields plus `drafted_by`, `channel_id`,
-    `thread_ts`, `card_ts`, `consumed_at`.
-  - A Slack button value cannot hold a long prompt, so cards carry the draft id.
 
 Store module in `src/automations/store.ts`, following `src/planning/`, with a
 holder set by the Worker entry the way the planning store is.
@@ -136,7 +134,7 @@ replies in the thread do not.
 
 ### Through the agent
 
-The Coworker gets `draft_automation` (not mounted in automation runs). The
+The Coworker gets `create_automation` (not mounted in automation runs). The
 model supplies `kind`, `title`, `prompt`, `schedule` (cron) or `run_at` (ISO
 with offset), `scope`, and optional `repo` (default: the conversation's repo).
 
@@ -150,20 +148,18 @@ Code fills and checks the rest:
 - **Validation:** croner parses the pattern; `run_at` is in the future; `repo`
   is in the GitHub App installation (shared with `attach_repo`).
 
-The result depends on `automationConfirmation` in `src/config.ts`
-(default `true`):
+The tool creates the automation immediately and posts a card in the thread
+showing:
 
-- **On:** write an `automation_drafts` row. Post a confirmation card in the
-  thread showing:
-  - title, kind, scope, destination, repo
-  - the schedule in words ("Weekdays at 09:00 IST")
-  - the next three run times
-  - the prompt, verbatim
-  - **Create**, **Edit**, **Cancel**
-  Nothing is stored as an automation until a human clicks Create.
-- **Off:** create the automation immediately with the same validation, and
-  post the same card in its created state ("✅ Created · next run Mon 09:00")
-  with **Edit**, **Pause**, **Delete**.
+- title, kind, scope, destination, repo
+- the schedule in words ("At 09:00, Monday through Friday (Asia/Kolkata)")
+- the next three run times
+- the prompt, verbatim
+- the status ("✅ Created · next run Mon 19 Oct, 09:00 IST")
+- **Pause**, **Run now**, **Edit**, **Delete**
+
+The model then replies with what it created. A wrong guess is fixed with Edit
+or Delete; there is no draft or Create step.
 
 ### Without the model
 
@@ -171,6 +167,11 @@ The result depends on `automationConfirmation` in `src/config.ts`
 or a channel picker.
 
 ### The modal
+
+The exact editing controls and local date/time handling are deferred to the
+modal implementation. The schedule module does not prebuild preset or local
+time conversion helpers. Croner calculates run times; cronstrue describes
+recurring expressions; Intl formats individual runs.
 
 Fields:
 
@@ -183,9 +184,9 @@ Fields:
 - destination
 - repo (optional)
 
-Custom cron is validated on submit with an inline error. Submitting from a
-draft card updates the draft and redraws the card; submitting from a stored
-automation updates it and recomputes `next_run_at`.
+Custom cron is validated on submit with an inline error. Submitting updates
+the automation, recomputes `next_run_at`, and redraws the message the Edit
+button was on.
 
 ## Managing automations
 
@@ -202,13 +203,10 @@ Authorization, checked in code on every click:
 
 | Action                | Owner | Channel member (channel scope) | Anyone else |
 | --------------------- | ----- | ------------------------------ | ----------- |
-| Create (draft card)   | drafter only | –                       | –           |
 | Pause / Resume        | ✓     | ✓                              | ✗           |
 | Run now               | ✓     | ✓                              | ✗           |
 | Edit / Delete         | ✓     | ✗                              | ✗           |
 
-- **Create:** the clicker must be the draft's `drafted_by`. The draft is
-  consumed exactly once, so a double click is harmless.
 - **Resume / Edit:** recompute `next_run_at` from now. Paused periods are not
   replayed. Resume clears `blocked` only after re-authorization passes.
 - **Run now:** fires immediately with `fire_time = now` and leaves the
@@ -238,7 +236,7 @@ Authorization, checked in code on every click:
 
 ## Testing
 
-- **Pure functions:** draft validation; next-run calculation including a DST
+- **Pure functions:** field validation; next-run calculation including a DST
   transition and a one-off; schedule-to-words; the authorization table.
 - **Scheduler against a real migrated D1** (`openTestDatabase()`):
   - a claim is deduplicated across two ticks
@@ -247,18 +245,16 @@ Authorization, checked in code on every click:
   - a reminder posts without dispatch
   - re-authorization failure blocks the automation and DMs the owner
   - three failed settles pause it
-- **Interactions:** Create by the drafter versus someone else; double Create;
-  Edit modal submit; Pause by a channel member; Delete by a non-owner
+- **Interactions:** Edit modal submit; Pause by a channel member; Delete by a non-owner
   refused.
-- **Coworker render:** `draft_automation` is absent when
+- **Coworker render:** `create_automation` is absent when
   `initialData.automationId` is set.
-- **`automationConfirmation: false`:** the tool creates directly and posts the
-  created card.
+- **`create_automation`:** creates directly and posts the created card.
 
 ## Acceptance
 
 - "Every weekday at 9am, post yesterday's merged PRs in acme/api to #eng"
-  produces a card reading "Weekdays at 09:00 IST". After Create, a header
+  creates the automation and posts a card reading "At 09:00, Monday through Friday (Asia/Kolkata)". A header
   plus a run thread appears in #eng the next weekday at 09:00 IST, and a
   reply in that thread continues the conversation.
 - "Remind me Thursday 6pm to book tickets" DMs the reminder once and the
