@@ -18,9 +18,9 @@ describe('parseInvocationArgs', () => {
 	});
 
 	test('keeps dotted model ids and drops a sentence period', () => {
-		expect(parseInvocationArgs('<@U1> try $model:gpt-5.6-luna.')).toEqual({
+		expect(parseInvocationArgs('<@U1> try $model:gpt-6.1-luna.')).toEqual({
 			ok: true,
-			args: { model: 'gpt-5.6-luna', body: '<@U1> try.' },
+			args: { model: 'gpt-6.1-luna', body: '<@U1> try.' },
 		});
 	});
 

@@ -2,7 +2,9 @@ import { createProvider, type Provider, type ProviderStreams } from '@earendil-w
 import { openAICodexResponsesApi } from '@earendil-works/pi-ai/api/openai-codex-responses.lazy';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 
-export const OPENAI_CODEX_MODEL_ID = 'gpt-5.6-luna';
+export const OPENAI_CODEX_MODEL_ID = 'gpt-6.1-luna';
+
+export const OPENAI_CODEX_MODEL_IDS = ['gpt-6.1-luna', 'gpt-6.1-sol'] as const;
 
 export const openAICodexModelSpecifier = `openai-codex/${OPENAI_CODEX_MODEL_ID}`;
 
@@ -26,6 +28,19 @@ export function createOpenAICodexProvider(
 	accessToken: () => Promise<string | undefined>,
 ): Provider {
 	const catalog = openaiCodexProvider();
+	const catalogModels = catalog.getModels();
+	const models = [...catalogModels];
+
+	for (const modelId of OPENAI_CODEX_MODEL_IDS) {
+		if (models.some((model) => model.id === modelId)) continue;
+
+		const sourceId = modelId.replace('6.1', '5.6');
+		const source = catalogModels.find((model) => model.id === sourceId);
+
+		if (!source) throw new Error(`OpenAI Codex catalog is missing ${sourceId}`);
+
+		models.push({ ...source, id: modelId, name: source.name.replace('5.6', '6.1') });
+	}
 
 	return createProvider({
 		id: catalog.id,
@@ -41,7 +56,7 @@ export function createOpenAICodexProvider(
 				},
 			},
 		},
-		models: catalog.getModels(),
+		models,
 		api: withSseTransport(openAICodexResponsesApi()),
 	});
 }

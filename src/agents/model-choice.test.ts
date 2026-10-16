@@ -1,17 +1,16 @@
 import levenshtein from 'damerau-levenshtein';
-import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 import { opencodeGoProvider } from '@earendil-works/pi-ai/providers/opencode-go';
 import { describe, expect, test } from 'vitest';
 import { modelAliases } from '../config.ts';
 import { coworkerModel, modelHelpText, resolveModelChoice, typoLimit } from './model-choice.ts';
-import { openAICodexModelSpecifier } from './openai-codex-route.ts';
+import { createOpenAICodexProvider, openAICodexModelSpecifier } from './openai-codex-route.ts';
 import { openCodeGoModelSpecifier } from './opencode-go-catalog.ts';
 
 const pickModel = (typed: string) => resolveModelChoice({ model: typed });
 
 const pickEffort = (typed: string) => resolveModelChoice({ effort: typed });
 
-const luna = { provider: 'chatgpt', modelId: 'gpt-5.6-luna' } as const;
+const luna = { provider: 'chatgpt', modelId: 'gpt-6.1-luna' } as const;
 
 describe('matching model names', () => {
 	test('matches an alias case-insensitively, or a unique prefix', () => {
@@ -66,9 +65,9 @@ describe('resolveModelChoice', () => {
 describe('coworkerModel', () => {
 	test('uses a ChatGPT choice while ChatGPT is usable', () => {
 		expect(coworkerModel({ model: luna, thinkingLevel: 'high' }, true)).toEqual({
-			specifier: 'openai-codex/gpt-5.6-luna',
+			specifier: 'openai-codex/gpt-6.1-luna',
 			thinkingLevel: 'high',
-			label: 'openai-codex/gpt-5.6-luna',
+			label: 'openai-codex/gpt-6.1-luna',
 			isDefault: false,
 		});
 	});
@@ -77,7 +76,7 @@ describe('coworkerModel', () => {
 		expect(coworkerModel({ model: luna, thinkingLevel: 'high' }, false)).toEqual({
 			specifier: openCodeGoModelSpecifier,
 			thinkingLevel: 'high',
-			label: `gpt-5.6-luna unavailable → ${openCodeGoModelSpecifier}`,
+			label: `gpt-6.1-luna unavailable → ${openCodeGoModelSpecifier}`,
 			isDefault: false,
 		});
 	});
@@ -106,7 +105,7 @@ describe('coworkerModel', () => {
 
 	test('keeps the deployment default without a model choice', () => {
 		expect(coworkerModel(undefined, true)).toMatchObject({
-			specifier: 'openai-codex/gpt-5.6-luna',
+			specifier: 'openai-codex/gpt-6.1-luna',
 			thinkingLevel: 'high',
 			isDefault: true,
 		});
@@ -126,7 +125,7 @@ describe('coworkerModel', () => {
 describe('model alias table', () => {
 	test('every alias names a model pi ships for its provider', () => {
 		const catalogs = {
-			chatgpt: openaiCodexProvider().getModels(),
+			chatgpt: createOpenAICodexProvider(async () => undefined).getModels(),
 			'opencode-go': opencodeGoProvider().getModels(),
 		};
 

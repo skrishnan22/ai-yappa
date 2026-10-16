@@ -181,7 +181,7 @@ describe('/aiyappa models', () => {
 		const disconnected = await handleSlashCommand(command('models', ADMIN), () => service);
 
 		expect(disconnected.response_type).toBe('ephemeral');
-		expect(disconnected.text).toContain('`luna` — `openai-codex/gpt-5.6-luna` (unavailable)');
+		expect(disconnected.text).toContain('`luna` — `openai-codex/gpt-6.1-luna` (unavailable)');
 		expect(disconnected.text).toContain('`kimi` — `opencode-go/kimi-k3`\n');
 
 		await service.seed({
@@ -193,7 +193,7 @@ describe('/aiyappa models', () => {
 
 		const connected = await handleSlashCommand(command('models', ADMIN), () => service);
 
-		expect(connected.text).toContain('`luna` — `openai-codex/gpt-5.6-luna`\n');
+		expect(connected.text).toContain('`luna` — `openai-codex/gpt-6.1-luna`\n');
 	});
 
 	test('treats an unreachable CodexAuth as disconnected', async () => {
