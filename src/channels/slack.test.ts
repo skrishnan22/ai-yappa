@@ -6,6 +6,7 @@ import { createD1PlanningStore } from '../planning/d1-decision-log.ts';
 import type { PlanningStore } from '../planning/decision-log.ts';
 import { openTestDatabase } from '../testing/d1.ts';
 import type { SlackRuntime } from './slack.ts';
+import type { SlackImageFile } from './slack-attachments.ts';
 import { createSlackChannelForEnv } from './slack.ts';
 import { __resetSlackClientForTests } from './slack-reply.ts';
 import { stringParam, stubSlackApi } from './testing/slack-api-stub.ts';
@@ -29,6 +30,7 @@ type SlackEventPayload = {
 		ts: string;
 		thread_ts?: string;
 		user_team?: string;
+		files?: SlackImageFile[];
 		team?: string;
 	};
 };
@@ -103,6 +105,7 @@ function eventPayload({
 	userTeam,
 	team,
 	sharedExternally,
+	files,
 }: {
 	eventId: string;
 	type: 'app_mention' | 'message';
@@ -112,6 +115,7 @@ function eventPayload({
 	userTeam?: string;
 	team?: string;
 	sharedExternally?: boolean;
+	files?: SlackImageFile[];
 }): SlackEventPayload {
 	const event: SlackEventPayload['event'] = {
 		type,
@@ -126,6 +130,8 @@ function eventPayload({
 	if (userTeam) event.user_team = userTeam;
 
 	if (team) event.team = team;
+
+	if (files) event.files = files;
 
 	return {
 		type: 'event_callback',
@@ -197,6 +203,69 @@ describe('Slack ingress', () => {
 		});
 		expect(dispatchRequests[1]?.message).toMatchObject({
 			attributes: { eventId: 'Ev-follow-up', userId: FOLLOW_UP_USER },
+		});
+	});
+
+	test('delivers an attached image as a Flue user message', async () => {
+		const dispatchRequests: Array<Parameters<SlackRuntime['dispatch']>[1]> = [];
+
+		const runtime: SlackRuntime = {
+			dispatch: async (_agent, request) => {
+				dispatchRequests.push(request);
+
+				return { submissionId: 'submission', acceptedAt: '2026-09-27T00:00:00.000Z', uid: 'uid' };
+			},
+			getAgentInstance: async () => null,
+		};
+
+		const imageAuthorizations: string[] = [];
+
+		vi.stubGlobal('fetch', async (input: string | URL, init?: RequestInit) => {
+			if (String(input).startsWith('https://files.slack.com/')) {
+				imageAuthorizations.push(new Headers(init?.headers).get('authorization') ?? '');
+
+				return new Response(new Uint8Array([137, 80, 78, 71]), {
+					status: 200,
+					headers: { 'content-type': 'image/png' },
+				});
+			}
+
+			return Response.json({ ok: true, messages: [] });
+		});
+
+		const channel = createSlackChannelForEnv(env, codexAuth, runtime);
+
+		const response = await channel.route().fetch(
+			signedEventRequest(
+				eventPayload({
+					eventId: 'Ev-image',
+					type: 'app_mention',
+					user: THREAD_STARTER,
+					text: '<@UBOT> inspect this',
+					ts: THREAD_TS,
+					files: [
+						{
+							id: 'F-image',
+							name: 'screen.png',
+							mimetype: 'image/png',
+							url_private_download: 'https://files.slack.com/F-image',
+						},
+					],
+				}),
+			),
+		);
+
+		expect(imageAuthorizations).toEqual(['Bearer xoxb-test']);
+		expect(response.status).toBe(200);
+		expect(dispatchRequests).toHaveLength(1);
+		expect(dispatchRequests[0]?.message).toMatchObject({
+			kind: 'user',
+			attachments: [
+				{ type: 'image', data: 'iVBORw==', mimeType: 'image/png', filename: 'screen.png' },
+			],
+		});
+		expect(dispatchRequests[0]?.message).toMatchObject({
+			body: expect.stringContaining('inspect this'),
 		});
 	});
 

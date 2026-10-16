@@ -25,7 +25,12 @@ describe('startConversation', () => {
 				repo: 'https://github.com/acme/api.git',
 				automationId: 'a1',
 				idempotencyKey: 'automation:a1:2026-10-14T03:30:00.000Z',
-				message: { type: 'automation.fire', body: 'Do it', attributes: { automationId: 'a1' } },
+				message: {
+					kind: 'signal',
+					type: 'automation.fire',
+					body: 'Do it',
+					attributes: { automationId: 'a1' },
+				},
 			},
 		});
 

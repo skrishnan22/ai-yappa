@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'vitest';
-import { deliveredModelRoute, modelRouteFor } from './model-route.ts';
+import {
+	deliveredModelRoute,
+	modelRouteFor,
+	parseSlackUserDeliveryBody,
+	slackUserDeliveryBody,
+} from './model-route.ts';
 
 describe('Model Route', () => {
 	test('routes to the ChatGPT subscription only while CodexAuth is connected', () => {
@@ -22,5 +27,26 @@ describe('Model Route', () => {
 		expect(deliveredModelRoute({ ...signal, attributes: { modelRoute: 'gpt-9' } })).toBeUndefined();
 		expect(deliveredModelRoute(signal)).toBeUndefined();
 		expect(deliveredModelRoute({ kind: 'user', body: 'Hi' })).toBeUndefined();
+	});
+
+	test('reads the route and restores the body from an image-bearing Slack delivery', () => {
+		const body = slackUserDeliveryBody('Look at this', {
+			modelRoute: 'chatgpt',
+			userId: 'U1',
+			threadContext: 'Earlier message',
+		});
+
+		const parsed = parseSlackUserDeliveryBody(body);
+
+		expect(parsed).toEqual({
+			body: 'Look at this',
+			envelope: {
+				modelRoute: 'chatgpt',
+				userId: 'U1',
+				threadContext: 'Earlier message',
+			},
+		});
+		expect(deliveredModelRoute({ kind: 'user', body })).toBe('chatgpt');
+		expect(parseSlackUserDeliveryBody('Look at this')).toBeUndefined();
 	});
 });
