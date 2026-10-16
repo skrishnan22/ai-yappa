@@ -43,7 +43,7 @@ import { invokedSkills } from '../skills/invocation.ts';
 import { attachRepoTool } from './attach-repo.ts';
 import { githubTools } from './github-tools.ts';
 import { coworkerModel, modelChoiceSchema } from './model-choice.ts';
-import { deliveredModelRoute } from './model-route.ts';
+import { deliveredModelRoute, parseSlackUserDeliveryBody } from './model-route.ts';
 import { PLANNING_REPLY_TOOLS, planningTools } from './planning-tools.ts';
 import { webSearchTools } from './web-search-tools.ts';
 
@@ -181,11 +181,16 @@ export function Coworker(props: { id: string }) {
 		useSkill(skill);
 	}
 
+	const slackUserDelivery =
+		delivery.kind === 'user' ? parseSlackUserDeliveryBody(delivery.body) : undefined;
+
 	const invoked =
 		delivery.kind === 'signal' &&
 		(delivery.type === 'slack.app_mention' || delivery.type === 'slack.direct_message')
 			? invokedSkills(delivery.body, new Set(skills.map((skill) => skill.name)))
-			: [];
+			: slackUserDelivery
+				? invokedSkills(slackUserDelivery.body, new Set(skills.map((skill) => skill.name)))
+				: [];
 
 	useAgentStart(({ append }) => {
 		if (invoked.length === 0) return;

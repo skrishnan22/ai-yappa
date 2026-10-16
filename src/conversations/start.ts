@@ -1,4 +1,4 @@
-import type { dispatch } from '@flue/runtime';
+import type { DeliveredMessage, dispatch } from '@flue/runtime';
 import { Coworker } from '../agents/coworker.ts';
 import type { ModelChoice } from '../agents/model-choice.ts';
 import { type ModelRoute, modelRouteFor } from '../agents/model-route.ts';
@@ -15,7 +15,7 @@ export type ConversationStart = {
 	modelChoice?: ModelChoice;
 	automationId?: string;
 	idempotencyKey: string;
-	message: { type: string; body: string; attributes: Readonly<Record<string, string>> };
+	message: DeliveredMessage;
 };
 
 // Slack mentions and DMs start a Coworker here; automation fires will too.
@@ -41,7 +41,7 @@ export function startConversation({
 			modelChoice: start.modelChoice,
 			automationId: start.automationId,
 		},
-		message: { kind: 'signal', ...start.message },
+		message: start.message,
 	});
 }
 

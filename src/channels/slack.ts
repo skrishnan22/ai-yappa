@@ -1,7 +1,9 @@
 // flue-blueprint: channel/slack@1
 import { dispatch, getAgentInstance } from '@flue/runtime';
+import type { DeliveredMessage } from '@flue/runtime';
 import { WebClient } from '@slack/web-api';
 import type { Context, ExecutionContext } from 'hono';
+import * as v from 'valibot';
 import {
 	createSlackChannel,
 	type SlackChannel,
@@ -9,7 +11,7 @@ import {
 	type SlackThreadRef,
 } from '@flue/slack';
 import { Coworker } from '../agents/coworker.ts';
-import type { ModelRoute } from '../agents/model-route.ts';
+import { slackUserDeliveryBody, type ModelRoute } from '../agents/model-route.ts';
 import { repoForChannel } from '../config.ts';
 import type { CodexAuthControl } from '../integrations/codex-auth/codex-auth.ts';
 import { errorMessage } from '../json.ts';
@@ -24,6 +26,7 @@ import {
 	mentionsAuthorizedBot,
 } from './admit.ts';
 import type { SlackSignal } from './admit.ts';
+import { downloadSlackImages, type SlackImageFile } from './slack-attachments.ts';
 import { handlePlanningInteraction, type PlanningContinuation } from './planning-interactions.ts';
 import { handleSlashCommand } from './slash-command.ts';
 import { getSlackClient, slackFetch, type SlackBotClient } from './slack-reply.ts';
@@ -42,9 +45,23 @@ export type SlackRuntime = ConversationRuntime & {
 
 const defaultSlackRuntime: SlackRuntime = { dispatch, getAgentInstance };
 
+const eventOrganizationSchema = v.object({
+	team: v.optional(v.string()),
+	user_team: v.optional(v.string()),
+});
+
 // The sender's organization. In a Slack Connect channel only `user_team`
 // counts, so a missing field fails closed; elsewhere every sender is a member
 // and plain messages may carry only `team` (`@slack/types` omits `user_team`).
+function eventOrganization(event: SlackEventCallbackPayload['event']): {
+	team?: string;
+	user_team?: string;
+} {
+	const parsed = v.safeParse(eventOrganizationSchema, event);
+
+	return parsed.success ? parsed.output : {};
+}
+
 function isExternalEvent(
 	payload: SlackEventCallbackPayload,
 	event: { team?: string; user_team?: string },
@@ -199,9 +216,10 @@ export function createSlackChannelForEnv(
 							threadTs: event.thread_ts ?? event.ts,
 						},
 						userId: event.user,
-						external: isExternalEvent(payload, event),
+						external: isExternalEvent(payload, eventOrganization(event)),
 						eventId: payload.event_id,
 						text: event.text,
+						files: event.files,
 						signalType: 'slack.app_mention',
 						timeoutRetry,
 					});
@@ -212,9 +230,9 @@ export function createSlackChannelForEnv(
 				case 'message': {
 					const event = payload.event;
 
-					if (event.subtype !== undefined) return;
+					if (event.subtype !== undefined && event.subtype !== 'file_share') return;
 
-					if (event.bot_id !== undefined) return;
+					if ('bot_id' in event && event.bot_id !== undefined) return;
 
 					// Every DM is addressed to Yappa; a top-level DM starts its own thread.
 					const direct = event.channel_type === 'im';
@@ -235,9 +253,10 @@ export function createSlackChannelForEnv(
 							threadTs: event.thread_ts ?? event.ts,
 						},
 						userId: event.user,
-						external: isExternalEvent(payload, event),
+						external: isExternalEvent(payload, eventOrganization(event)),
 						eventId: payload.event_id,
 						text: event.text ?? '',
+						files: event.files,
 						signalType: direct ? 'slack.direct_message' : 'slack.message',
 						timeoutRetry,
 					});
@@ -265,6 +284,7 @@ async function admitThread({
 	external,
 	eventId,
 	text,
+	files,
 	signalType,
 	timeoutRetry,
 }: {
@@ -278,6 +298,7 @@ async function admitThread({
 	external: boolean;
 	eventId: string;
 	text: string;
+	files?: SlackImageFile[];
 	signalType: SlackSignal;
 	timeoutRetry: boolean;
 }): Promise<void> {
@@ -371,6 +392,16 @@ async function admitThread({
 				modelRoute,
 			);
 
+			const attachments = await downloadSlackImages(files ?? [], env.SLACK_BOT_TOKEN);
+
+			const message: DeliveredMessage = attachments.length
+				? {
+						kind: 'user',
+						body: slackUserDeliveryBody(invocation.body, attributes),
+						attachments,
+					}
+				: { kind: 'signal', type: signalType, body: invocation.body, attributes };
+
 			try {
 				const receipt = await startConversation({
 					runtime,
@@ -383,7 +414,7 @@ async function admitThread({
 						// Flue records this only when the dispatch creates the conversation.
 						modelChoice: invocation.modelChoice,
 						idempotencyKey: eventId,
-						message: { type: signalType, body: invocation.body, attributes },
+						message,
 					},
 				});
 
