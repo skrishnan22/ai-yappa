@@ -9,6 +9,7 @@ export function slackFetch(url: string | URL, init?: RequestInit): Promise<Respo
 }
 
 export type SlackBotClient = {
+	auth: { test: WebClient['auth']['test'] };
 	chat: {
 		postMessage: WebClient['chat']['postMessage'];
 		update: WebClient['chat']['update'];
@@ -19,7 +20,9 @@ export type SlackBotClient = {
 	};
 	conversations: {
 		replies: WebClient['conversations']['replies'];
+		open: WebClient['conversations']['open'];
 	};
+	users: { info: WebClient['users']['info'] };
 };
 
 // Lazily constructed: importing this module (e.g. from `flue run`, which has

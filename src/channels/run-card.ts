@@ -1,6 +1,7 @@
 import type { KnownBlock } from '@slack/web-api';
 import * as v from 'valibot';
 import { jsonObjectSchema, jsonValueSchema, type JsonValue } from '../json.ts';
+import { blocks as blockList, clip, context, escapeMrkdwn, section } from './block-kit.ts';
 import { getSlackClient } from './slack-reply.ts';
 
 export type CardStatus = 'queued' | 'hydrating' | 'working' | 'completed' | 'failed' | 'aborted';
@@ -369,16 +370,6 @@ export function renderRunCard(state: RunCardState, now: number): CardRender {
 
 	if (state.prUrl) links.push(`<${state.prUrl}|pull request>`);
 
-	const blocks: SlackBlock[] = [
-		{
-			type: 'section',
-			text: {
-				type: 'mrkdwn',
-				text: `${statusEmoji(state.status)} *${statusLabel}*  ·  ${escapeMrkdwn(state.step)}  ·  \`${elapsed}\``,
-			},
-		},
-	];
-
 	const contextBits: string[] = [];
 
 	if (route) contextBits.push(escapeMrkdwn(route));
@@ -387,14 +378,15 @@ export function renderRunCard(state: RunCardState, now: number): CardRender {
 
 	if (links.length > 0) contextBits.push(links.join('  ·  '));
 
-	if (contextBits.length > 0) {
-		blocks.push({
-			type: 'context',
-			elements: [{ type: 'mrkdwn', text: contextBits.join('  ·  ') }],
-		});
-	}
-
-	return { text, blocks };
+	return {
+		text,
+		blocks: blockList(
+			section(
+				`${statusEmoji(state.status)} *${statusLabel}*  ·  ${escapeMrkdwn(state.step)}  ·  \`${elapsed}\``,
+			),
+			contextBits.length > 0 && context(contextBits.join('  ·  ')),
+		),
+	};
 }
 
 function withModelRoute(state: RunCardState, handle: CardHandle): RunCardState {
@@ -519,7 +511,7 @@ function settle(
 		return { state: { ...state, status: 'aborted', step: 'Aborted' }, notify: 'Aborted.' };
 	}
 
-	const detail = error && error.length > 0 ? truncate(error, 200) : 'see thread';
+	const detail = error && error.length > 0 ? clip(error, 200) : 'see thread';
 
 	return {
 		state: { ...state, status: 'failed', step: `Failed: ${detail}` },
@@ -639,14 +631,6 @@ function statusEmoji(status: CardStatus): string {
 			return _exhaustive;
 		}
 	}
-}
-
-function escapeMrkdwn(value: string): string {
-	return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-}
-
-function truncate(value: string, max: number): string {
-	return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
 }
 
 function slackCardPort(token: string): SlackCardPort {
