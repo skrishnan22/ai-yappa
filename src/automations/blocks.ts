@@ -1,6 +1,14 @@
 import type { Button, KnownBlock } from '@slack/web-api';
 import * as v from 'valibot';
-import { clip, contextBlock, escapeMrkdwn, sectionBlock } from '../channels/mrkdwn.ts';
+import {
+	actions,
+	blocks,
+	button,
+	clip,
+	context,
+	escapeMrkdwn,
+	section,
+} from '../channels/block-kit.ts';
 import type { Automation } from './automation.ts';
 
 export const AUTOMATION_ACTION = {
@@ -39,30 +47,13 @@ export type Rendered = { text: string; blocks: KnownBlock[] };
 
 type Extra = 'runNow' | 'edit' | 'delete';
 
-const EXTRA_LABELS = { runNow: 'Run now', edit: 'Edit', delete: 'Delete' } as const;
-
-function button({
-	actionId,
-	text,
-	value,
-	style,
-}: {
-	actionId: AutomationActionId;
-	text: string;
-	value: string;
-	style?: 'danger';
-}): Button {
-	const element: Button = {
-		type: 'button',
-		action_id: actionId,
-		text: { type: 'plain_text', text },
-		value,
-	};
-
-	if (style) element.style = style;
-
-	return element;
-}
+const LABELS = {
+	pause: 'Pause',
+	resume: 'Resume',
+	runNow: 'Run now',
+	edit: 'Edit',
+	delete: 'Delete',
+} as const;
 
 // Pause or Resume for the status, then the extras; none once deleted.
 export function manageButtons({
@@ -74,35 +65,21 @@ export function manageButtons({
 	surface: Surface;
 	extras: Extra[];
 }): Button[] {
-	if (automation.status === 'deleted') return [];
+	const { status } = automation;
 
-	const value = buttonValue(automation.id, surface);
-	const buttons: Button[] = [];
+	if (status === 'deleted') return [];
 
-	if (automation.status === 'active') {
-		buttons.push(button({ actionId: AUTOMATION_ACTION.pause, text: 'Pause', value }));
-	}
+	const toggle: ('pause' | 'resume')[] =
+		status === 'active' ? ['pause'] : status === 'paused' || status === 'blocked' ? ['resume'] : [];
 
-	if (automation.status === 'paused' || automation.status === 'blocked') {
-		buttons.push(button({ actionId: AUTOMATION_ACTION.resume, text: 'Resume', value }));
-	}
-
-	for (const extra of extras) {
-		buttons.push(
-			button({
-				actionId: AUTOMATION_ACTION[extra],
-				text: EXTRA_LABELS[extra],
-				value,
-				style: extra === 'delete' ? 'danger' : undefined,
-			}),
-		);
-	}
-
-	return buttons;
-}
-
-export function actionsBlock(buttons: Button[]): KnownBlock[] {
-	return buttons.length > 0 ? [{ type: 'actions', elements: buttons }] : [];
+	return [...toggle, ...extras].map((action) =>
+		button({
+			actionId: AUTOMATION_ACTION[action],
+			text: LABELS[action],
+			value: buttonValue(automation.id, surface),
+			style: action === 'delete' ? 'danger' : undefined,
+		}),
+	);
 }
 
 // What a fire posts: an agent run's top-level header (its ts becomes the
@@ -110,7 +87,7 @@ export function actionsBlock(buttons: Button[]): KnownBlock[] {
 export function runMessage(automation: Automation): Rendered {
 	const owner = `<@${automation.ownerUserId}>`;
 	const title = escapeMrkdwn(automation.title);
-	const buttons = actionsBlock(manageButtons({ automation, surface: 'header', extras: ['edit'] }));
+	const buttons = actions(...manageButtons({ automation, surface: 'header', extras: ['edit'] }));
 
 	if (automation.kind === 'reminder') {
 		const mention = automation.scope === 'personal' ? `${owner} ` : '';
@@ -118,13 +95,13 @@ export function runMessage(automation: Automation): Rendered {
 
 		return {
 			text: clip(lead, 2900),
-			blocks: [sectionBlock(lead), contextBlock(`Reminder · ${title} · by ${owner}`), ...buttons],
+			blocks: blocks(section(lead), context(`Reminder · ${title} · by ${owner}`), buttons),
 		};
 	}
 
 	const lead = `⏰ *${title}* · automation by ${owner}`;
 
-	return { text: clip(lead, 2900), blocks: [sectionBlock(lead), ...buttons] };
+	return { text: clip(lead, 2900), blocks: blocks(section(lead), buttons) };
 }
 
 // A DM to the owner about their automation, with Resume when it has stopped.
@@ -135,7 +112,7 @@ export function ownerNotice({
 	automation: Automation;
 	message: string;
 }): Rendered {
-	const buttons = actionsBlock(manageButtons({ automation, surface: 'list', extras: [] }));
+	const buttons = actions(...manageButtons({ automation, surface: 'list', extras: [] }));
 
-	return { text: clip(message, 2900), blocks: [sectionBlock(message), ...buttons] };
+	return { text: clip(message, 2900), blocks: blocks(section(message), buttons) };
 }

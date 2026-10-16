@@ -1,6 +1,16 @@
 import type { KnownBlock, ModalView } from '@slack/web-api';
 import * as v from 'valibot';
-import { clip, contextBlock, escapeMrkdwn, sectionBlock } from '../channels/mrkdwn.ts';
+import {
+	actions,
+	blocks,
+	button,
+	clip,
+	context,
+	escapeMrkdwn,
+	input,
+	plain,
+	section,
+} from '../channels/block-kit.ts';
 import type { Card, CardRevision } from './decision-log.ts';
 
 export const DECIDE_ACTION = 'planning_decide';
@@ -53,117 +63,94 @@ export function renderCard(card: Card): CardRender {
 	const { label, latest } = card;
 	const text = fallbackText(card);
 
-	const blocks: KnownBlock[] = [sectionBlock(`*${label}* ${escapeMrkdwn(latest.question)}`)];
-
 	const previous = previousAnswer(card);
-
-	if (previous) {
-		blocks.push(
-			contextBlock(`Previously: ${escapeMrkdwn(previous.answer)} — <@${previous.decidedBy}>`),
-		);
-	}
-
-	if (latest.context) {
-		blocks.push(contextBlock(escapeMrkdwn(latest.context)));
-	}
-
-	if (latest.choices && latest.choices.length > 0) {
-		const lines = latest.choices.map(
-			(choice, index) => `${choiceLetter(index)}) ${escapeMrkdwn(choice.label)}`,
-		);
-
-		blocks.push(sectionBlock(lines.join('\n')));
-	}
-
-	blocks.push(sectionBlock(`*Recommended:* ${escapeMrkdwn(latest.recommendation)}`));
-
+	const choices = latest.choices ?? [];
 	const decision = latest.decision;
 
-	if (decision) {
-		const lines = [`✅ *${escapeMrkdwn(answerText(latest) ?? '')}*`];
-
-		if (decision.reasoning) lines.push(escapeMrkdwn(decision.reasoning));
-		lines.push(`Decided by <@${decision.decidedBy}> ${slackDate(decision.decidedAt)}`);
-		blocks.push(sectionBlock(lines.join('\n')));
-		blocks.push(
-			buttonBlock({
-				action_id: REOPEN_ACTION,
-				value: JSON.stringify({ cardId: latest.cardId, revision: latest.revision }),
-				text: 'Reopen',
-			}),
-		);
-	} else {
-		blocks.push(
-			buttonBlock({
-				action_id: DECIDE_ACTION,
-				value: JSON.stringify({ cardId: latest.cardId, label }),
-				text: 'Decide…',
-				style: 'primary',
-			}),
-		);
-	}
-
-	return { text, blocks };
+	return {
+		text,
+		blocks: blocks(
+			section(`*${label}* ${escapeMrkdwn(latest.question)}`),
+			previous &&
+				context(`Previously: ${escapeMrkdwn(previous.answer)} — <@${previous.decidedBy}>`),
+			latest.context && context(escapeMrkdwn(latest.context)),
+			choices.length > 0 &&
+				section(
+					choices
+						.map((choice, index) => `${choiceLetter(index)}) ${escapeMrkdwn(choice.label)}`)
+						.join('\n'),
+				),
+			section(`*Recommended:* ${escapeMrkdwn(latest.recommendation)}`),
+			decision &&
+				section(
+					[
+						`✅ *${escapeMrkdwn(answerText(latest) ?? '')}*`,
+						decision.reasoning && escapeMrkdwn(decision.reasoning),
+						`Decided by <@${decision.decidedBy}> ${slackDate(decision.decidedAt)}`,
+					]
+						.filter(Boolean)
+						.join('\n'),
+				),
+			decision
+				? actions(
+						button({
+							actionId: REOPEN_ACTION,
+							text: 'Reopen',
+							value: JSON.stringify({ cardId: latest.cardId, revision: latest.revision }),
+						}),
+					)
+				: actions(
+						button({
+							actionId: DECIDE_ACTION,
+							text: 'Decide…',
+							value: JSON.stringify({ cardId: latest.cardId, label }),
+							style: 'primary',
+						}),
+					),
+		),
+	};
 }
 
 export function decideModal({ latest, label }: Pick<Card, 'latest' | 'label'>): ModalView {
 	const choices = latest.choices ?? [];
 
-	const blocks: KnownBlock[] = [
-		sectionBlock(`*${escapeMrkdwn(latest.question)}*`),
-		contextBlock(`*Recommended:* ${escapeMrkdwn(latest.recommendation)}`),
-	];
-
-	if (choices.length > 0) {
-		blocks.push({
-			type: 'input',
-			block_id: 'choice',
-			optional: true,
-			label: { type: 'plain_text', text: 'Choose an option' },
-			element: {
-				type: 'radio_buttons',
-				action_id: 'choice',
-				// Lettered as on the card, so labels cut to the same prefix stay distinct.
-				options: choices.map((choice, index) => ({
-					value: choice.id,
-					text: {
-						type: 'plain_text',
-						text: clip(`${choiceLetter(index)}) ${choice.label}`, OPTION_TEXT_MAX),
-					},
-				})),
-			},
-		});
-	}
-
-	blocks.push({
-		type: 'input',
-		block_id: 'custom',
-		optional: choices.length > 0,
-		label: { type: 'plain_text', text: choices.length > 0 ? 'Or write your own answer' : 'Answer' },
-		element: { type: 'plain_text_input', action_id: 'custom', max_length: 500 },
-	});
-
-	blocks.push({
-		type: 'input',
-		block_id: 'reasoning',
-		optional: true,
-		label: { type: 'plain_text', text: 'Reasoning' },
-		element: {
-			type: 'plain_text_input',
-			action_id: 'reasoning',
-			multiline: true,
-			max_length: 1500,
-		},
-	});
-
 	return {
 		type: 'modal',
 		callback_id: DECIDE_CALLBACK,
 		private_metadata: JSON.stringify({ cardId: latest.cardId, revision: latest.revision }),
-		title: { type: 'plain_text', text: clip(`Decide ${label}`, 24) },
-		submit: { type: 'plain_text', text: 'Decide' },
-		close: { type: 'plain_text', text: 'Cancel' },
-		blocks,
+		title: plain(clip(`Decide ${label}`, 24)),
+		submit: plain('Decide'),
+		close: plain('Cancel'),
+		blocks: blocks(
+			section(`*${escapeMrkdwn(latest.question)}*`),
+			context(`*Recommended:* ${escapeMrkdwn(latest.recommendation)}`),
+			choices.length > 0 &&
+				input({
+					id: 'choice',
+					label: 'Choose an option',
+					optional: true,
+					element: {
+						type: 'radio_buttons',
+						// Lettered as on the card, so labels cut to the same prefix stay distinct.
+						options: choices.map((choice, index) => ({
+							value: choice.id,
+							text: plain(clip(`${choiceLetter(index)}) ${choice.label}`, OPTION_TEXT_MAX)),
+						})),
+					},
+				}),
+			input({
+				id: 'custom',
+				label: choices.length > 0 ? 'Or write your own answer' : 'Answer',
+				optional: choices.length > 0,
+				element: { type: 'plain_text_input', max_length: 500 },
+			}),
+			input({
+				id: 'reasoning',
+				label: 'Reasoning',
+				optional: true,
+				element: { type: 'plain_text_input', multiline: true, max_length: 1500 },
+			}),
+		),
 	};
 }
 
@@ -323,16 +310,4 @@ function choiceLetter(index: number): string {
 // Rendered in the viewer's time zone; the fallback is for clients without it.
 function slackDate(iso: string): string {
 	return `<!date^${Math.floor(Date.parse(iso) / 1000)}^{date_short_pretty} at {time}|${iso}>`;
-}
-
-function buttonBlock(button: {
-	action_id: string;
-	value: string;
-	text: string;
-	style?: 'primary';
-}): KnownBlock {
-	return {
-		type: 'actions',
-		elements: [{ type: 'button', ...button, text: { type: 'plain_text', text: button.text } }],
-	};
 }
