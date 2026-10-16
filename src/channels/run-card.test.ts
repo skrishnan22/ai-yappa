@@ -338,14 +338,14 @@ describe('renderRunCard', () => {
 		const rendered = renderRunCard(
 			working({
 				startedAt: 0,
-				model: 'gpt-5.6-luna unavailable → opencode-go/deepseek-v4.1-flash',
+				model: 'gpt-6-luna unavailable → opencode-go/deepseek-v4.1-flash',
 				thinkingLevel: 'high',
 			}),
 			1_000,
 		);
 
 		expect(JSON.stringify(rendered.blocks)).toContain(
-			'gpt-5.6-luna unavailable → opencode-go/deepseek-v4.1-flash · thinking high',
+			'gpt-6-luna unavailable → opencode-go/deepseek-v4.1-flash · thinking high',
 		);
 	});
 });
