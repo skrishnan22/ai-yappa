@@ -9,7 +9,7 @@ import {
 	type SlackThreadRef,
 } from '@flue/slack';
 import { Coworker } from '../agents/coworker.ts';
-import { type ModelRoute, modelRouteFor } from '../agents/model-route.ts';
+import type { ModelRoute } from '../agents/model-route.ts';
 import { repoForChannel } from '../config.ts';
 import type { CodexAuthControl } from '../integrations/codex-auth/codex-auth.ts';
 import { errorMessage } from '../json.ts';
@@ -30,9 +30,13 @@ import { getSlackClient, slackFetch, type SlackBotClient } from './slack-reply.t
 import { loadThreadContext } from './thread-context.ts';
 import { buildSignalAttributes, type SignalAttributes } from './signal-attributes.ts';
 import type { ServerEnv } from '../env.ts';
+import {
+	type ConversationRuntime,
+	modelRouteForDispatch,
+	startConversation,
+} from '../conversations/start.ts';
 
-export type SlackRuntime = {
-	dispatch: typeof dispatch;
+export type SlackRuntime = ConversationRuntime & {
 	getAgentInstance: typeof getAgentInstance;
 };
 
@@ -58,20 +62,6 @@ async function conversationExistsInThread(runtime: SlackRuntime, id: string): Pr
 	const existing = await runtime.getAgentInstance(Coworker, id);
 
 	return existing !== null;
-}
-
-// Falls back to OpenCode Go when `CodexAuth` cannot answer, so a broken
-// ChatGPT connection never blocks Slack.
-async function modelRouteForDispatch(codexAuth: () => CodexAuthControl): Promise<ModelRoute> {
-	try {
-		const status = await codexAuth().status();
-
-		return modelRouteFor(status);
-	} catch (error) {
-		console.warn(`[slack] CodexAuth status failed; routing to OpenCode Go: ${errorMessage(error)}`);
-
-		return 'opencode-go';
-	}
 }
 
 // Thread history is context for the agent, not a dispatch requirement.
@@ -382,23 +372,18 @@ async function admitThread({
 			);
 
 			try {
-				const receipt = await runtime.dispatch(Coworker, {
-					id,
-					idempotencyKey: eventId,
-					initialData: {
-						channelId: thread.channelId,
-						threadTs: thread.threadTs,
+				const receipt = await startConversation({
+					runtime,
+					now: new Date(),
+					start: {
+						id,
+						thread,
 						startedBy: userId,
-						startedAt: new Date().toISOString(),
 						repo: decision.repo,
 						// Flue records this only when the dispatch creates the conversation.
 						modelChoice: invocation.modelChoice,
-					},
-					message: {
-						kind: 'signal',
-						type: signalType,
-						body: invocation.body,
-						attributes,
+						idempotencyKey: eventId,
+						message: { type: signalType, body: invocation.body, attributes },
 					},
 				});
 

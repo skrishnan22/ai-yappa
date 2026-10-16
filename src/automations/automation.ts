@@ -26,7 +26,7 @@ export type Automation = AutomationFields & {
 	ownerUserId: string;
 	status: AutomationStatus;
 	nextRunAt?: string;
-	lastRunAt?: string;
+	lastScheduledAt?: string; // Last consumed scheduled occurrence, not execution start.
 	consecutiveFailures: number;
 	createdAt: string;
 	updatedAt: string;
@@ -49,6 +49,15 @@ export type AutomationRun = {
 	createdAt: string;
 };
 
+export type RunOutcome = {
+	at: string;
+	pauseAt: number;
+	reason?: string;
+} & (
+	| { submissionId: string; status: 'succeeded' | 'failed' }
+	| { automationId: string; fireTime: string; status: 'posted' | 'failed' }
+);
+
 export type AutomationStore = {
 	automations: {
 		create(automation: NewAutomation): Promise<Automation>;
@@ -56,9 +65,6 @@ export type AutomationStore = {
 		due(args: { now: string; limit: number }): Promise<Automation[]>;
 		// The user's personal automations and the channel's channel automations, not deleted.
 		visibleTo(args: { userId: string; channelId: string }): Promise<Automation[]>;
-		// Moves a claimed fire on: last_run_at = from, next_run_at = nextRunAt, or
-		// completed when there is none. Only while next_run_at is still `from`.
-		advance(args: { id: string; from: string; nextRunAt?: string; at: string }): Promise<boolean>;
 		update(args: {
 			id: string;
 			fields: AutomationFields;
@@ -74,15 +80,16 @@ export type AutomationStore = {
 			nextRunAt?: string;
 			at: string;
 		}): Promise<Automation | undefined>;
-		recordSuccess(args: { id: string; at: string }): Promise<void>;
-		// Increments the failure count; an active automation pauses at `pauseAt`.
-		recordFailure(args: {
-			id: string;
-			at: string;
-			pauseAt: number;
-		}): Promise<Automation | undefined>;
 	};
 	runs: {
+		// Atomically claims and advances an active scheduled fire; false for stale or taken fires.
+		claimScheduled(args: {
+			automationId: string;
+			fireTime: string;
+			nextRunAt?: string;
+			at: string;
+		}): Promise<boolean>;
+		// Run now claims a fire without changing the schedule.
 		claim(args: { automationId: string; fireTime: string; createdAt: string }): Promise<boolean>;
 		dispatched(args: {
 			automationId: string;
@@ -90,18 +97,9 @@ export type AutomationStore = {
 			conversationId: string;
 			submissionId: string;
 		}): Promise<void>;
-		finish(args: {
-			automationId: string;
-			fireTime: string;
-			status: 'posted' | 'failed';
-			reason?: string;
-		}): Promise<void>;
-		// Settles a dispatched run by its submission; undefined for any other submission.
-		settle(args: {
-			submissionId: string;
-			status: 'succeeded' | 'failed';
-			reason?: string;
-		}): Promise<AutomationRun | undefined>;
+		// Records a terminal outcome and updates failure counting atomically, once.
+		// Returns the updated automation, or undefined for an unrelated/already-finished run.
+		recordOutcome(outcome: RunOutcome): Promise<Automation | undefined>;
 		list(automationId: string): Promise<AutomationRun[]>;
 	};
 };

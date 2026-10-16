@@ -47,7 +47,8 @@ D1 migration `0005_automations.sql`:
   - `schedule`: a 5-field cron pattern, or null for a one-off
   - `run_at`: the one-off instant (UTC ISO), null for recurring
   - `timezone`: IANA
-  - `next_run_at` (UTC ISO, indexed with `status`), `last_run_at`
+  - `next_run_at` (UTC ISO, indexed with `status`), `last_scheduled_at`
+    (the last consumed scheduled occurrence, not the execution start time)
   - `status`: `active | paused | blocked | completed | deleted`
   - `consecutive_failures`, `created_at`, `updated_at`
 - `automation_runs`
@@ -75,14 +76,17 @@ patterns. Only its calculator is used, never its timers.
 `src/automations/scheduler.ts`, called from the `scheduled` handler in
 `src/cloudflare.ts`. For each due row, in order:
 
-1. **Claim.** Insert `automation_runs(automation_id, fire_time = next_run_at)`.
-   A conflict means another tick took it; skip.
-2. **Advance.** Recurring: `next_run_at = nextRun(now)`, so missed fires
-   collapse to one run with no backlog replay. One-off: `status = completed`.
-3. **Re-authorize.** The owner is still a non-deleted workspace member
+1. **Claim and advance atomically.** `runs.claimScheduled` inserts
+   `automation_runs(automation_id, fire_time = next_run_at)` and advances the
+   automation in one D1 transaction, only while it is active and its next run
+   still matches. A stale row or claim conflict returns false; skip it. An
+   advancement error rolls back the claim, allowing the next tick to retry.
+   Recurring: `next_run_at = nextRun(now)`, so missed fires collapse to one run
+   with no backlog replay. One-off: `status = completed`.
+2. **Re-authorize.** The owner is still a non-deleted workspace member
    (`users.info`). For channel scope, the bot can still post there. Otherwise
    set `blocked`, record the run `failed` with the reason, and DM the owner.
-4. **Fire.**
+3. **Fire.**
    - `reminder`: post the text to the destination, mentioning the owner for a
      personal reminder. Run `posted`.
    - `agent`: `startConversation` (below). Run `dispatched` with its
@@ -113,7 +117,7 @@ For an automation fire:
   - `initialData`: `channelId`, `threadTs`, `startedBy: owner`,
     `startedAt`, `repo?`, `automationId`.
   - `message`: `{ kind: 'signal', type: 'automation.fire', body: prompt }`.
-  - `attributes`: `automationId`, `scheduledAt`, `previousRunAt`.
+  - `attributes`: `automationId`, `scheduledAt`, `previousScheduledAt`.
   - `idempotencyKey`: `automation:<id>:<fire_time>`.
 - The run has the same `code-change` capability as a mention.
 - The automation tools are not mounted when `initialData.automationId` is
@@ -122,9 +126,15 @@ For an automation fire:
 ## Run outcome and failure
 
 The Coworker's existing `observe` hook sees `submission_settled`. When the
-settled submission matches an `automation_runs.submission_id`, record
-`succeeded` or `failed`. Only the fire's own submission counts; later human
-replies in the thread do not.
+settled submission matches an `automation_runs.submission_id`, call
+`runs.recordOutcome` with `succeeded` or `failed`. It records the terminal run
+status and updates the automation's failure count in one D1 transaction, only
+once. A failed counter write rolls back the run outcome so settlement can retry.
+Only the fire's own submission counts; later human replies in the thread do not.
+Reminder posts and immediate failures use the same operation, identified by
+`automation_id` and `fire_time` while the run is still claimed. The operation
+returns the updated automation for owner notifications; duplicate or unrelated
+outcomes return undefined without changing either row.
 
 - Success resets `consecutive_failures`.
 - A failure (dispatch error or failed settle) increments it.
