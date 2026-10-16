@@ -218,7 +218,7 @@ describe('decideInvocation', () => {
 			kind: 'proceed',
 			body: '<@U1> fix it',
 			modelChoice: {
-				model: { provider: 'chatgpt', modelId: 'gpt-6.1-luna' },
+				model: { provider: 'chatgpt', modelId: 'gpt-6-luna' },
 				thinkingLevel: 'high',
 			},
 		});
@@ -250,7 +250,7 @@ describe('decideInvocation', () => {
 		const refused = mention('<@U1> $model:luna fix it', false);
 
 		expect(refused.kind).toBe('model-unavailable');
-		expect(refused).toHaveProperty('reply', expect.stringContaining('`gpt-6.1-luna`'));
+		expect(refused).toHaveProperty('reply', expect.stringContaining('`gpt-6-luna`'));
 		expect(mention('<@U1> $model:kimi fix it', false).kind).toBe('proceed');
 	});
 

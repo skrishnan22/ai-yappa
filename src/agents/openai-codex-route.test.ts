@@ -15,8 +15,8 @@ import {
 const context = normalizeContext({ messages: [] });
 
 describe('openai-codex route', () => {
-	test('pins a model id the configured provider declares', () => {
-		const ids = createOpenAICodexProvider(async () => undefined)
+	test('pins a model id the pinned pi catalog declares', () => {
+		const ids = openaiCodexProvider()
 			.getModels()
 			.map((model) => model.id);
 

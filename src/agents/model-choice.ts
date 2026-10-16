@@ -2,7 +2,7 @@ import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-code
 import levenshtein from 'damerau-levenshtein';
 import * as v from 'valibot';
 import { modelAliases } from '../config.ts';
-import { OPENAI_CODEX_MODEL_IDS, openAICodexModelSpecifier } from './openai-codex-route.ts';
+import { openAICodexModelSpecifier } from './openai-codex-route.ts';
 import {
 	OPENCODE_GO_PREFERRED_ID,
 	openCodeGoModelSpecifier,
@@ -97,7 +97,6 @@ const SERVABLE = new Set([
 	...openaiCodexProvider()
 		.getModels()
 		.map((model) => `openai-codex/${model.id}`),
-	...OPENAI_CODEX_MODEL_IDS.map((modelId) => `openai-codex/${modelId}`),
 	...openCodeGoModels.map((model) => `opencode-go/${model.id}`),
 ]);
 

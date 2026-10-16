@@ -13,7 +13,7 @@ export const codexAdminIds = new Set<string>(['U0BGR738WMC', 'U07DF242XU6']);
 // Keep aliases more than two edits apart: typo correction depends on it.
 export const modelAliases = {
 	sol: { provider: 'chatgpt', modelId: 'gpt-6.1-sol' },
-	luna: { provider: 'chatgpt', modelId: 'gpt-6.1-luna' },
+	luna: { provider: 'chatgpt', modelId: 'gpt-6-luna' },
 	deepseek: { provider: 'opencode-go', modelId: 'deepseek-v4.1-flash' },
 	kimi: { provider: 'opencode-go', modelId: 'kimi-k3' },
 	glm: { provider: 'opencode-go', modelId: 'glm-5.3' },
