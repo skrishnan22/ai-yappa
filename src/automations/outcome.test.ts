@@ -103,11 +103,13 @@ describe('recordRunSettled', () => {
 	test('a success resets the failure count', async () => {
 		const { store, slack } = await setup();
 
-		await store.automations.recordFailure({ id: 'a1', at: AT, pauseAt: 3 });
+		const failed = await dispatchedRun(store, 't1');
 
-		const submissionId = await dispatchedRun(store, 't1');
+		await recordRunSettled({ store, slack, submissionId: failed, outcome: 'failed', at: AT });
 
-		await recordRunSettled({ store, slack, submissionId, outcome: 'completed', at: AT });
+		const succeeded = await dispatchedRun(store, 't2');
+
+		await recordRunSettled({ store, slack, submissionId: succeeded, outcome: 'completed', at: AT });
 
 		const automation = await store.automations.get('a1');
 

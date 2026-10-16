@@ -25,33 +25,24 @@ export async function notifyOwner({
 	}
 }
 
-export async function recordFailure({
-	store,
+// Only the outcome that reached the threshold returns this count; later
+// failures of a paused row, and repeated outcomes, stay quiet.
+export async function notifyPaused({
 	slack,
-	automationId,
-	at,
+	automation,
 }: {
-	store: AutomationStore;
 	slack: SlackBotClient | undefined;
-	automationId: string;
-	at: string;
+	automation: Automation | undefined;
 }): Promise<void> {
-	const after = await store.automations.recordFailure({
-		id: automationId,
-		at,
-		pauseAt: PAUSE_AFTER_FAILURES,
-	});
-
-	// Only the failure that paused it; later failures of a paused row stay quiet.
 	const justPaused =
-		after?.status === 'paused' && after.consecutiveFailures === PAUSE_AFTER_FAILURES;
+		automation?.status === 'paused' && automation.consecutiveFailures === PAUSE_AFTER_FAILURES;
 
-	if (!after || !slack || !justPaused) return;
+	if (!automation || !slack || !justPaused) return;
 
 	await notifyOwner({
 		slack,
-		automation: after,
-		message: `I paused your automation *${after.title}* after ${PAUSE_AFTER_FAILURES} failed runs in a row. Resume it when it should run again.`,
+		automation,
+		message: `I paused your automation *${automation.title}* after ${PAUSE_AFTER_FAILURES} failed runs in a row. Resume it when it should run again.`,
 	});
 }
 
@@ -72,21 +63,13 @@ export async function recordRunSettled({
 	error?: string;
 	at: string;
 }): Promise<void> {
-	const succeeded = outcome === 'completed';
-
-	const run = await store.runs.settle({
+	const automation = await store.runs.recordOutcome({
 		submissionId,
-		status: succeeded ? 'succeeded' : 'failed',
+		status: outcome === 'completed' ? 'succeeded' : 'failed',
 		reason: error,
+		at,
+		pauseAt: PAUSE_AFTER_FAILURES,
 	});
 
-	if (!run) return;
-
-	if (succeeded) {
-		await store.automations.recordSuccess({ id: run.automationId, at });
-
-		return;
-	}
-
-	await recordFailure({ store, slack, automationId: run.automationId, at });
+	await notifyPaused({ slack, automation });
 }
