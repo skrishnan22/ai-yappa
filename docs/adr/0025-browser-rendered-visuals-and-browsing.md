@@ -1,6 +1,6 @@
 # Browser-rendered visuals and browsing
 
-Status: proposed
+Status: accepted (decisions 1–9; the Excalidraw kind and decision 10 are not built yet)
 
 Coworker renders diagrams, dashboards, and Excalidraw-style explanations in Cloudflare Browser Run and posts them to the bound Slack thread as uploaded PNGs. The same Browser Run binding gives the model web browsing: read-only first, interactive sessions later. Daytona sandboxes are unchanged.
 
@@ -79,6 +79,18 @@ Checked October 2026 against Flue's installed runtime, Slack's method reference,
 - **Slack scopes:** `files.completeUploadExternal` lists only `files:write`; see decision 7.
 - **Excalidraw bundle size:** fits the 25 MiB static asset limit but is heavy; see decision 3.
 - **Kitesurf fallback:** no documented failure signal; Chromium only in v1, see decision 9.
+
+## Implementation notes
+
+October 2026, against `@flue/runtime` 2.1.1 and `@cloudflare/puppeteer` 1.4.0.
+
+- **One sandbox, not a virtual one swapped for Daytona.** Flue swaps environments only when `useSandbox` presence flips; replacing one mounted factory with another takes effect at the next submission. Mounting a virtual sandbox without a repo would have left `attach_repo` mid-run without workspace tools until the next message. Instead `src/sandboxes/coworker-sandbox.ts` is always mounted: without a repo its sandbox is empty (no just-bash) and its tool list is only the visual tools; once a repo is attached, the tool list (rebuilt every turn) gains the standard tools, and the next file or shell call creates and hydrates the Daytona sandbox. Hydration therefore runs in the first tool call after attaching, and the repo's own `AGENTS.md` is discovered from the next submission.
+- **The `html` kind is served by owner code.** Request interception answers `/render/html.html` with the model's HTML and a CSP with no `script-src`, and the page runs with JavaScript disabled. Chart templates load from Worker static assets as decided, under a `/render/*` CSP set in `public/_headers` (`script-src 'self'`, `connect-src 'none'`); interception narrows `'self'` to `GET /render/`. Each browser also launches with `guardrails.allowedDomains` set to the origin's host.
+- **Vega runs without `eval`** through `vega-interpreter`, so the CSP needs no `'unsafe-eval'`. Remote data URLs are refused in compiled Vega data sources; ordinary inline records may contain a `url` field.
+- **Template scripts are bundled from npm** (`render/<kind>.ts` → `public/render/build/`, gitignored) by `scripts/build-render-assets.mjs`; library versions are pinned in `package.json`.
+- **`browse_page` uses the binding's `quickAction()` for text** (compatibility date 2026-03-24 or later): `markdown` and `accessibilityTree` for `snapshot`. Screenshot mode launches one browser session, navigates once, captures the PNG artifact and JPEG preview from that page, and closes the session in `finally`. Screenshot sessions bill concurrency as well as browser time; text Quick Actions bill browser time only and do not run in local dev.
+- **Origin:** `PUBLIC_ORIGIN`, else `https://$TUNNEL_HOSTNAME`. Without `BROWSER`, `ARTIFACTS`, and an origin, no visual tools are mounted.
+- **Regression test:** `src/agents/coworker-visuals.test.ts` asserts that a sandbox-tool image reaches the model request, and that a text-only model gets no image.
 
 ## Alternatives
 
