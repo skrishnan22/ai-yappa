@@ -25,6 +25,7 @@ oauth_config:
       - channels:history
       - groups:history
       - im:history
+      - files:write
 settings:
   event_subscriptions:
     request_url: https://example.invalid/channels/slack/events

@@ -1,10 +1,11 @@
 /**
- * The one sandbox factory the Coworker mounts, in every conversation.
+ * The one sandbox factory the Coworker mounts (ADR 0025, decision 2).
  *
- * Without a repository the sandbox is empty and its tool list holds no file
- * or shell tools, so a chat-only conversation gets no container. ADR 0025's
- * visual tools need a sandbox in every conversation: sandbox-factory tools
- * are the Flue path whose results keep image blocks.
+ * Its `tools` list carries the visual tools in every conversation, because
+ * sandbox-factory tools are the Flue path whose results keep image blocks.
+ * Without a repository the sandbox is empty and the list holds only the
+ * visual tools, so a chat-only conversation gets no file or shell tools and
+ * no container.
  *
  * The factory stays mounted for the conversation's life, and Flue only
  * swaps environments when `useSandbox` presence flips. So instead of
@@ -25,7 +26,10 @@ import {
 	type Sandbox,
 	type SandboxDriver,
 	type SandboxFactory,
+	type SandboxToolFactory,
 } from '@flue/runtime';
+
+type ModelTool = ReturnType<SandboxToolFactory>[number];
 
 const NO_REPOSITORY =
 	'No repository is attached to this conversation. Call attach_repo before working with files or the shell.';
@@ -34,11 +38,14 @@ export function coworkerSandbox({
 	cwd,
 	repo,
 	createRepoSandbox,
+	extraTools,
 }: {
 	cwd: string;
 	/** The conversation's attached repository, read live. */
 	repo: () => string | undefined;
 	createRepoSandbox: (options: { id: string }) => Promise<Sandbox>;
+	/** Tools every conversation gets, with or without a repository. */
+	extraTools: () => ModelTool[];
 }): SandboxFactory {
 	return {
 		async createSandbox(options) {
@@ -62,16 +69,18 @@ export function coworkerSandbox({
 			return sandboxFromDriver(delegatingDriver(target), cwd);
 		},
 		tools(sandbox) {
-			if (!repo()) return [];
+			const standard = repo()
+				? [
+						createReadTool(sandbox),
+						createWriteTool(sandbox),
+						createEditTool(sandbox),
+						createBashTool(sandbox),
+						createGrepTool(sandbox),
+						createGlobTool(sandbox),
+					]
+				: [];
 
-			return [
-				createReadTool(sandbox),
-				createWriteTool(sandbox),
-				createEditTool(sandbox),
-				createBashTool(sandbox),
-				createGrepTool(sandbox),
-				createGlobTool(sandbox),
-			];
+			return [...standard, ...extraTools()];
 		},
 	};
 }

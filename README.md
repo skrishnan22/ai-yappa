@@ -159,6 +159,20 @@ Memory and planning decisions share one D1 database, bound as `APP_DB` (named `s
 pnpm exec wrangler d1 migrations apply APP_DB --remote
 ```
 
+## Rendered visuals
+
+Coworker draws diagrams, charts, and dashboards with `render_visual` in Cloudflare Browser Run ([ADR 0025](docs/adr/0025-browser-rendered-visuals-and-browsing.md)). Rendered PNGs go to the `ARTIFACTS` R2 bucket, and reach the thread only when the model attaches them to `reply_in_slack_thread`. The visual tools are on only when the Worker has the `BROWSER` binding, the `ARTIFACTS` bucket, and a public origin. Without them, replies use Block Kit or text.
+
+One-time setup:
+
+```sh
+pnpm exec wrangler r2 bucket create slack-agent-artifacts
+pnpm exec wrangler r2 bucket lifecycle add slack-agent-artifacts expire-artifacts artifacts/ --expire-days 15
+pnpm wrangler secret put PUBLIC_ORIGIN   # e.g. https://slack-agent.<subdomain>.workers.dev
+```
+
+Browser Run loads the render templates (`public/render/`) from `PUBLIC_ORIGIN`, so it must be the Worker's public URL. Locally it falls back to `https://$TUNNEL_HOSTNAME`. `pnpm run build:render` bundles each template's pinned library (Mermaid, Vega-Lite, ECharts) into `public/render/build/`; `dev`, `build`, and `deploy` run it first. Uploading images needs the `files:write` bot scope from `slack-app-manifest.yaml`; reinstall the app after adding it.
+
 ## Deploy
 
 Merges to `main` deploy the Worker with GitHub Actions (`.github/workflows/deploy.yml`) after tests, lint, and format check pass. The deploy job uses the protected `production` environment, limited to `main`. Add these environment secrets (Settings → Environments → production):

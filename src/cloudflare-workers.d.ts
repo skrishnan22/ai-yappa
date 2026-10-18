@@ -44,5 +44,10 @@ declare module 'cloudflare:workers' {
 	// The Worker's bindings, as declared in wrangler.jsonc.
 	export const env: import('./integrations/codex-auth/codex-auth-binding.ts').CodexAuthBinding & {
 		readonly APP_DB: import('./memory/d1.ts').D1Database;
+		// Browser Run and the artifact bucket (ADR 0025).
+		readonly BROWSER?: import('@cloudflare/puppeteer').BrowserWorker;
+		readonly ARTIFACTS?: import('./visuals/artifact-store.ts').ArtifactBucket;
+		readonly PUBLIC_ORIGIN?: string;
+		readonly TUNNEL_HOSTNAME?: string;
 	};
 }

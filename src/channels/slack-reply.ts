@@ -2,7 +2,9 @@ import { defineTool } from '@flue/runtime';
 import { WebClient } from '@slack/web-api';
 import * as v from 'valibot';
 import { jsonObjectSchema } from '../json.ts';
+import type { StoredArtifact } from '../visuals/artifact-store.ts';
 import { replyBlocksSchema } from './slack-blocks.ts';
+import { type ThreadImage, uploadThreadImages } from './slack-upload.ts';
 
 export function slackFetch(url: string | URL, init?: RequestInit): Promise<Response> {
 	return fetch(url, init?.redirect === 'error' ? { ...init, redirect: 'manual' } : init);
@@ -23,6 +25,10 @@ export type SlackBotClient = {
 		open: WebClient['conversations']['open'];
 	};
 	users: { info: WebClient['users']['info'] };
+	files: {
+		getUploadURLExternal: WebClient['files']['getUploadURLExternal'];
+		completeUploadExternal: WebClient['files']['completeUploadExternal'];
+	};
 };
 
 // Lazily constructed: importing this module (e.g. from `flue run`, which has
@@ -52,9 +58,28 @@ export function __resetSlackClientForTests(): void {
 	cachedForToken = undefined;
 }
 
+export const MAX_REPLY_IMAGES = 5;
+
+export const MAX_ALT_TEXT_LENGTH = 1000;
+
+const imagesSchema = v.pipe(
+	v.array(
+		v.object({
+			artifactId: v.pipe(v.string(), v.minLength(1)),
+			altText: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(MAX_ALT_TEXT_LENGTH)),
+		}),
+	),
+	v.minLength(1),
+	v.maxLength(MAX_REPLY_IMAGES),
+);
+
+/** Looks up one of this conversation's rendered artifacts. */
+export type FindArtifact = (artifactId: string) => Promise<StoredArtifact | undefined>;
+
 export function replyInThread(
 	ref: { channelId: string; threadTs: string },
 	slackBotToken?: string,
+	findArtifact?: FindArtifact,
 ) {
 	return defineTool({
 		name: 'reply_in_slack_thread',
@@ -63,14 +88,21 @@ export function replyInThread(
 			'By default `text` is the whole reply, written in Markdown.',
 			'Add `blocks` (native Slack Block Kit) only when a chart, table, or composed layout helps the reader; then `text` is the notification and screen-reader fallback and must state the substantive takeaway, including a verbal summary of any chart.',
 			'Allowed blocks: markdown, header, divider, text-only section and context, data_visualization, and data_table. Cells may be raw_text, raw_number, a string, or a number. Header text may be plain_text or a string. Images, accessories, and interactive elements are rejected.',
+			`Add \`images\` (at most ${MAX_REPLY_IMAGES}) to attach visuals you rendered with render_visual: each is { artifactId, altText }. They are uploaded under the message; \`text\` must still carry the takeaway, and altText (at most ${MAX_ALT_TEXT_LENGTH} characters) describes the image for screen readers.`,
 			'Compute chart and table values from the repo or tools; never estimate them.',
 			'Include full exact operational identifiers; never abbreviate trace IDs, request IDs, commit hashes, or similar values with ... or ….',
 		].join(' '),
 		input: v.object({
 			text: v.pipe(v.string(), v.minLength(1)),
 			blocks: v.optional(replyBlocksSchema),
+			images: v.optional(imagesSchema),
 		}),
 		async run({ data }) {
+			// Resolve every image before posting, so a bad id posts nothing.
+			let images: ThreadImage[] = [];
+
+			if (data.images) images = await threadImages(data.images, findArtifact);
+
 			if (!slackBotToken) {
 				return {
 					output: {
@@ -79,17 +111,24 @@ export function replyInThread(
 						blocks: data.blocks ? v.parse(v.array(jsonObjectSchema), data.blocks) : null,
 						channel: null,
 						ts: null,
+						images: images.length > 0 ? { posted: false, fileIds: [], error: null } : null,
 					},
 				};
 			}
 
-			const result = await getSlackClient(slackBotToken).chat.postMessage({
+			const client = getSlackClient(slackBotToken);
+
+			const result = await client.chat.postMessage({
 				channel: ref.channelId,
 				thread_ts: ref.threadTs,
 				...(data.blocks ? { text: data.text, blocks: data.blocks } : { markdown_text: data.text }),
 				unfurl_links: false,
 				unfurl_media: false,
 			});
+
+			let posted: ImagePosting | null = null;
+
+			if (images.length > 0) posted = await postImages({ client, ref, images });
 
 			return {
 				output: {
@@ -98,8 +137,73 @@ export function replyInThread(
 					blocks: null,
 					channel: result.channel ?? null,
 					ts: result.ts ?? null,
+					images: posted,
 				},
 			};
 		},
 	});
+}
+
+async function threadImages(
+	requested: v.InferOutput<typeof imagesSchema>,
+	findArtifact: FindArtifact | undefined,
+): Promise<ThreadImage[]> {
+	if (!findArtifact) {
+		throw new Error('Images are not available in this deployment. Reply with text or blocks.');
+	}
+
+	const images: ThreadImage[] = [];
+
+	for (const { artifactId, altText } of requested) {
+		const artifact = await findArtifact(artifactId);
+
+		if (!artifact) {
+			throw new Error(
+				`Artifact ${artifactId} is unknown or expired. Render it again with render_visual, then reply with the new artifactId. Nothing was posted.`,
+			);
+		}
+
+		images.push({
+			filename: `${artifactId}.png`,
+			title: artifact.title,
+			altText,
+			png: artifact.png,
+		});
+	}
+
+	return images;
+}
+
+type ImagePosting = { posted: boolean; fileIds: string[]; error: string | null };
+
+/**
+ * The message already stands, so an upload failure (uploads disabled, the bot
+ * not in the channel, an external guest) is reported, not thrown: throwing
+ * would make the model post the message again.
+ */
+async function postImages({
+	client,
+	ref,
+	images,
+}: {
+	client: SlackBotClient;
+	ref: { channelId: string; threadTs: string };
+	images: ThreadImage[];
+}): Promise<ImagePosting> {
+	try {
+		const uploaded = await uploadThreadImages({
+			client,
+			channelId: ref.channelId,
+			threadTs: ref.threadTs,
+			images,
+		});
+
+		return { posted: true, fileIds: uploaded.fileIds, error: null };
+	} catch (error) {
+		return {
+			posted: false,
+			fileIds: [],
+			error: `The message was posted, but the images were not: ${error instanceof Error ? error.message : String(error)}. Do not post the message again.`,
+		};
+	}
 }
