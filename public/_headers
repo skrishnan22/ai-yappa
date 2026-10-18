@@ -1,0 +1,7 @@
+# Render templates run model-written source (ADR 0025, decision 5). Request
+# interception in owner code allows only GET /render/ on this origin; this
+# policy also stops WebSocket and EventSource connections, which interception
+# does not see, and any `eval`.
+/render/*
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
