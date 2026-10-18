@@ -31,6 +31,7 @@ import { planningStore } from '../planning/planning-store.ts';
 import { createPlanningStartup } from '../planning/planning-startup.ts';
 import { findInstallationRepository, listInstallationRepositories } from '../proxy/github.ts';
 import type { AuditRecord } from '../proxy/ops.ts';
+import { coworkerSandbox } from '../sandboxes/coworker-sandbox.ts';
 import { createContainerSandbox, daytona } from '../sandboxes/daytona.ts';
 import {
 	coworkerInstructions,
@@ -59,6 +60,11 @@ const installationRepos = {
 	find: (repo: string) => findInstallationRepository(repo),
 	list: () => listInstallationRepositories(),
 };
+
+// The attached repository per Coworker instance, written every render. The
+// mounted sandbox factory outlives the render that created it, so it reads
+// the repository here instead of from a stale closure.
+const liveRepos = new Map<string, string>();
 
 const initialDataSchema = v.object({
 	channelId: v.string(),
@@ -94,6 +100,9 @@ export function Coworker(props: { id: string }) {
 	// An attached repo wins; older conversations carry theirs in initialData.
 	const [attachedRepo, setAttachedRepo] = usePersistentState<string | null>('repo', null);
 	const repo = attachedRepo ?? data.repo;
+
+	if (repo) liveRepos.set(props.id, repo);
+	else liveRepos.delete(props.id);
 
 	useTool(replyInThread(data, agentEnv.SLACK_BOT_TOKEN));
 
@@ -236,9 +245,17 @@ export function Coworker(props: { id: string }) {
 		});
 	}
 
-	if (repo) {
-		useSandbox({
-			async createSandbox(options) {
+	// Mounted in every conversation; it gains the workspace tools once a
+	// repository is attached.
+	useSandbox(
+		coworkerSandbox({
+			cwd: WORKSPACE_REPO_DIR,
+			repo: () => liveRepos.get(props.id),
+			async createRepoSandbox(options) {
+				const attached = liveRepos.get(props.id);
+
+				if (!attached) throw new Error('[coworker] no repository is attached');
+
 				const apiKey = agentEnv.DAYTONA_API_KEY;
 				const client = new Daytona({ apiKey });
 				const sandbox = await createContainerSandbox(client, { conversationId: options.id });
@@ -249,7 +266,7 @@ export function Coworker(props: { id: string }) {
 				});
 
 				const result = await hydrateWorkspace(hydrateIoFromDaytona(sandbox), {
-					repo,
+					repo: attached,
 					conversationId: options.id,
 					git: gitAuthorFromEnv(agentEnv),
 				});
@@ -263,8 +280,8 @@ export function Coworker(props: { id: string }) {
 
 				return daytona(sandbox, { cwd: WORKSPACE_REPO_DIR }).createSandbox(options);
 			},
-		});
-	}
+		}),
+	);
 
 	return coworkerInstructions(repo);
 }
