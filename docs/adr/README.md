@@ -27,3 +27,4 @@
 | 0022 Channel members may use Yappa | Partially superseded by ADR 0024 (decision 1). Replaces the invoker allowlist; external Slack Connect users refused; Codex admins unchanged |
 | 0023 Reversible planning decisions | Holds. Planning decisions live in a D1 card-revision log, decided only through a modal, with quiet planning sessions, Reopen, and no voting |
 | 0024 The GitHub App installation is the access boundary | Holds. A mention in any channel or a DM starts a conversation; one repository per conversation, attached via `attach_repo` and checked against the installation; `channelRepos` is a default repo |
+| 0025 Browser-rendered visuals and browsing | Proposed. Diagrams and dashboards render in Cloudflare Browser Run from application templates and reach Slack as owner-uploaded PNGs; read-only Chromium browsing first, interactive sessions later |
