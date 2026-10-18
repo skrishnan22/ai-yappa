@@ -13,12 +13,15 @@ import { sqlite, start } from '@flue/runtime/node';
 import { afterEach, expect, test, vi } from 'vitest';
 import { INTEGRATION_CATALOG } from '../integrations/mcp-catalog.ts';
 import { createArtifactStore, type ArtifactBucket } from '../visuals/artifact-store.ts';
+import type { QuickActions } from '../visuals/browse.ts';
 import { setVisualRuntime } from '../visuals/visual-runtime.ts';
 import type { RenderVisual } from '../visuals/visual-tools.ts';
 import { Coworker } from './coworker.ts';
 import { coworkerModel } from './model-choice.ts';
 
 const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
+
+const JPEG = new Uint8Array([255, 216, 255, 224, 4, 5, 6]);
 
 const RENDER_PREVIEW = new Uint8Array([255, 216, 255, 224, 7, 8, 9]);
 
@@ -98,98 +101,114 @@ afterEach(() => {
 test.each([
 	{ name: 'an image-capable model', modelId: 'kimi-k3', seesImages: true },
 	{ name: 'a text-only model', modelId: undefined, seesImages: false },
-])('a render reaches $name and can be attached to the reply', async ({ modelId, seesImages }) => {
-	vi.stubEnv('DAYTONA_API_KEY', 'test');
-	vi.stubEnv('OPENCODE_API_KEY', 'test');
-	vi.stubEnv('SLACK_BOT_TOKEN', '');
+])(
+	'a render and a page screenshot reach $name and can be attached to the reply',
+	async ({ modelId, seesImages }) => {
+		vi.stubEnv('DAYTONA_API_KEY', 'test');
+		vi.stubEnv('OPENCODE_API_KEY', 'test');
+		vi.stubEnv('SLACK_BOT_TOKEN', '');
 
-	for (const entry of INTEGRATION_CATALOG) vi.stubEnv(entry.authEnv, '');
-	vi.stubEnv('EXA_API_KEY', '');
-	vi.stubEnv('PARALLEL_API_KEY', '');
+		for (const entry of INTEGRATION_CATALOG) vi.stubEnv(entry.authEnv, '');
+		vi.stubEnv('EXA_API_KEY', '');
+		vi.stubEnv('PARALLEL_API_KEY', '');
 
-	const render = vi.fn<RenderVisual>(async () => ({
-		png: PNG,
-		preview: RENDER_PREVIEW,
-		width: 300,
-		height: 200,
-	}));
+		const render = vi.fn<RenderVisual>(async () => ({
+			png: PNG,
+			preview: RENDER_PREVIEW,
+			width: 300,
+			height: 200,
+		}));
 
-	setVisualRuntime({
-		render,
-		artifacts: createArtifactStore(memoryBucket()),
-	});
+		const quickAction = vi.fn<QuickActions['quickAction']>(async (_action, options) =>
+			options.screenshotOptions ? new Response(JPEG) : new Response(PNG),
+		);
 
-	const choice = modelId ? { model: { provider: 'opencode-go' as const, modelId } } : undefined;
-
-	const [provider, defaultId] = coworkerModel(undefined, false).specifier.split('/');
-
-	const model = fauxProvider({
-		provider,
-		models: [
-			{ id: modelId ?? defaultId ?? 'test', input: seesImages ? ['text', 'image'] : ['text'] },
-		],
-	});
-
-	const directory = await mkdtemp(join(tmpdir(), 'coworker-visuals-'));
-	let runtime: Awaited<ReturnType<typeof start>> | undefined;
-	const artifacts: string[] = [];
-
-	try {
-		model.setResponses([
-			(context) => {
-				const names = getCurrentTools(context.messages).map((tool) => tool.name);
-				expect(names).toEqual(expect.arrayContaining(['render_visual']));
-				expect(names).not.toContain('bash');
-
-				return fauxAssistantMessage(
-					fauxToolCall('render_visual', {
-						kind: 'mermaid',
-						source: 'graph LR; A-->B',
-						title: 'Flow',
-					}),
-				);
-			},
-			(context) => {
-				artifacts.push(reviewedArtifact({ context, preview: RENDER_PREVIEW, seesImages }));
-
-				return fauxAssistantMessage(
-					fauxToolCall('reply_in_slack_thread', {
-						text: 'Here is the flow.',
-						images: artifacts.map((artifactId) => ({ artifactId, altText: 'A visual.' })),
-					}),
-				);
-			},
-			(context) => {
-				expect(lastToolResult(context)).toMatchObject({
-					toolName: 'reply_in_slack_thread',
-					isError: false,
-				});
-
-				return fauxAssistantMessage('Done');
-			},
-		]);
-
-		runtime = await start({
-			agents: [Coworker],
-			db: sqlite(join(directory, 'flue.db')),
-			providers: [model.provider],
-		});
-		const agent = init(Coworker, { id: `visuals-${modelId ?? 'default'}` });
-
-		const receipt = await agent.dispatch({
-			message: 'Draw the flow',
-			initialData: {
-				channelId: 'C1',
-				threadTs: '1',
-				startedAt: '2026-10-18T00:00:00.000Z',
-				modelChoice: choice,
-			},
+		setVisualRuntime({
+			render,
+			browser: { quickAction },
+			artifacts: createArtifactStore(memoryBucket()),
 		});
 
-		await agent.read(receipt);
-		expect(render).toHaveBeenCalledWith({ kind: 'mermaid', source: 'graph LR; A-->B' });
-	} finally {
-		await runtime?.stop();
-		await rm(directory, { recursive: true, force: true });
-	}
-});
+		const choice = modelId ? { model: { provider: 'opencode-go' as const, modelId } } : undefined;
+
+		const [provider, defaultId] = coworkerModel(undefined, false).specifier.split('/');
+
+		const model = fauxProvider({
+			provider,
+			models: [
+				{ id: modelId ?? defaultId ?? 'test', input: seesImages ? ['text', 'image'] : ['text'] },
+			],
+		});
+
+		const directory = await mkdtemp(join(tmpdir(), 'coworker-visuals-'));
+		let runtime: Awaited<ReturnType<typeof start>> | undefined;
+		const artifacts: string[] = [];
+
+		try {
+			model.setResponses([
+				(context) => {
+					const names = getCurrentTools(context.messages).map((tool) => tool.name);
+					expect(names).toEqual(expect.arrayContaining(['render_visual', 'browse_page']));
+					expect(names).not.toContain('bash');
+
+					return fauxAssistantMessage(
+						fauxToolCall('render_visual', {
+							kind: 'mermaid',
+							source: 'graph LR; A-->B',
+							title: 'Flow',
+						}),
+					);
+				},
+				(context) => {
+					artifacts.push(reviewedArtifact({ context, preview: RENDER_PREVIEW, seesImages }));
+
+					return fauxAssistantMessage(
+						fauxToolCall('browse_page', { url: 'https://example.com', mode: 'screenshot' }),
+					);
+				},
+				(context) => {
+					artifacts.push(reviewedArtifact({ context, preview: JPEG, seesImages }));
+
+					return fauxAssistantMessage(
+						fauxToolCall('reply_in_slack_thread', {
+							text: 'Here is the flow and the page.',
+							images: artifacts.map((artifactId) => ({ artifactId, altText: 'A visual.' })),
+						}),
+					);
+				},
+				(context) => {
+					expect(lastToolResult(context)).toMatchObject({
+						toolName: 'reply_in_slack_thread',
+						isError: false,
+					});
+
+					return fauxAssistantMessage('Done');
+				},
+			]);
+
+			runtime = await start({
+				agents: [Coworker],
+				db: sqlite(join(directory, 'flue.db')),
+				providers: [model.provider],
+			});
+			const agent = init(Coworker, { id: `visuals-${modelId ?? 'default'}` });
+
+			const receipt = await agent.dispatch({
+				message: 'Draw the flow and show me example.com',
+				initialData: {
+					channelId: 'C1',
+					threadTs: '1',
+					startedAt: '2026-10-18T00:00:00.000Z',
+					modelChoice: choice,
+				},
+			});
+
+			await agent.read(receipt);
+			expect(render).toHaveBeenCalledWith({ kind: 'mermaid', source: 'graph LR; A-->B' });
+			expect(quickAction).toHaveBeenCalledTimes(2);
+		} finally {
+			await runtime?.stop();
+			await rm(directory, { recursive: true, force: true });
+		}
+	},
+);

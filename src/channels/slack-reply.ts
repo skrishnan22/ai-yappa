@@ -88,7 +88,7 @@ export function replyInThread(
 			'By default `text` is the whole reply, written in Markdown.',
 			'Add `blocks` (native Slack Block Kit) only when a chart, table, or composed layout helps the reader; then `text` is the notification and screen-reader fallback and must state the substantive takeaway, including a verbal summary of any chart.',
 			'Allowed blocks: markdown, header, divider, text-only section and context, data_visualization, and data_table. Cells may be raw_text, raw_number, a string, or a number. Header text may be plain_text or a string. Images, accessories, and interactive elements are rejected.',
-			`Add \`images\` (at most ${MAX_REPLY_IMAGES}) to attach visuals you rendered with render_visual: each is { artifactId, altText }. They are uploaded under the message; \`text\` must still carry the takeaway, and altText (at most ${MAX_ALT_TEXT_LENGTH} characters) describes the image for screen readers.`,
+			`Add \`images\` (at most ${MAX_REPLY_IMAGES}) to attach visuals you rendered with render_visual or captured with browse_page: each is { artifactId, altText }. They are uploaded under the message; \`text\` must still carry the takeaway, and altText (at most ${MAX_ALT_TEXT_LENGTH} characters) describes the image for screen readers.`,
 			'Compute chart and table values from the repo or tools; never estimate them.',
 			'Include full exact operational identifiers; never abbreviate trace IDs, request IDs, commit hashes, or similar values with ... or ….',
 		].join(' '),

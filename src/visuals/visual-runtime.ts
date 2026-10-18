@@ -1,9 +1,12 @@
 import type { ArtifactStore } from './artifact-store.ts';
+import type { QuickActions } from './browse.ts';
 import type { RenderVisual } from './visual-tools.ts';
 
 export type VisualRuntime = {
 	/** Renders source in Browser Run against this Worker's `/render/` templates. */
 	render: RenderVisual;
+	/** The Worker's Browser Run binding, for Quick Actions. */
+	browser: QuickActions;
 	artifacts: ArtifactStore;
 };
 
