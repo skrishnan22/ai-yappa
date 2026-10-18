@@ -180,7 +180,6 @@ test.each([
 			},
 			(context) => {
 				expectAttached(context);
-				expect(external.commands).toContain(`git clone --depth 1 '${REPO}' '/workspace/repo'`);
 
 				const rejectedAttachment = context.messages.some(
 					(message) =>
@@ -195,6 +194,8 @@ test.each([
 				const last = context.messages.at(-1);
 				expect(last).toMatchObject({ role: 'toolResult', toolName: 'bash', isError: false });
 				expect(JSON.stringify(last)).toContain('/workspace/repo');
+				// The sandbox hydrates on the first file or shell call after attaching.
+				expect(external.commands).toContain(`git clone --depth 1 '${REPO}' '/workspace/repo'`);
 
 				return reply();
 			},
