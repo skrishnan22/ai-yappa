@@ -37,7 +37,7 @@ const DEVICE_SCALE_FACTOR = 2;
 // unreadable in Slack anyway; the model should split them.
 export const MAX_VISUAL_SIDE = 4000;
 
-// Slack's per-image limit in the reply tool (decision 7).
+// Application budget for each PNG delivered to Slack (decision 7).
 export const MAX_PNG_BYTES = 10 * 1024 * 1024;
 
 // Decision 2's image budget for what the model sees.
@@ -234,12 +234,13 @@ async function captureFullPage(page: Page): Promise<RenderedVisual> {
 		height: Math.round(size.height / DEVICE_SCALE_FACTOR),
 	};
 
-	return capture(page, clip);
+	return capture(page, clip, new Uint8Array(png));
 }
 
 async function capture(
 	page: Page,
 	clip: { x: number; y: number; width: number; height: number },
+	png?: Uint8Array,
 ): Promise<RenderedVisual> {
 	if (Math.max(clip.width, clip.height) > MAX_VISUAL_SIDE) {
 		throw new RenderError(
@@ -247,8 +248,10 @@ async function capture(
 		);
 	}
 
-	const shot = await page.screenshot({ type: 'png', clip, captureBeyondViewport: true });
-	const png = new Uint8Array(shot);
+	if (!png) {
+		const shot = await page.screenshot({ type: 'png', clip, captureBeyondViewport: true });
+		png = new Uint8Array(shot);
+	}
 
 	if (png.byteLength > MAX_PNG_BYTES) {
 		throw new RenderError('The rendered image is over 10 MiB. Simplify it or split it.');
