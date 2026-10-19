@@ -43,5 +43,7 @@ if (env.BROWSER && env.ARTIFACTS && origin) {
 		artifacts: createArtifactStore(env.ARTIFACTS),
 	});
 } else {
-	console.warn('[visuals] BROWSER, ARTIFACTS, or PUBLIC_ORIGIN missing; visual tools are off');
+	console.warn(
+		'[visuals] BROWSER, ARTIFACTS, or public origin missing or invalid; visual tools are off',
+	);
 }

@@ -152,24 +152,24 @@ async function threadImages(
 		throw new Error('Images are not available in this deployment. Reply with text or blocks.');
 	}
 
-	const images: ThreadImage[] = [];
+	const images = await Promise.all(
+		requested.map(async ({ artifactId, altText }) => {
+			const artifact = await findArtifact(artifactId);
 
-	for (const { artifactId, altText } of requested) {
-		const artifact = await findArtifact(artifactId);
+			if (!artifact) {
+				throw new Error(
+					`Artifact ${artifactId} is unknown or expired. Render it again with render_visual, then reply with the new artifactId. Nothing was posted.`,
+				);
+			}
 
-		if (!artifact) {
-			throw new Error(
-				`Artifact ${artifactId} is unknown or expired. Render it again with render_visual, then reply with the new artifactId. Nothing was posted.`,
-			);
-		}
-
-		images.push({
-			filename: `${artifactId}.png`,
-			title: artifact.title,
-			altText,
-			png: artifact.png,
-		});
-	}
+			return {
+				filename: `${artifactId}.png`,
+				title: artifact.title,
+				altText,
+				png: artifact.png,
+			};
+		}),
+	);
 
 	return images;
 }

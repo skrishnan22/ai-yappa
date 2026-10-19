@@ -67,11 +67,14 @@ async function uploadBytes({
 	client: Pick<SlackBotClient, 'files'>;
 	image: ThreadImage;
 }): Promise<string> {
-	const target = await client.files.getUploadURLExternal({
+	// Slack expects alt_txt; the SDK currently declares it as alt_text.
+	const request = {
 		filename: image.filename,
 		length: image.png.byteLength,
-		alt_text: image.altText,
-	});
+		alt_txt: image.altText,
+	};
+
+	const target = await client.files.getUploadURLExternal(request);
 
 	if (!target.upload_url || !target.file_id) {
 		throw new Error('Slack did not return an upload URL.');

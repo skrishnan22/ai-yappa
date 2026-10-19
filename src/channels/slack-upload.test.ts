@@ -56,7 +56,7 @@ test('uploads every image and shares them in the thread with one completion', as
 		expect(files.getUploadURLExternal).toHaveBeenCalledWith({
 			filename: 'art_1.png',
 			length: 3,
-			alt_text: 'A flow diagram.',
+			alt_txt: 'A flow diagram.',
 		});
 		expect(files.completeUploadExternal).toHaveBeenCalledOnce();
 		expect(files.completeUploadExternal).toHaveBeenCalledWith({

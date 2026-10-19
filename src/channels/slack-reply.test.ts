@@ -344,6 +344,50 @@ describe('reply images', () => {
 
 	const log = { info() {}, warn() {}, error() {} };
 
+	test('starts image reads together and waits for all of them before posting', async () => {
+		const calls = stubSlackApi(async (call): Promise<Record<string, JsonValue>> => {
+			if (call.method === 'files.getUploadURLExternal') {
+				return { ok: true, upload_url: 'https://files.slack.com/upload/v1/abc', file_id: 'F1' };
+			}
+
+			return { ok: true };
+		});
+
+		const pending = Promise.withResolvers<void>();
+		const requested: string[] = [];
+
+		const tool = replyInThread(
+			{ channelId: 'C1', threadTs: '1.2' },
+			'xoxb-test',
+			async (artifactId) => {
+				requested.push(artifactId);
+
+				if (artifactId === artifact.artifactId) await pending.promise;
+
+				return { ...artifact, artifactId };
+			},
+		);
+
+		const ids = [artifact.artifactId, 'art_00000000000000000002'];
+
+		const data = v.parse(tool.input, {
+			text: 'Flows',
+			images: ids.map((artifactId) => ({ artifactId, altText: 'A flow.' })),
+		});
+
+		const result = tool.run({ data, toolCallId: 'parallel', log });
+
+		try {
+			expect(requested).toEqual(ids);
+			expect(calls).toEqual([]);
+		} finally {
+			pending.resolve();
+			await result;
+		}
+
+		expect(calls[0]?.method).toBe('chat.postMessage');
+	});
+
 	test('an unknown or expired artifact posts nothing', async () => {
 		const calls = stubSlackApi();
 		const tool = replyInThread({ channelId: 'C1', threadTs: '1.2' }, 'xoxb-test', findArtifact);
@@ -384,6 +428,7 @@ describe('reply images', () => {
 			'/upload/v1/abc',
 			'files.completeUploadExternal',
 		]);
+		expect(calls[1]?.params).toMatchObject({ alt_txt: 'A flow.' });
 		expect(calls[3]?.params).toMatchObject({ channel_id: 'C1', thread_ts: '1.2' });
 	});
 

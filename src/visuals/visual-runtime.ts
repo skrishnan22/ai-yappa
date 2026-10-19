@@ -35,5 +35,9 @@ export function publicOrigin({
 
 	if (!configured) return undefined;
 
-	return new URL(configured.includes('://') ? configured : `https://${configured}`).origin;
+	try {
+		return new URL(configured.includes('://') ? configured : `https://${configured}`).origin;
+	} catch {
+		return undefined;
+	}
 }
