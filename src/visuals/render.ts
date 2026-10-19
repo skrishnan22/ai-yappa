@@ -19,8 +19,6 @@ export class RenderError extends Error {
 	override name = 'RenderError';
 }
 
-export type VisualSize = { width: number; height: number };
-
 export type RenderedVisual = {
 	png: Uint8Array;
 	/** Downscaled JPEG the model reviews; the PNG is what Slack gets. */
@@ -224,23 +222,25 @@ async function captureTemplate(page: Page, source: string): Promise<RenderedVisu
 }
 
 async function captureFullPage(page: Page): Promise<RenderedVisual> {
-	const png = await page.screenshot({ type: 'png', fullPage: true });
-	const size = pngSize(png);
+	const session = await page.createCDPSession();
 
-	const clip = {
-		x: 0,
-		y: 0,
-		width: Math.round(size.width / DEVICE_SCALE_FACTOR),
-		height: Math.round(size.height / DEVICE_SCALE_FACTOR),
-	};
+	try {
+		const { cssContentSize } = await session.send('Page.getLayoutMetrics');
 
-	return capture(page, clip, new Uint8Array(png));
+		return await capture(page, {
+			x: 0,
+			y: 0,
+			width: Math.ceil(cssContentSize.width),
+			height: Math.ceil(cssContentSize.height),
+		});
+	} finally {
+		await session.detach();
+	}
 }
 
 async function capture(
 	page: Page,
 	clip: { x: number; y: number; width: number; height: number },
-	png?: Uint8Array,
 ): Promise<RenderedVisual> {
 	if (Math.max(clip.width, clip.height) > MAX_VISUAL_SIDE) {
 		throw new RenderError(
@@ -248,10 +248,8 @@ async function capture(
 		);
 	}
 
-	if (!png) {
-		const shot = await page.screenshot({ type: 'png', clip, captureBeyondViewport: true });
-		png = new Uint8Array(shot);
-	}
+	const shot = await page.screenshot({ type: 'png', clip, captureBeyondViewport: true });
+	const png = new Uint8Array(shot);
 
 	if (png.byteLength > MAX_PNG_BYTES) {
 		throw new RenderError('The rendered image is over 10 MiB. Simplify it or split it.');
@@ -273,16 +271,11 @@ async function capture(
 		if (preview.byteLength <= PREVIEW_MAX_BYTES) break;
 	}
 
-	if (!preview) throw new Error('[visuals] no preview quality configured');
+	if (!preview || preview.byteLength > PREVIEW_MAX_BYTES) {
+		throw new RenderError('The preview is over 300 KiB. Simplify the visual or split it.');
+	}
 
 	return { png, preview, width: clip.width, height: clip.height };
-}
-
-/** Width and height from a PNG's IHDR chunk. */
-export function pngSize(png: Uint8Array): VisualSize {
-	const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
-
-	return { width: view.getUint32(16), height: view.getUint32(20) };
 }
 
 /** The page's error for the model: no `Evaluation failed:` prefix or stack frames. */

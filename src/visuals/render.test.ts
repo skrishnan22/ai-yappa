@@ -4,7 +4,6 @@ import {
 	isAllowedRenderRequest,
 	PREVIEW_MAX_SIDE,
 	previewScale,
-	pngSize,
 	renderErrorText,
 } from './render.ts';
 
@@ -46,15 +45,6 @@ test('previews stay within the longest-side budget and never upscale', () => {
 	expect(previewScale({ width: 300, height: 200 })).toBe(1);
 	expect(previewScale({ width: 2000, height: 500 }) * 2000 * 2).toBeCloseTo(PREVIEW_MAX_SIDE);
 	expect(previewScale({ width: 500, height: 3000 }) * 3000 * 2).toBeCloseTo(PREVIEW_MAX_SIDE);
-});
-
-test('reads PNG dimensions from the header', () => {
-	const png = new Uint8Array(24);
-	const view = new DataView(png.buffer);
-	view.setUint32(16, 1280);
-	view.setUint32(20, 510);
-
-	expect(pngSize(png)).toEqual({ width: 1280, height: 510 });
 });
 
 test('render errors drop the evaluation prefix and page stack frames', () => {

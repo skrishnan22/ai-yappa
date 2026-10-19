@@ -18,4 +18,6 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Renderer smoke tests use the Chrome installed on the hosted runner.
+      - run: google-chrome --version
       - run: pnpm test
