@@ -28,3 +28,6 @@ cloudflared.yml
 
 # PR Lens writes its previews here. They are rebuilt on demand.
 .pr-lens/
+
+# Render template bundles; built by scripts/build-render-assets.mjs.
+public/render/build/

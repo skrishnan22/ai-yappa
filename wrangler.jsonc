@@ -34,6 +34,11 @@
 		{ "tag": "v1", "new_sqlite_classes": ["FlueCoworkerAgent"] },
 		{ "tag": "v2", "new_sqlite_classes": ["CodexAuth"] },
 	],
+	// Browser Run renders visuals and browses pages (ADR 0025).
+	"browser": { "binding": "BROWSER" },
+	// public/ (render templates, built library bundles, and _headers) is
+	// served before the Worker. Browser Run loads templates from PUBLIC_ORIGIN.
+	"assets": { "directory": "./public" },
 	// The app's one D1 database: memory (Person Preferences, Conversation
 	// Digests) and planning decisions. It keeps its original Cloudflare name.
 	// Apply migrations with: pnpm exec wrangler d1 migrations apply APP_DB --remote
