@@ -36,6 +36,9 @@
 	],
 	// Browser Run renders visuals and browses pages (ADR 0025).
 	"browser": { "binding": "BROWSER" },
+	// Rendered PNGs. Set the 15-day lifecycle rule once per bucket:
+	// pnpm exec wrangler r2 bucket lifecycle add slack-agent-artifacts expire-artifacts artifacts/ --expire-days 15
+	"r2_buckets": [{ "binding": "ARTIFACTS", "bucket_name": "slack-agent-artifacts" }],
 	// public/ (render templates, built library bundles, and _headers) is
 	// served before the Worker. Browser Run loads templates from PUBLIC_ORIGIN.
 	"assets": { "directory": "./public" },

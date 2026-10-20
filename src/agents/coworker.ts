@@ -41,9 +41,11 @@ import {
 } from '../sandboxes/hydrate.ts';
 import { skills } from '../skills/index.ts';
 import { invokedSkills } from '../skills/invocation.ts';
+import { visualRuntime } from '../visuals/visual-runtime.ts';
+import { visualTools } from '../visuals/visual-tools.ts';
 import { attachRepoTool } from './attach-repo.ts';
 import { githubTools } from './github-tools.ts';
-import { coworkerModel, modelChoiceSchema } from './model-choice.ts';
+import { acceptsImages, coworkerModel, modelChoiceSchema } from './model-choice.ts';
 import { deliveredModelRoute } from './model-route.ts';
 import { PLANNING_REPLY_TOOLS, planningTools } from './planning-tools.ts';
 import { webSearchTools } from './web-search-tools.ts';
@@ -104,7 +106,18 @@ export function Coworker(props: { id: string }) {
 	if (repo) liveRepos.set(props.id, repo);
 	else liveRepos.delete(props.id);
 
-	useTool(replyInThread(data, agentEnv.SLACK_BOT_TOKEN));
+	// Absent under `flue run` and in deployments without Browser Run or R2.
+	const visuals = visualRuntime();
+
+	useTool(
+		replyInThread(
+			data,
+			agentEnv.SLACK_BOT_TOKEN,
+			visuals
+				? (artifactId) => visuals.artifacts.get({ conversationId: props.id, artifactId })
+				: undefined,
+		),
+	);
 
 	// Absent under `flue run`: only the Worker entry sets the store.
 	const planning = planningStore();
@@ -245,8 +258,8 @@ export function Coworker(props: { id: string }) {
 		});
 	}
 
-	// Mounted in every conversation; it gains the workspace tools once a
-	// repository is attached.
+	// Mounted in every conversation: it carries the visual tools, and gains
+	// the workspace tools once a repository is attached.
 	useSandbox(
 		coworkerSandbox({
 			cwd: WORKSPACE_REPO_DIR,
@@ -280,10 +293,18 @@ export function Coworker(props: { id: string }) {
 
 				return daytona(sandbox, { cwd: WORKSPACE_REPO_DIR }).createSandbox(options);
 			},
+			extraTools: () =>
+				visuals
+					? visualTools({
+							conversationId: props.id,
+							...visuals,
+							modelSeesImages: acceptsImages(model.specifier),
+						})
+					: [],
 		}),
 	);
 
-	return coworkerInstructions(repo);
+	return coworkerInstructions(repo, { visuals: Boolean(visuals) });
 }
 
 Coworker.initialData = initialDataSchema;

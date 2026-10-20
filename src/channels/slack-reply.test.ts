@@ -7,6 +7,7 @@ import {
 	replyInThread,
 	slackFetch,
 } from './slack-reply.ts';
+import type { JsonValue } from '../json.ts';
 import { stubSlackApi } from './testing/slack-api-stub.ts';
 
 afterEach(() => {
@@ -98,7 +99,14 @@ describe('slack WebClient factory', () => {
 				log: { info() {}, warn() {}, error() {} },
 			}),
 		).resolves.toEqual({
-			output: { posted: false, text: 'local **reply**', blocks: null, channel: null, ts: null },
+			output: {
+				posted: false,
+				text: 'local **reply**',
+				blocks: null,
+				channel: null,
+				ts: null,
+				images: null,
+			},
 		});
 	});
 
@@ -128,7 +136,7 @@ describe('slack WebClient factory', () => {
 				log: { info() {}, warn() {}, error() {} },
 			}),
 		).resolves.toEqual({
-			output: { posted: true, text, blocks: null, channel: null, ts: null },
+			output: { posted: true, text, blocks: null, channel: null, ts: null, images: null },
 		});
 		expect(calls.map((call) => call.params)).toEqual([
 			{
@@ -180,7 +188,14 @@ describe('slack WebClient factory', () => {
 		await expect(
 			tool.run({ data, toolCallId: 'post-blocks', log: { info() {}, warn() {}, error() {} } }),
 		).resolves.toEqual({
-			output: { posted: true, text: data.text, blocks: null, channel: null, ts: null },
+			output: {
+				posted: true,
+				text: data.text,
+				blocks: null,
+				channel: null,
+				ts: null,
+				images: null,
+			},
 		});
 		expect(calls.map((call) => call.params)).toEqual([
 			{
@@ -221,7 +236,14 @@ describe('slack WebClient factory', () => {
 				log: { info() {}, warn() {}, error() {} },
 			}),
 		).resolves.toEqual({
-			output: { posted: true, text: data.text, blocks: null, channel: null, ts: null },
+			output: {
+				posted: true,
+				text: data.text,
+				blocks: null,
+				channel: null,
+				ts: null,
+				images: null,
+			},
 		});
 		expect(calls.map((call) => call.params)).toEqual([
 			{
@@ -264,7 +286,7 @@ describe('slack WebClient factory', () => {
 				log: { info() {}, warn() {}, error() {} },
 			}),
 		).resolves.toEqual({
-			output: { posted: false, text: 'fallback', blocks, channel: null, ts: null },
+			output: { posted: false, text: 'fallback', blocks, channel: null, ts: null, images: null },
 		});
 	});
 
@@ -289,7 +311,14 @@ describe('slack WebClient factory', () => {
 				log: { info() {}, warn() {}, error() {} },
 			}),
 		).resolves.toEqual({
-			output: { posted: true, text: 'hello Slack', blocks: null, channel: null, ts: null },
+			output: {
+				posted: true,
+				text: 'hello Slack',
+				blocks: null,
+				channel: null,
+				ts: null,
+				images: null,
+			},
 		});
 		expect(calls.map((call) => call.params)).toEqual([
 			{
@@ -300,5 +329,141 @@ describe('slack WebClient factory', () => {
 				unfurl_media: false,
 			},
 		]);
+	});
+});
+
+describe('reply images', () => {
+	const artifact = {
+		artifactId: 'art_00000000000000000001',
+		png: new Uint8Array([1, 2]),
+		title: 'Flow',
+	};
+
+	const findArtifact = async (artifactId: string) =>
+		artifactId === artifact.artifactId ? artifact : undefined;
+
+	const log = { info() {}, warn() {}, error() {} };
+
+	test('starts image reads together and waits for all of them before posting', async () => {
+		const calls = stubSlackApi(async (call): Promise<Record<string, JsonValue>> => {
+			if (call.method === 'files.getUploadURLExternal') {
+				return { ok: true, upload_url: 'https://files.slack.com/upload/v1/abc', file_id: 'F1' };
+			}
+
+			return { ok: true };
+		});
+
+		const pending = Promise.withResolvers<void>();
+		const requested: string[] = [];
+
+		const tool = replyInThread(
+			{ channelId: 'C1', threadTs: '1.2' },
+			'xoxb-test',
+			async (artifactId) => {
+				requested.push(artifactId);
+
+				if (artifactId === artifact.artifactId) await pending.promise;
+
+				return { ...artifact, artifactId };
+			},
+		);
+
+		const ids = [artifact.artifactId, 'art_00000000000000000002'];
+
+		const data = v.parse(tool.input, {
+			text: 'Flows',
+			images: ids.map((artifactId) => ({ artifactId, altText: 'A flow.' })),
+		});
+
+		const result = tool.run({ data, toolCallId: 'parallel', log });
+
+		try {
+			expect(requested).toEqual(ids);
+			expect(calls).toEqual([]);
+		} finally {
+			pending.resolve();
+			await result;
+		}
+
+		expect(calls[0]?.method).toBe('chat.postMessage');
+	});
+
+	test('an unknown or expired artifact posts nothing', async () => {
+		const calls = stubSlackApi();
+		const tool = replyInThread({ channelId: 'C1', threadTs: '1.2' }, 'xoxb-test', findArtifact);
+
+		const data = v.parse(tool.input, {
+			text: 'Flow',
+			images: [{ artifactId: 'art_99999999999999999999', altText: 'A flow.' }],
+		});
+
+		await expect(tool.run({ data, toolCallId: 'missing', log })).rejects.toThrow(
+			/unknown or expired.*Nothing was posted/,
+		);
+		expect(calls).toEqual([]);
+	});
+
+	test('posts the message, then shares the images in the thread', async () => {
+		const calls = stubSlackApi(async (call): Promise<Record<string, JsonValue>> => {
+			if (call.method === 'files.getUploadURLExternal') {
+				return { ok: true, upload_url: 'https://files.slack.com/upload/v1/abc', file_id: 'F1' };
+			}
+
+			return { ok: true, channel: 'C1', ts: '9.9' };
+		});
+
+		const tool = replyInThread({ channelId: 'C1', threadTs: '1.2' }, 'xoxb-test', findArtifact);
+
+		const data = v.parse(tool.input, {
+			text: 'Here is the flow.',
+			images: [{ artifactId: artifact.artifactId, altText: 'A flow.' }],
+		});
+
+		await expect(tool.run({ data, toolCallId: 'post', log })).resolves.toMatchObject({
+			output: { posted: true, images: { posted: true, fileIds: ['F1'], error: null } },
+		});
+		expect(calls.map((call) => call.method)).toEqual([
+			'chat.postMessage',
+			'files.getUploadURLExternal',
+			'/upload/v1/abc',
+			'files.completeUploadExternal',
+		]);
+		expect(calls[1]?.params).toMatchObject({ alt_txt: 'A flow.' });
+		expect(calls[3]?.params).toMatchObject({ channel_id: 'C1', thread_ts: '1.2' });
+	});
+
+	test('an upload failure is reported without failing the posted reply', async () => {
+		stubSlackApi(async (call): Promise<Record<string, JsonValue>> =>
+			call.method === 'files.getUploadURLExternal'
+				? { ok: false, error: 'not_in_channel' }
+				: { ok: true, channel: 'C1', ts: '9.9' },
+		);
+		const tool = replyInThread({ channelId: 'C1', threadTs: '1.2' }, 'xoxb-test', findArtifact);
+
+		const data = v.parse(tool.input, {
+			text: 'Here is the flow.',
+			images: [{ artifactId: artifact.artifactId, altText: 'A flow.' }],
+		});
+
+		await expect(tool.run({ data, toolCallId: 'fail', log })).resolves.toMatchObject({
+			output: {
+				posted: true,
+				images: {
+					posted: false,
+					fileIds: [],
+					error: expect.stringMatching(/not_in_channel.*Do not post the message again/),
+				},
+			},
+		});
+	});
+
+	test('limits a reply to five images', () => {
+		const tool = replyInThread({ channelId: 'C1', threadTs: '1.2' }, 'xoxb-test', findArtifact);
+		const image = { artifactId: artifact.artifactId, altText: 'A flow.' };
+
+		expect(
+			v.safeParse(tool.input, { text: 'x', images: Array.from({ length: 6 }, () => image) })
+				.success,
+		).toBe(false);
 	});
 });

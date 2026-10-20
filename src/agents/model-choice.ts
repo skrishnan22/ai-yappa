@@ -91,14 +91,20 @@ export function resolveModelChoice(args: { model?: string; effort?: string }): M
 	return { ok: true, choice: Object.keys(choice).length > 0 ? choice : undefined };
 }
 
-// Specifiers the registered providers can serve. A thread's recorded choice
-// outlives the deploy that recorded it, and pi upgrades can drop models.
-const SERVABLE = new Set([
+// Models the registered providers can serve, by specifier. A thread's
+// recorded choice outlives the deploy that recorded it, and pi upgrades can
+// drop models.
+const SERVABLE = new Map<string, { input: readonly string[] }>([
 	...openaiCodexProvider()
 		.getModels()
-		.map((model) => `openai-codex/${model.id}`),
-	...openCodeGoModels.map((model) => `opencode-go/${model.id}`),
+		.map((model) => [`openai-codex/${model.id}`, model] as const),
+	...openCodeGoModels.map((model) => [`opencode-go/${model.id}`, model] as const),
 ]);
+
+/** Whether the model reads images in tool results (ADR 0025's render previews). */
+export function acceptsImages(specifier: string): boolean {
+	return SERVABLE.get(specifier)?.input.includes('image') ?? false;
+}
 
 export type CoworkerModel = {
 	/** For `useModel`. */
