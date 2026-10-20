@@ -1,15 +1,15 @@
 /**
- * Read-only browsing through Browser Run Quick Actions on Chromium
- * (ADR 0025, decision 9). Quick Actions bill browser time only; each call
- * opens a fresh browser with no cookies or credentials.
+ * Read-only browsing in Browser Run (ADR 0025, decision 9). Text uses Quick
+ * Actions; screenshots use one browser session for the PNG and JPEG preview.
  */
+import { launch, type BrowserWorker } from '@cloudflare/puppeteer';
 import * as v from 'valibot';
 import { type JsonValue, jsonValueSchema } from '../json.ts';
 
-// The Quick Action subset of the `browser` binding this module uses.
-export type QuickActions = {
+// Browser Run session transport and the Quick Actions used for text.
+export type BrowseBrowser = BrowserWorker & {
 	quickAction(
-		action: 'markdown' | 'accessibilityTree' | 'screenshot',
+		action: 'markdown' | 'accessibilityTree',
 		options: QuickActionOptions,
 	): Promise<Response>;
 };
@@ -17,8 +17,6 @@ export type QuickActions = {
 type QuickActionOptions = {
 	url: string;
 	gotoOptions?: { timeout?: number; waitUntil?: 'load' | 'networkidle2' };
-	viewport?: { width: number; height: number; deviceScaleFactor?: number };
-	screenshotOptions?: { type?: 'png' | 'jpeg'; quality?: number };
 };
 
 export const BROWSE_MODES = ['markdown', 'snapshot', 'screenshot'] as const;
@@ -63,7 +61,7 @@ export type PageText = { url: string; title: string; text: string };
 
 export type PageScreenshot = { url: string; png: Uint8Array; preview: Uint8Array };
 
-export async function pageMarkdown(browser: QuickActions, url: string): Promise<PageText> {
+export async function pageMarkdown(browser: BrowseBrowser, url: string): Promise<PageText> {
 	const body = await quickJson(browser, 'markdown', { url, gotoOptions: GOTO });
 	const parsed = v.parse(v.object({ result: v.string(), meta: v.optional(metaSchema) }), body);
 
@@ -74,7 +72,7 @@ export async function pageMarkdown(browser: QuickActions, url: string): Promise<
 	};
 }
 
-export async function pageSnapshot(browser: QuickActions, url: string): Promise<PageText> {
+export async function pageSnapshot(browser: BrowseBrowser, url: string): Promise<PageText> {
 	const body = await quickJson(browser, 'accessibilityTree', { url, gotoOptions: GOTO });
 
 	const parsed = v.parse(
@@ -94,18 +92,21 @@ export async function pageSnapshot(browser: QuickActions, url: string): Promise<
 	};
 }
 
-export async function pageScreenshot(browser: QuickActions, url: string): Promise<PageScreenshot> {
-	const [png, preview] = await Promise.all([
-		quickBytes(browser, { url, gotoOptions: GOTO, viewport: VIEWPORT }),
-		quickBytes(browser, {
-			url,
-			gotoOptions: GOTO,
-			viewport: VIEWPORT,
-			screenshotOptions: { type: 'jpeg', quality: PREVIEW_QUALITY },
-		}),
-	]);
+export async function pageScreenshot(browser: BrowseBrowser, url: string): Promise<PageScreenshot> {
+	const session = await launch(browser);
 
-	return { url, png, preview };
+	try {
+		const page = await session.newPage();
+		await page.setViewport(VIEWPORT);
+		await page.goto(url, GOTO);
+
+		const png = await page.screenshot({ type: 'png' });
+		const preview = await page.screenshot({ type: 'jpeg', quality: PREVIEW_QUALITY });
+
+		return { url, png: new Uint8Array(png), preview: new Uint8Array(preview) };
+	} finally {
+		await session.close();
+	}
 }
 
 /** One line per node: `role "name"`, indented by depth. */
@@ -132,7 +133,7 @@ function truncate(text: string): string {
 }
 
 async function quickJson(
-	browser: QuickActions,
+	browser: BrowseBrowser,
 	action: 'markdown' | 'accessibilityTree',
 	options: QuickActionOptions,
 ): Promise<JsonValue> {
@@ -147,20 +148,6 @@ async function quickJson(
 	const body = await response.json();
 
 	return v.parse(jsonValueSchema, body);
-}
-
-async function quickBytes(browser: QuickActions, options: QuickActionOptions): Promise<Uint8Array> {
-	const response = await browser.quickAction('screenshot', options);
-
-	if (!response.ok) {
-		const message = await failureMessage(response);
-
-		throw new Error(message);
-	}
-
-	const bytes = await response.arrayBuffer();
-
-	return new Uint8Array(bytes);
 }
 
 async function failureMessage(response: Response): Promise<string> {

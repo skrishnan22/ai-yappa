@@ -17,7 +17,7 @@ import {
 	pageMarkdown,
 	pageScreenshot,
 	pageSnapshot,
-	type QuickActions,
+	type BrowseBrowser,
 	type PageText,
 } from './browse.ts';
 import { RenderError, VISUAL_KINDS, type RenderedVisual, type VisualKind } from './render.ts';
@@ -54,7 +54,7 @@ export function visualTools({
 }: {
 	conversationId: string;
 	render: RenderVisual;
-	browser: QuickActions;
+	browser: BrowseBrowser;
 	artifacts: ArtifactStore;
 	/** False when the conversation's model does not accept image input. */
 	modelSeesImages: boolean;

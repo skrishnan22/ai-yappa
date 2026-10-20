@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { createArtifactStore, type ArtifactBucket } from './artifact-store.ts';
-import type { QuickActions } from './browse.ts';
+import type { BrowseBrowser } from './browse.ts';
 import { RenderError } from './render.ts';
 import { visualTools, type RenderVisual } from './visual-tools.ts';
 
@@ -13,11 +13,11 @@ const bucket: ArtifactBucket = {
 	},
 };
 
-function tools({ render, browser }: { render?: RenderVisual; browser?: QuickActions }) {
+function tools({ render, browser }: { render?: RenderVisual; browser?: BrowseBrowser }) {
 	const [renderTool, browseTool] = visualTools({
 		conversationId: 'conv',
 		render: render ?? (() => Promise.reject(new Error('unused'))),
-		browser: browser ?? { quickAction: () => Promise.reject(new Error('unused')) },
+		browser: browser ?? { fetch, quickAction: () => Promise.reject(new Error('unused')) },
 		artifacts: createArtifactStore(bucket),
 		modelSeesImages: true,
 	});
@@ -71,6 +71,7 @@ describe('browse_page', () => {
 	test('marks page markdown as untrusted content', async () => {
 		const { browseTool } = tools({
 			browser: {
+				fetch,
 				quickAction: async () =>
 					Response.json({
 						success: true,
@@ -98,6 +99,7 @@ describe('browse_page', () => {
 	test('renders the accessibility tree as indented role and name lines', async () => {
 		const { browseTool } = tools({
 			browser: {
+				fetch,
 				quickAction: async () =>
 					Response.json({
 						success: true,
@@ -127,6 +129,7 @@ describe('browse_page', () => {
 	test('reports Browser Run errors', async () => {
 		const { browseTool } = tools({
 			browser: {
+				fetch,
 				quickAction: async () =>
 					Response.json(
 						{ success: false, errors: [{ message: 'Navigation timeout' }] },

@@ -171,7 +171,7 @@ pnpm exec wrangler r2 bucket lifecycle add slack-agent-artifacts expire-artifact
 pnpm wrangler secret put PUBLIC_ORIGIN   # e.g. https://slack-agent.<subdomain>.workers.dev
 ```
 
-Browser Run loads the render templates (`public/render/`) from `PUBLIC_ORIGIN`, so it must be the Worker's public URL. Locally it falls back to `https://$TUNNEL_HOSTNAME`. `pnpm run build:render` bundles each template's pinned library (Mermaid, Vega-Lite, ECharts) into `public/render/build/`; `dev`, `build`, and `deploy` run it first. Uploading images needs the `files:write` bot scope from `slack-app-manifest.yaml`; reinstall the app after adding it. Quick Actions (`browse_page`) do not run in local dev: they need `wrangler dev --remote` or a deploy.
+Browser Run loads the render templates (`public/render/`) from `PUBLIC_ORIGIN`, so it must be the Worker's public URL. Locally it falls back to `https://$TUNNEL_HOSTNAME`. `pnpm run build:render` bundles each template's pinned library (Mermaid, Vega-Lite, ECharts) into `public/render/build/`; `dev`, `build`, and `deploy` run it first. Uploading images needs the `files:write` bot scope from `slack-app-manifest.yaml`; reinstall the app after adding it. Text browsing Quick Actions do not run in local dev: they need `wrangler dev --remote` or a deploy.
 
 ## Deploy
 

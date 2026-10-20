@@ -13,11 +13,27 @@ import { sqlite, start } from '@flue/runtime/node';
 import { afterEach, expect, test, vi } from 'vitest';
 import { INTEGRATION_CATALOG } from '../integrations/mcp-catalog.ts';
 import { createArtifactStore, type ArtifactBucket } from '../visuals/artifact-store.ts';
-import type { QuickActions } from '../visuals/browse.ts';
 import { setVisualRuntime } from '../visuals/visual-runtime.ts';
 import type { RenderVisual } from '../visuals/visual-tools.ts';
 import { Coworker } from './coworker.ts';
 import { coworkerModel } from './model-choice.ts';
+
+const { screenshot } = vi.hoisted(() => ({
+	screenshot: vi.fn<(options: { type: string }) => Promise<Uint8Array>>(),
+}));
+
+// oxlint-disable-next-line anti-slop/no-module-mocking -- Browser Run transport is external to this agent integration test.
+vi.mock('@cloudflare/puppeteer', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@cloudflare/puppeteer')>()),
+	launch: async () => ({
+		newPage: async () => ({
+			setViewport: async () => {},
+			goto: async () => {},
+			screenshot,
+		}),
+		close: async () => {},
+	}),
+}));
 
 const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
 
@@ -94,6 +110,7 @@ function reviewedArtifact({
 }
 
 afterEach(() => {
+	vi.clearAllMocks();
 	setVisualRuntime(undefined);
 	vi.unstubAllEnvs();
 });
@@ -119,13 +136,16 @@ test.each([
 			height: 200,
 		}));
 
-		const quickAction = vi.fn<QuickActions['quickAction']>(async (_action, options) =>
-			options.screenshotOptions ? new Response(JPEG) : new Response(PNG),
-		);
+		screenshot.mockImplementation(async ({ type }) => (type === 'jpeg' ? JPEG : PNG));
 
 		setVisualRuntime({
 			render,
-			browser: { quickAction },
+			browser: {
+				fetch,
+				quickAction: async () => {
+					throw new Error('unused');
+				},
+			},
 			artifacts: createArtifactStore(memoryBucket()),
 		});
 
@@ -205,7 +225,7 @@ test.each([
 
 			await agent.read(receipt);
 			expect(render).toHaveBeenCalledWith({ kind: 'mermaid', source: 'graph LR; A-->B' });
-			expect(quickAction).toHaveBeenCalledTimes(2);
+			expect(screenshot).toHaveBeenCalledTimes(2);
 		} finally {
 			await runtime?.stop();
 			await rm(directory, { recursive: true, force: true });

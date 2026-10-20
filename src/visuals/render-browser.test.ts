@@ -7,6 +7,7 @@ import { PuppeteerNode } from '@cloudflare/puppeteer/internal/node/PuppeteerNode
 import { Page } from '@cloudflare/puppeteer/internal/api/Page.js';
 import * as v from 'valibot';
 import { afterAll, afterEach, beforeAll, expect, test, vi } from 'vitest';
+import { pageScreenshot } from './browse.ts';
 import { MAX_PNG_BYTES, PREVIEW_MAX_BYTES, renderVisual } from './render.ts';
 
 // Only the Cloudflare launch transport is replaced; rendering uses real Chromium.
@@ -136,3 +137,21 @@ function pngSize(png: Uint8Array) {
 
 	return { width: view.getUint32(16), height: view.getUint32(20) };
 }
+
+test('captures a page PNG and JPEG preview after one navigation', async () => {
+	const goto = vi.spyOn(Page.prototype, 'goto');
+
+	const shot = await pageScreenshot(
+		{
+			fetch,
+			quickAction: async () => {
+				throw new Error('Unexpected Quick Action');
+			},
+		},
+		`${origin}/render/html.html`,
+	);
+
+	expect(goto).toHaveBeenCalledOnce();
+	expect(pngSize(shot.png)).toEqual({ width: 1280, height: 800 });
+	expect(shot.preview.subarray(0, 2)).toEqual(new Uint8Array([0xff, 0xd8]));
+}, 30_000);
