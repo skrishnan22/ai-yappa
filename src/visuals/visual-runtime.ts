@@ -1,9 +1,12 @@
 import type { ArtifactStore } from './artifact-store.ts';
+import type { BrowseBrowser } from './browse.ts';
 import type { RenderVisual } from './visual-tools.ts';
 
 export type VisualRuntime = {
 	/** Renders source in Browser Run against this Worker's `/render/` templates. */
 	render: RenderVisual;
+	/** The Worker's Browser Run binding, for text actions and screenshot sessions. */
+	browser: BrowseBrowser;
 	artifacts: ArtifactStore;
 };
 

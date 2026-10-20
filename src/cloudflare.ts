@@ -30,7 +30,7 @@ setProvider(createOpenAICodexProvider(() => codexAuth(env).accessToken()));
 // file, so planning tools are absent there.
 setPlanningStore(createD1PlanningStore(env.APP_DB));
 
-// Rendered visuals (ADR 0025) need Browser Run, the artifact
+// Rendered visuals and browsing (ADR 0025) need Browser Run, the artifact
 // bucket, and a public origin that serves the `/render/` templates. Without
 // all three the Coworker mounts no visual tools.
 const origin = publicOrigin(env);
@@ -40,6 +40,7 @@ if (env.BROWSER && env.ARTIFACTS && origin) {
 
 	setVisualRuntime({
 		render: ({ kind, source }) => renderVisual({ browser, origin, kind, source }),
+		browser,
 		artifacts: createArtifactStore(env.ARTIFACTS),
 	});
 } else {
