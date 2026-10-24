@@ -1,3 +1,8 @@
+import { walkthroughExample, memoryBucket } from '../testing/walkthrough.ts';
+import { createWalkthroughPublisher } from '../walkthroughs/publish.ts';
+import { setVisualRuntime } from '../visuals/visual-runtime.ts';
+import { createArtifactStore } from '../visuals/artifact-store.ts';
+import type { RenderVisual } from '../visuals/visual-tools.ts';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -246,5 +251,119 @@ test.each([
 		await rm(directory, { recursive: true, force: true });
 		vi.unstubAllEnvs();
 		vi.unstubAllGlobals();
+	}
+});
+
+test('an attached Coworker can publish a walkthrough and receive its image through Flue', async () => {
+	vi.stubEnv('DAYTONA_API_KEY', 'test');
+	vi.stubEnv('OPENCODE_API_KEY', 'test');
+	vi.stubEnv('SLACK_BOT_TOKEN', '');
+
+	for (const entry of INTEGRATION_CATALOG) vi.stubEnv(entry.authEnv, '');
+	vi.stubEnv('EXA_API_KEY', '');
+	vi.stubEnv('PARALLEL_API_KEY', '');
+	external.files.clear();
+	external.files.set(
+		'/workspace/.workspace_ready',
+		Buffer.from(JSON.stringify({ version: 1, repo: REPO, lockfile: null, lockfileSha256: null })),
+	);
+	vi.stubGlobal('fetch', async () => {
+		throw new Error('Unexpected network request');
+	});
+	const RENDER_PREVIEW = new Uint8Array([2]);
+	const PNG = new Uint8Array([1]);
+	const bucket = memoryBucket();
+
+	const render: RenderVisual = async () => ({
+		png: PNG,
+		preview: RENDER_PREVIEW,
+		width: 1280,
+		height: 900,
+	});
+
+	setVisualRuntime({
+		render,
+		browser: {
+			fetch,
+			quickAction: async () => {
+				throw new Error('unused');
+			},
+		},
+		artifacts: createArtifactStore(bucket),
+		publishWalkthrough: createWalkthroughPublisher({
+			bucket,
+			origin: 'https://agent.example',
+			render: () => render({ kind: 'html', source: '' }),
+		}),
+	});
+	const [provider] = coworkerModel(undefined, false).specifier.split('/');
+	const model = fauxProvider({ provider, models: [{ id: 'kimi-k3', input: ['text', 'image'] }] });
+	const { repository: _repository, ...input } = walkthroughExample;
+	model.setResponses([
+		(context) => {
+			expect(getCurrentTools(context.messages).map((tool) => tool.name)).toContain(
+				'render_walkthrough',
+			);
+
+			return fauxAssistantMessage(fauxToolCall('render_walkthrough', input));
+		},
+		(context) => {
+			const result = context.messages.at(-1);
+
+			if (result?.role !== 'toolResult') throw new Error('Expected a walkthrough tool result');
+			expect(result.isError).toBe(false);
+			expect(result.content).toEqual(
+				expect.arrayContaining([
+					{
+						type: 'image',
+						data: Buffer.from(RENDER_PREVIEW).toString('base64'),
+						mimeType: 'image/jpeg',
+					},
+				]),
+			);
+			expect(result.content).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						type: 'text',
+						text: expect.stringContaining('https://agent.example/walkthroughs/'),
+					}),
+				]),
+			);
+
+			return fauxAssistantMessage(
+				fauxToolCall('reply_in_slack_thread', { text: 'Walkthrough ready.' }),
+			);
+		},
+		() => fauxAssistantMessage('Done'),
+	]);
+	const directory = await mkdtemp(join(tmpdir(), 'coworker-walkthrough-'));
+
+	const runtime = await start({
+		agents: [Coworker],
+		db: sqlite(join(directory, 'flue.db')),
+		providers: [model.provider],
+	});
+
+	try {
+		const agent = init(Coworker, { id: 'attachment' });
+
+		const receipt = await agent.dispatch({
+			message: 'Generate the PR walkthrough.',
+			initialData: {
+				channelId: 'C1',
+				threadTs: '1',
+				startedAt: '2026-10-24T00:00:00.000Z',
+				repo: REPO,
+				modelChoice: { model: { provider: 'opencode-go', modelId: 'kimi-k3' } },
+			},
+		});
+
+		await agent.read(receipt);
+	} finally {
+		setVisualRuntime(undefined);
+		await runtime.stop();
+		vi.unstubAllEnvs();
+		vi.unstubAllGlobals();
+		await rm(directory, { recursive: true, force: true });
 	}
 });

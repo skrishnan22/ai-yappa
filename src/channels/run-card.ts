@@ -49,6 +49,7 @@ const STEP_BY_TOOL = {
 	create_working_branch: 'Creating working branch',
 	checkpoint_working_branch: 'Checkpointing working branch',
 	open_pull_request: 'Opening pull request',
+	render_walkthrough: 'Rendering PR walkthrough',
 	reply_in_slack_thread: 'Replying in thread',
 	ask_decision: 'Posting a decision card',
 	reword_decision: 'Rewording a decision card',

@@ -8,7 +8,7 @@ import { build } from 'vite';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-const KINDS = ['mermaid', 'vega-lite', 'echarts'];
+const KINDS = ['mermaid', 'vega-lite', 'echarts', 'walkthrough', 'walkthrough-player'];
 
 for (const kind of KINDS) {
 	await build({
