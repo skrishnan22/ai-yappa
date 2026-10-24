@@ -43,6 +43,7 @@ import { skills } from '../skills/index.ts';
 import { invokedSkills } from '../skills/invocation.ts';
 import { visualRuntime } from '../visuals/visual-runtime.ts';
 import { visualTools } from '../visuals/visual-tools.ts';
+import { walkthroughTool } from '../walkthroughs/tool.ts';
 import { attachRepoTool } from './attach-repo.ts';
 import { githubTools } from './github-tools.ts';
 import { acceptsImages, coworkerModel, modelChoiceSchema } from './model-choice.ts';
@@ -293,14 +294,25 @@ export function Coworker(props: { id: string }) {
 
 				return daytona(sandbox, { cwd: WORKSPACE_REPO_DIR }).createSandbox(options);
 			},
-			extraTools: () =>
-				visuals
-					? visualTools({
+			extraTools: () => {
+				if (!visuals) return [];
+				const modelSeesImages = acceptsImages(model.specifier);
+				const tools = visualTools({ conversationId: props.id, ...visuals, modelSeesImages });
+				const attached = liveRepos.get(props.id);
+
+				if (attached && visuals.publishWalkthrough) {
+					tools.push(
+						walkthroughTool({
 							conversationId: props.id,
-							...visuals,
-							modelSeesImages: acceptsImages(model.specifier),
-						})
-					: [],
+							repo: attached,
+							publish: visuals.publishWalkthrough,
+							modelSeesImages,
+						}),
+					);
+				}
+
+				return tools;
+			},
 		}),
 	);
 

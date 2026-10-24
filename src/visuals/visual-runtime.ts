@@ -1,6 +1,7 @@
 import type { ArtifactStore } from './artifact-store.ts';
 import type { BrowseBrowser } from './browse.ts';
 import type { RenderVisual } from './visual-tools.ts';
+import type { PublishWalkthrough } from '../walkthroughs/publish.ts';
 
 export type VisualRuntime = {
 	/** Renders source in Browser Run against this Worker's `/render/` templates. */
@@ -8,6 +9,7 @@ export type VisualRuntime = {
 	/** The Worker's Browser Run binding, for text actions and screenshot sessions. */
 	browser: BrowseBrowser;
 	artifacts: ArtifactStore;
+	publishWalkthrough?: PublishWalkthrough;
 };
 
 // Set once per isolate by the Worker entry (`src/cloudflare.ts`). Unset under

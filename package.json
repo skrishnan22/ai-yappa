@@ -48,6 +48,7 @@
 		"@valibot/to-json-schema": "^1.8.0",
 		"echarts": "6.1.0",
 		"husky": "^9.1.7",
+		"lantern": "https://codeload.github.com/ivarvong/lantern/tar.gz/2c7bad533be25fbd56d26a9a2b6c5651743f011e",
 		"lint-staged": "^17.5.1",
 		"mermaid": "12.2.0",
 		"oxfmt": "^0.67.0",
@@ -68,6 +69,7 @@
 		},
 		"onlyBuiltDependencies": [
 			"esbuild",
+			"manim-js",
 			"workerd"
 		]
 	},

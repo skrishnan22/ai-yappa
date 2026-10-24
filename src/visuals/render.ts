@@ -14,6 +14,8 @@ export const VISUAL_KINDS = ['mermaid', 'vega-lite', 'echarts', 'html'] as const
 
 export type VisualKind = (typeof VISUAL_KINDS)[number];
 
+type RenderKind = VisualKind | 'walkthrough';
+
 /** A render failure the model can fix by changing its source. */
 export class RenderError extends Error {
 	override name = 'RenderError';
@@ -103,21 +105,26 @@ export async function renderVisual({
 	origin,
 	kind,
 	source,
+	context,
 }: {
 	browser: BrowserWorker;
 	origin: string;
-	kind: VisualKind;
+	kind: RenderKind;
 	source: string;
+	context?: { conversationId: string; headSha: string };
 }): Promise<RenderedVisual> {
 	const base = new URL(origin);
 	const templateUrl = new URL(`/render/${kind}.html`, base).href;
+	const started = Date.now();
+	let outcome: 'success' | 'error' = 'error';
 
-	const browser = await launch(binding, {
-		// Network-level backstop to request interception.
-		guardrails: { allowedDomains: [base.hostname] },
-	});
+	let browser: Awaited<ReturnType<typeof launch>> | undefined;
 
 	try {
+		browser = await launch(binding, {
+			// Network-level backstop to request interception.
+			guardrails: { allowedDomains: [base.hostname] },
+		});
 		const page = await browser.newPage();
 		await page.setViewport({
 			width: VIEWPORT_WIDTH,
@@ -140,11 +147,28 @@ export async function renderVisual({
 			'The render template did not load.',
 		);
 
-		if (kind === 'html') return await captureFullPage(page);
+		let rendered: RenderedVisual;
 
-		return await captureTemplate(page, source);
+		if (kind === 'html') rendered = await captureFullPage(page);
+		else rendered = await captureTemplate(page, source);
+		outcome = 'success';
+
+		return rendered;
 	} finally {
-		await browser.close();
+		let closed = false;
+
+		try {
+			await browser?.close();
+			closed = true;
+		} finally {
+			console.info({
+				event: 'visual_browser_session',
+				...context,
+				kind,
+				outcome: closed ? outcome : 'error',
+				durationMs: Date.now() - started,
+			});
+		}
 	}
 }
 
@@ -156,7 +180,7 @@ async function routeRequest({
 	origin,
 }: {
 	request: HTTPRequest;
-	kind: VisualKind;
+	kind: RenderKind;
 	source: string;
 	templateUrl: string;
 	origin: string;

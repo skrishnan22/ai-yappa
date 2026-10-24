@@ -75,6 +75,9 @@ importers:
       husky:
         specifier: ^9.1.7
         version: 9.1.7
+      lantern:
+        specifier: https://codeload.github.com/ivarvong/lantern/tar.gz/2c7bad533be25fbd56d26a9a2b6c5651743f011e
+        version: manim-js@https://codeload.github.com/ivarvong/lantern/tar.gz/2c7bad533be25fbd56d26a9a2b6c5651743f011e
       lint-staged:
         specifier: ^17.5.1
         version: 17.6.0
@@ -3138,6 +3141,11 @@ packages:
 
   magic-string@1.4.2:
     resolution: {integrity: sha512-vG+rjFRj1PqdIBozIxAGMjPlOhaVe+GXpbttY/iSK7rGcJRMlwNJO7dcUwmUqkymsFLJiNGI06t4D7Fr7yRC9g==}
+
+  manim-js@https://codeload.github.com/ivarvong/lantern/tar.gz/2c7bad533be25fbd56d26a9a2b6c5651743f011e:
+    resolution: {tarball: https://codeload.github.com/ivarvong/lantern/tar.gz/2c7bad533be25fbd56d26a9a2b6c5651743f011e}
+    version: 0.1.0
+    engines: {node: '>=20'}
 
   marked@16.4.2:
     resolution: {integrity: sha512-TI3V8YYWvkVf3KJe1dRkpnjs68JUPyEa5vjKrp1XEEJUAOaQc+Qj+L1qWbPd0SJuAdQkFU0h73sXXqwDYxsiDA==}
@@ -7118,6 +7126,8 @@ snapshots:
   magic-string@1.4.2:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
+
+  manim-js@https://codeload.github.com/ivarvong/lantern/tar.gz/2c7bad533be25fbd56d26a9a2b6c5651743f011e: {}
 
   marked@16.4.2: {}
 
