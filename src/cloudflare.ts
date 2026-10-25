@@ -16,6 +16,8 @@ import { setPlanningStore } from './planning/planning-store.ts';
 import { createArtifactStore } from './visuals/artifact-store.ts';
 import { renderVisual } from './visuals/render.ts';
 import { publicOrigin, setVisualRuntime } from './visuals/visual-runtime.ts';
+import { createWalkthroughPublisher } from './walkthroughs/publish.ts';
+import { accessConfiguration } from './auth/access.ts';
 
 export { CodexAuth } from './integrations/codex-auth/codex-auth-object.ts';
 
@@ -38,10 +40,26 @@ const origin = publicOrigin(env);
 if (env.BROWSER && env.ARTIFACTS && origin) {
 	const browser = env.BROWSER;
 
+	const publishWalkthrough = accessConfiguration(env)
+		? createWalkthroughPublisher({
+				bucket: env.ARTIFACTS,
+				origin,
+				render: ({ source, conversationId, headSha }) =>
+					renderVisual({
+						browser,
+						origin,
+						kind: 'walkthrough',
+						source,
+						context: { conversationId, headSha },
+					}),
+			})
+		: undefined;
+
 	setVisualRuntime({
 		render: ({ kind, source }) => renderVisual({ browser, origin, kind, source }),
 		browser,
 		artifacts: createArtifactStore(env.ARTIFACTS),
+		publishWalkthrough,
 	});
 } else {
 	console.warn(

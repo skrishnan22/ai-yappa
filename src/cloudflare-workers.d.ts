@@ -49,5 +49,7 @@ declare module 'cloudflare:workers' {
 		readonly ARTIFACTS?: import('./visuals/artifact-store.ts').ArtifactBucket;
 		readonly PUBLIC_ORIGIN?: string;
 		readonly TUNNEL_HOSTNAME?: string;
+		readonly ACCESS_TEAM_DOMAIN?: string;
+		readonly ACCESS_AUD?: string;
 	};
 }
