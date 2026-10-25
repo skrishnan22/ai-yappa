@@ -2,7 +2,7 @@
 
 **Goal:** Let Coworker author and publish an interactive PR explanation using its existing implementation context.
 
-**Architecture:** A bounded structured format supplies components, edges and up to six steps. Trusted browser code builds a Lantern scene with a fixed layout and renders all step endpoints into one contact sheet. The existing Browser Run renderer captures it in one session. R2 stores the scene and PNG/JPEG under a persistent `walkthroughs/` prefix, indexed by a conversation-scoped content hash. Hono serves unlisted immutable scene links using a trusted static player. Cache hits skip Browser Run. Browser session duration is logged as an estimate, never billed usage.
+**Architecture:** A bounded structured format supplies components, edges and up to six steps. Trusted browser code builds a Lantern scene with a fixed layout and renders all step endpoints into one contact sheet. The existing Browser Run renderer captures it in one session. R2 stores the scene and PNG/JPEG under a persistent `walkthroughs/` prefix, indexed by a conversation-scoped content hash. Hono serves Cloudflare Access-protected scene links using a trusted static player. Cache hits skip Browser Run. Browser session duration is logged as an estimate, never billed usage.
 
 **Tech stack:** TypeScript, Valibot, pi AgentTool, Lantern pinned to upstream commit 2c7bad533be25fbd56d26a9a2b6c5651743f011e, Browser Run, R2, Hono, Vite, Vitest, local Chromium.
 
@@ -11,7 +11,7 @@
 - Execute sequentially in the existing `t3/add-lantern-to-prs` worktree.
 - No additional model call, deployment skill, GitHub Action, PR update API or infrastructure provisioning.
 - No model-authored JavaScript/HTML; layout and timing belong to trusted code.
-- Links are unlisted public bearer links; publish only material suitable for the PR's audience.
+- Links require Cloudflare Access sign-in; publish only material suitable for its configured reviewer audience.
 - Persistent storage uses a separate prefix from `artifacts/`, whose existing lifecycle expires after 15 days.
 - Maximum four nodes and six steps; code and captions are bounded, and references must address the supplied repository and head SHA.
 - Preserve existing visual tools and their image-content transport through SandboxFactory.tools.

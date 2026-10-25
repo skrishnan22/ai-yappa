@@ -13,6 +13,7 @@ import { walkthroughExample } from '../testing/walkthrough.ts';
 import { memoryBucket } from '../testing/walkthrough.ts';
 import { walkthroughRoutes } from '../walkthroughs/routes.ts';
 import { launch } from '@cloudflare/puppeteer';
+import { accessTestIdentity, TEST_ACCESS_ENV } from '../testing/access.ts';
 
 // Only the Cloudflare launch transport is replaced; rendering uses real Chromium.
 // oxlint-disable-next-line anti-slop/no-module-mocking -- Browser Run's external launch transport is unavailable in local Chromium.
@@ -40,7 +41,23 @@ const walkthroughBucket = memoryBucket();
 
 const walkthroughApp = walkthroughRoutes();
 
+const accessIdentity = await accessTestIdentity();
+
+const accessToken = await accessIdentity.token();
+
 beforeAll(async () => {
+	const originalFetch = globalThis.fetch;
+	vi.stubGlobal(
+		'fetch',
+		(input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+			const url = input instanceof Request ? input.url : input.toString();
+
+			if (url === `${TEST_ACCESS_ENV.ACCESS_TEAM_DOMAIN}/cdn-cgi/access/certs`)
+				return Promise.resolve(Response.json(accessIdentity.jwks));
+
+			return originalFetch(input, init);
+		},
+	);
 	await promisify(execFile)('pnpm', ['run', 'build:render']);
 	await walkthroughBucket.put(
 		`walkthroughs/${walkthroughId}.json`,
@@ -60,8 +77,8 @@ beforeAll(async () => {
 		if (path.startsWith('/walkthroughs/')) {
 			const served = await walkthroughApp.request(
 				(request.url ?? '/').replace('/walkthroughs', ''),
-				{},
-				{ ARTIFACTS: walkthroughBucket },
+				{ headers: { 'Cf-Access-Jwt-Assertion': accessToken } },
+				{ ARTIFACTS: walkthroughBucket, ...TEST_ACCESS_ENV },
 			);
 
 			response.writeHead(served.status, Object.fromEntries(served.headers));
@@ -104,6 +121,8 @@ beforeAll(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 afterAll(async () => {
+	vi.unstubAllGlobals();
+
 	if (server)
 		await new Promise<void>((resolve, reject) =>
 			server.close((error) => (error ? reject(error) : resolve())),

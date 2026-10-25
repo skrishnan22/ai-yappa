@@ -63,7 +63,7 @@ async function mount(): Promise<void> {
 
 	const disclaimer = element(
 		'p',
-		'Authored explanation of the source change, not a live execution or test result. Links are unlisted and viewable by anyone who has the URL.',
+		'Authored explanation of the source change, not a live execution or test result.',
 	);
 
 	disclaimer.className = 'disclaimer';

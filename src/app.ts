@@ -8,6 +8,7 @@ import type { D1Database } from './memory/d1.ts';
 import { createD1PlanningStore } from './planning/d1-decision-log.ts';
 import type { ArtifactBucket } from './visuals/artifact-store.ts';
 import { walkthroughRoutes } from './walkthroughs/routes.ts';
+import type { AccessEnv } from './auth/access.ts';
 
 // Capture full agent content for the single-user observability pilot.
 if (process.env.NODE_ENV !== 'test') {
@@ -17,7 +18,9 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 const app = new Hono<{
-	Bindings: EnvSource & CodexAuthBinding & { APP_DB?: D1Database; ARTIFACTS?: ArtifactBucket };
+	Bindings: EnvSource &
+		CodexAuthBinding &
+		AccessEnv & { APP_DB?: D1Database; ARTIFACTS?: ArtifactBucket };
 }>();
 
 app.route('/walkthroughs', walkthroughRoutes());

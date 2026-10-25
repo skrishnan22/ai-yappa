@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import * as v from 'valibot';
 import type { ArtifactBucket } from '../visuals/artifact-store.ts';
 import { walkthroughSchema } from './format.ts';
+import { requireAccess, type AccessEnv } from '../auth/access.ts';
 
 const headers = {
 	'Content-Security-Policy':
@@ -9,11 +10,11 @@ const headers = {
 	'X-Content-Type-Options': 'nosniff',
 	'X-Robots-Tag': 'noindex, nofollow, noarchive',
 	'Referrer-Policy': 'no-referrer',
-	'Cache-Control': 'public, max-age=31536000, immutable',
 };
 
 export function walkthroughRoutes() {
-	const app = new Hono<{ Bindings: { ARTIFACTS?: ArtifactBucket } }>();
+	const app = new Hono<{ Bindings: AccessEnv & { ARTIFACTS?: ArtifactBucket } }>();
+	app.use('*', requireAccess());
 
 	app.get('/:id', async (c) => {
 		const id = c.req.param('id');

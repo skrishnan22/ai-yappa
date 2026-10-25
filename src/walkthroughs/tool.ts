@@ -27,7 +27,7 @@ export function walkthroughTool({
 			'Use 1–4 short-labeled components and 1–6 named steps: previous behavior, the change, a concrete example, and relevant fallback behavior. Layout and timing are automatic; do not supply HTML, JavaScript, animation coordinates, or secrets.',
 			'baseSha and headSha must be full lowercase 40-character commit SHAs from git. Source paths are relative to the attached repository and refer to headSha; highlight is a zero-based index into that step’s code lines. Label shortened code excerpts honestly in the caption.',
 			'Example: nodes:[{id:"handler",label:"Handler"},{id:"db",label:"Database"}], edges:[{from:"handler",to:"db"}], steps:[{name:"before",caption:"Every request reads the database.",activeNodes:["db"],code:["return db.read(key)"],highlight:0,source:{path:"src/handler.ts",line:10}}].',
-			'The URL and preview are unlisted public bearer links: anyone with the URL can view them, including code excerpts. Publishing happens immediately. Identical content in this conversation reuses its cached link and preview.',
+			'The published page and preview require Cloudflare Access sign-in. Only reviewers allowed by the deployment’s Access policy can view them. Never include credentials. Publishing happens immediately. Identical content in this conversation reuses its cached link and preview.',
 		].join(' '),
 		parameters: Type.Object({
 			title: Type.String({ maxLength: 120 }),
